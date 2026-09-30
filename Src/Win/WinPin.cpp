@@ -3,6 +3,7 @@
 #include "../Tool/ToolSub.h"
 #include "../Shape/ShapeBase.h"
 #include "../Shape/ShapeText.h"
+#include "../Shape/ShapeNumber.h"
 #include "WinPin.h"
 #include "WinCap.h"
 #include "History.h"
@@ -25,7 +26,8 @@ namespace {
 	}
 }
 
-WinPin::WinPin(int x, int y, int w, int h, const std::vector<BYTE>* data) : Ling::WinBase(), history{ std::make_unique<History>(this) }
+WinPin::WinPin(int x, int y, int w, int h, const std::vector<BYTE>* data, const std::wstring& initToolId)
+	: Ling::WinBase(), history{ std::make_unique<History>(this) }
 {
 	this->x = x;
 	this->y = y;
@@ -45,6 +47,10 @@ WinPin::WinPin(int x, int y, int w, int h, const std::vector<BYTE>* data) : Ling
 	}
 	toolMain = std::make_unique<ToolMain>(this);
     toolSub = std::make_unique<ToolSub>(this);
+	// 预选工具排在两条工具条都建好之后：selectTool 会按工具配出 ToolSub 的内容再重排整组
+	if (!initToolId.empty()) {
+		toolMain->selectTool(initToolId);
+	}
 	layoutTools();
 	onMoved.add([this]() { layoutTools(); });
 	// DPI 变了（用户改了缩放比例，或者窗口被拖到缩放比例不同的显示器上）：系统会按新旧缩放比
@@ -91,13 +97,13 @@ void WinPin::onClosed()
 	// 防止 close() 被走两遍（比如按钮和快捷键先后触发）时排两次销毁
 	if (isClosed) return;
 	isClosed = true;
-	if (editingText) editingText->finishEdit();
+	if (editingShape) editingShape->finishEditing();
 	// 先收起附属窗口，再让出 hover 指针 —— shapeHover 指向 history 里的元素，
 	// history 随 WinPin 一起析构，留着悬空指针没意义
 	if (toolSub) toolSub->close();
 	if (toolMain) toolMain->close();
 	shapeHover = nullptr;
-	editingText = nullptr;
+	editingShape = nullptr;
 	// screenImg / canvas / history 都是成员（canvas 挂在 body 的子节点上），随下面这次 erase 一并释放
 	Ling::App::get()->dq.TryEnqueue([this]() {
 		std::erase_if(winPins, [this](const std::unique_ptr<WinPin>& p) { return p.get() == this; });
@@ -160,7 +166,7 @@ void WinPin::applyScale(float newScale, POINT anchor)
 	if (std::abs(newScale - scale) < 0.0001f) return;
 	// 编辑中的文字是 TextBox（真控件）画的，缩放期间它的位置、字号都得跟着重算，
 	// 与其在缩放过程里一路同步，不如先收尾把文字交回 ShapeText 自己画 —— 之后它就跟着一起缩了
-	if (editingText) editingText->finishEdit();
+	if (editingShape) editingShape->finishEditing();
 	// anchor 底下那个底图上的点，缩放前后都要停在光标下：屏幕坐标 = 窗口原点 + 底图点 × 倍数
 	auto imgX = anchor.x / scale;
 	auto imgY = anchor.y / scale;
@@ -247,9 +253,9 @@ WinPin::~WinPin()
 {
 }
 
-void WinPin::init(int x, int y, int w, int h)
+void WinPin::init(int x, int y, int w, int h, const std::wstring& toolId)
 {
-	auto ptr = new WinPin(x,y,w,h);
+	auto ptr = new WinPin(x, y, w, h, nullptr, toolId);
 	std::unique_ptr<WinPin> winPin{ ptr };
 	ptr->createNativeWindow(WS_EX_TOPMOST| WS_EX_TOOLWINDOW, WS_MAXIMIZEBOX | WS_MINIMIZEBOX | WS_POPUP);
 	winPins.push_back(std::move(winPin));
@@ -326,7 +332,7 @@ void WinPin::onDown(POINT pos, BOOL isRight)
 {
 	// 编辑文本时，落在文本框里的点击整个交给 TextBox（它自己订阅了窗口的鼠标事件）。
 	// 这里不能抢先 SetCapture / 置 isMouseDown，否则拖选文本会被当成拖 shape。
-	if (editingText && textBox && textBox->isPosIn(pos)) return;
+	if (editingShape && textBox && textBox->isPosIn(pos)) return;
 	if (isRight) {
 		// 右键在"有工具条"和"只剩图"这两个状态之间来回切。
 		// 藏着的时候（上一次右键收起来的）就把它请回来。位置先重排一遍：
@@ -363,7 +369,7 @@ void WinPin::onDown(POINT pos, BOOL isRight)
 	// 手里拿着什么工具都不该影响这个手势）。要在下面所有分支之前处理：
 	// 这一下既不是画画也不是拖窗，不该留下 capture、更不该新建 shape。
 	// 编辑文字时不算：双击归文本框（选中单词），点在框外才会走到这里
-	if (isDblClick && !editingText) {
+	if (isDblClick && !editingShape) {
 		// 前半段那一下点击是这个手势的一部分，它顺手放下的元素（只有序号是按一下就成形的，
 		// 别的都在抬手时按"没画出东西"清掉了）不该被带进剪切板
 		if (prevPressCreatedShape) history->undo();
@@ -394,7 +400,7 @@ void WinPin::onDown(POINT pos, BOOL isRight)
 void WinPin::onMove(POINT pos)
 {
 	// 同 onDown：文本框里的移动归 TextBox（拖选、滚动条 hover），不参与 shape 的 hover 判定
-	if (editingText && textBox && textBox->isPosIn(pos)) return;
+	if (editingShape && textBox && textBox->isPosIn(pos)) return;
 	// 拖窗口用的是窗口坐标（pressPos 也是），只有交给 shape 的才换算成底图像素
 	auto imgPos = toImgPos(pos);
 	if (isMouseDown) {
@@ -498,21 +504,36 @@ Ling::TextBox* WinPin::getTextBox()
 	return textBox;
 }
 
-void WinPin::setEditingText(ShapeText* shape)
+void WinPin::setEditingShape(ShapeBase* shape)
 {
-	editingText = shape;
+	editingShape = shape;
 }
 
 void WinPin::onToolStyleChanged()
 {
-	if (editingText) editingText->applyStyle();
+	if (editingShape) editingShape->applyStyle();
+}
+
+// ToolSub 上的编号样式 / 外圈样式切换之后：图上已经画着的序号要跟着换样子，
+// 而不是等下一次新画的才生效。全量重排的代价可以忽略 —— 一张图上序号通常是个位数
+void WinPin::refreshNumberShapes()
+{
+	for (auto& shape : history->shapes)
+	{
+		auto number = dynamic_cast<ShapeNumber*>(shape.get());
+		if (number) number->applyStyle();
+	}
+	refresh();
 }
 
 void WinPin::onKey(UINT key)
 {
 	// 编辑文本时所有按键都归 TextBox：否则 Ctrl+C 复制的是截图、回车会保存并关窗、
 	// Delete 删掉的是整个 shape、ESC 直接把窗口关了。ESC 结束编辑由 TextBox 自己处理。
-	if (editingText) return;
+	// 选中某个元素时先把按键交给它：序号用 +/- 改编号、F2 编辑序号里的文字。
+	// 这几个键不与下面的全局快捷键冲突，所以不用抢返回值
+	if (shapeHover) shapeHover->onKey(key);
+	if (editingShape) return;
 	bool ctrl = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
 	if (ctrl && key == 'Z') {
 		history->undo();
@@ -549,7 +570,7 @@ void WinPin::copyToClipboard()
 void WinPin::saveToFile()
 {
 	auto foregroundBeforeDialog = GetForegroundWindow();
-	auto path = Util::getSaveFilePath(hwnd);
+	auto path = Util::resolveSavePath(hwnd);
 	if (path.empty()) {   // 用户取消
 		restoreWindowState(foregroundBeforeDialog);
 		return;
@@ -560,7 +581,8 @@ void WinPin::saveToFile()
 		restoreWindowState(foregroundBeforeDialog);
 		return;
 	}
-	if (Util::saveToFile(path, (int)size.width, (int)size.height, pixels.data())) {
+	auto fmt = (Util::ImgFormat)Util::getSaveFormat();
+	if (Util::saveToFile(path, (int)size.width, (int)size.height, pixels.data(), fmt)) {
 		close();
 	}
 	else {
@@ -596,7 +618,7 @@ bool WinPin::getImagePixels(std::vector<BYTE>& pixels, D2D1_SIZE_U& size)
 	if (imgSize.width == 0 || imgSize.height == 0) return false;
 	// 编辑中的文字是 TextBox 自己那层画的，进不了下面这个离屏 target。
 	// 先收尾，把文字交回 ShapeText 自己画，保存/复制出去的图才有它。
-	if (editingText) editingText->finishEdit();
+	if (editingShape) editingShape->finishEditing();
 	size = imgSize;
 	auto d2d = Ling::D2D::get();
 	auto ctx = d2d->deviceContext.Get();
@@ -657,7 +679,7 @@ BOOL WinPin::setCursor()
 {
 	// 编辑文本时光标形状交给 TextBox 决定（文本区 I 形、滚动条箭头）。
 	// 本函数覆写了基类且不调用它，TextBox 挂在 onCursor 上的那个订阅不会自己被触发，得手动发一次。
-	if (editingText) {
+	if (editingShape) {
 		bool handled{ false };
 		onCursor(&handled);
 		if (handled) return TRUE;

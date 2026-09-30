@@ -30,6 +30,18 @@ public:
 	void setToolFlag(const std::wstring& tool, const std::wstring& key, bool val);
 	float getToolNum(const std::wstring& tool, const std::wstring& key, float def);
 	void setToolNum(const std::wstring& tool, const std::wstring& key, float val);
+	// 输出与自动保存。存在 config.json 的 save 组里：
+	// format（0=PNG / 1=JPEG / 2=WebP）、auto（自动保存，不弹另存为）、
+	// dir（自动保存目录，空串表示走每次弹窗时用户选的那个目录所在的数据目录）、
+	// nameTpl（文件名模板，见 Util::formatFileName）
+	int getSaveFormat();
+	void setSaveFormat(int val);
+	bool getAutoSave();
+	void setAutoSave(bool val);
+	std::wstring getSaveDir();
+	void setSaveDir(const std::wstring& dir);
+	std::wstring getSaveNameTpl();
+	void setSaveNameTpl(const std::wstring& tpl);
 	// 上次检查更新是哪一天（std::chrono::days 的计数，即 1970-01-01 以来的天数），
 	// 从来没查过返回 0。一天最多查一次服务端，靠它记账 —— 每次空闲都去请求纯属浪费人家的流量
 	long long getUpdateCheckDay();
@@ -39,6 +51,8 @@ private:
 	// toolPin.<tool> 那个 JsonObject。缺哪一层就现建一层挂上去 ——
 	// SetNamedValue 得有个落脚的对象，而这两层在旧配置文件里都不存在
 	JsonObject getToolObj(const std::wstring& tool);
+	// save 那一组，缺则现建一层挂上去（理由同 getToolObj）
+	JsonObject getSaveObj();
 	std::filesystem::path initDataPath();
 	// 决定配置文件用哪一份：exe 同目录有 config.json 就用它（绿色版，配置跟着程序走），
 	// 否则用 %appdata%\ScreenCapture\config.json。二者只认一个，读哪儿就写哪儿。

@@ -28,7 +28,9 @@ public:
 	void restoreWin();
 	// 下面都是给工具条用的门面 ————————————————
 	// ToolCap
-	void startPin();
+	// toolId 非空时，进贴图窗口的同时预选该标注工具（ToolCap 上一个标注工具点到直达，
+	// 省掉"先进标注再选工具"这一步）。空串表示不预选
+	void startPin(const std::wstring& toolId = L"");
 	void startLong();
 	void startVideo();
 	void startOcr();

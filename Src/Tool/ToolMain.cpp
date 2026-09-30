@@ -159,19 +159,24 @@ void ToolMain::onClick(Ling::Button* btn)
 		cancelSelect();
 		return;
 	}
-	for (auto b:btns)
+	selectTool(btn->id);
+}
+
+void ToolMain::selectTool(const std::wstring& id)
+{
+	for (auto b : btns)
 	{
 		if (b->id == curId)
 		{
 			applyNormalStyle(b);
 		}
-		if (b->id == btn->id)
+		if (b->id == id)
 		{
 			b->setBg(0xe6f4ffff);
 			b->setHoverBg(0xe6f4ffff);
 		}
 	}
-	curId = btn->id;
+	curId = id;
 	if (curId == L"rect") {
 		win->toolSub->showRectTools();
 	}

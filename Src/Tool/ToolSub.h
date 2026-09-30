@@ -1,8 +1,11 @@
 #pragma once
 #include <include/Ling.h>
+#include <functional>
+#include <string>
 
 class WinPin;
 class Tip;
+class ShapeNumber;
 class ToolSub:public Ling::WinBase
 {
 public:
@@ -38,7 +41,13 @@ public:
 	// ToolMain 与 ToolSub 之间的间距，WinPin::layoutTools() 计算整组高度时要用
 	static constexpr float mainGap{ 2.f };
 public:
-	bool isRectFill{ false }, isEllipseFill{ false }, isArrowFill{ true }, isNumberFill{ true }, isLineTransparent{ false }, isTextBold{ false }, isTextItalic{ false }, isMosaicRect{ false }, isEraserRect{ false };
+	bool isRectFill{ false }, isEllipseFill{ false }, isArrowFill{ true }, isNumberFill{ true }, isLineTransparent{ false }, isTextBold{ false }, isTextItalic{ false }, isEraserRect{ false };
+	// 马赛克模式 0 = 矩形马赛克，1 = 涂抹马赛克，2 = 智能擦除。
+	// 三者互斥，所以用一个整数而不是三个布尔 —— 布尔组合里会出现"既涂抹又擦除"这种不存在的状态
+	int mosaicMode{ 0 };
+	// 序号的编号样式（阿拉伯 / 字母小写 / 字母大写 / 罗马 / 中文）与外圈样式（圆 / 方 / 无）。
+	// 值与 ShapeNumber 的两个枚举一一对应，转枚举行取 static_cast
+	int numberStyle{ 0 }, numberRing{ 0 };
 private:
 	void onCreated() override;
 	void layout() override;
@@ -53,6 +62,16 @@ private:
 	// tipKey 是提示文字的语言键（如 tool.rectFill），cfgKey 是这个开关在 config.json 里的键名
 	// （fill / semiTransparent / bold / …，同一工具下不能重名）。
 	Ling::Button* makeToggleBtn(const std::wstring& text, bool* flag, const std::wstring& tipKey, const std::wstring& cfgKey);
+	// 多值循环按钮：每点一次把 index 往前推一格，按钮上的文本换成新一格对应的样子。
+	// textOf 按 index 生成文本 —— 序号样式那两个按钮要显示"当前编号在各种样式下长什么样"，
+	// 这个文本随 index 变，所以不能像 ToggleBtn 那样一次性把整表传进来
+	// refreshNumbers：切完之后要不要把图上已有的序号重排一遍。只有序号的样式按钮需要，
+	// 马赛克模式那一个跟序号没关系，不该顺带去遍历一遍 shape
+	Ling::Button* makeCycleBtn(const std::wstring& tipKey, const std::wstring& cfgKey,
+		int* index, int count, std::function<std::wstring(int)> textOf,
+		bool useIconFont = false, bool refreshNumbers = true);
+	// 样式切换按钮上示例用哪个序号：取图上最大的那个编号，没有序号时用 1
+	int getNumberSampleVal();
 	// 每个 show*Tools 开头都要做的事：收提示、清旧内容、记下当前工具，
 	// 再把这个工具存在 config.json 里的滑块值和颜色读回来（读不到就用默认值 / 第一个颜色）。
 	// 滑块的键名与值域查 .cpp 里那张表，id 必须是表里有的（就是 ToolMain 的按钮 id）。

@@ -32,6 +32,42 @@ ShapeText::~ShapeText()
 
 }
 
+D2D1_POINT_2F ShapeText::center() const
+{
+	return { (rect.left + rect.right) / 2.f, (rect.top + rect.bottom) / 2.f };
+}
+
+D2D1_POINT_2F ShapeText::rotatedPoint(const D2D1_POINT_2F& p)
+{
+	auto c = center();
+	float radians = angle * 3.14159265358979323846f / 180.f;
+	float cosValue = cosf(radians);
+	float sinValue = sinf(radians);
+	float dx = p.x - c.x, dy = p.y - c.y;
+	return { c.x + dx * cosValue - dy * sinValue, c.y + dx * sinValue + dy * cosValue };
+}
+
+// 旋转中心不是 rect 的中心点本身：画布上可能还压着 WinPin 的缩放变换（Ctrl+滚轮），
+// 而导出那条路走的是不带缩放的离屏画布。统一用当前矩阵把中心点映射过去，
+// 两条路都不用各写一份换算
+D2D1_POINT_2F ShapeText::transformCenter(ID2D1DeviceContext* ctx) const
+{
+	// ID2D1RenderTarget::GetTransform 返回 void、走出参，没有按值返回的重载
+	D2D1_MATRIX_3X2_F m{};
+	ctx->GetTransform(&m);
+	auto c = center();
+	return { c.x * m._11 + c.y * m._21 + m._31, c.x * m._12 + c.y * m._22 + m._32 };
+}
+
+void ShapeText::updateRotateDragger()
+{
+	auto half{ draggerSize / 2 };
+	// 手柄摆在框正上方，比框顶再退一个手柄高度，转起来才不和框本身挤在一起
+	auto offset = draggerSize * 2.f;
+	auto p = rotatedPoint({ (rect.left + rect.right) / 2.f, rect.top - offset });
+	rotateDragger = D2D1::RectF(p.x - half, p.y - half, p.x + half, p.y + half);
+}
+
 void ShapeText::paint(ID2D1DeviceContext* ctx)
 {
 	if (isEditing) {
@@ -45,19 +81,42 @@ void ShapeText::paint(ID2D1DeviceContext* ctx)
 	}
 	// makeTextLayout 要等编辑结束才跑，这之前可能先来一次 paint
 	if (!textLayout) return;
+	D2D1_MATRIX_3X2_F prev{};
+	ctx->GetTransform(&prev);
+	if (angle != 0.f) {
+		// 旋转叠在当前变换之后（矩阵左乘 = 先缩放再旋转），所以中心要用缩放后的坐标
+		ctx->SetTransform(prev * D2D1::Matrix3x2F::Rotation(angle, transformCenter(ctx)));
+	}
 	ctx->DrawTextLayout({ rect.left + borderPadding, rect.top + borderPadding },
 		textLayout.Get(), textBrush.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
+	if (angle != 0.f) ctx->SetTransform(prev);
 }
 
 void ShapeText::paintDragger(ID2D1DeviceContext* ctx)
 {
 	// 虚线框画在这里而不是 paint 里：导出图片走的是离屏 paint(ctx)，画在那边会被存进图里。
 	// 本函数只在 hover 且没按下鼠标时调，正好是该显示提示框的时候。
+	updateRotateDragger();
+	D2D1_MATRIX_3X2_F prev{};
+	ctx->GetTransform(&prev);
+	if (angle != 0.f) {
+		ctx->SetTransform(prev * D2D1::Matrix3x2F::Rotation(angle, transformCenter(ctx)));
+	}
 	ctx->DrawRectangle(rect, textBrush.Get(), win->dpi, dashedStrokeStyle.Get());
+	ctx->SetTransform(prev);
+	// 手柄的坐标已经是转好之后的，不能再跟着上面的变换转一遍
+	ctx->DrawRectangle(rotateDragger, textBrush.Get(), win->dpi);
+	ctx->FillRectangle(rotateDragger, textBrush.Get());
 }
 
 void ShapeText::mouseDrag(const float x, const float y)
 {
+	if (hoverDraggerIndex == 9) {
+		auto c = center();
+		// 手柄静止时就在框的正上方，所以 dx=0、dy<0 对应 0 度，顺着屏幕顺时针为正
+		angle = atan2f(x - c.x, -(y - c.y)) * 180.f / 3.14159265358979323846f;
+		return;
+	}
 	if (hoverDraggerIndex != 8) return;
 	auto spanX{ x - pressX };
 	auto spanY{ y - pressY };
@@ -87,6 +146,13 @@ void ShapeText::mouseDown(const float x, const float y)
 		pressY = y;
 		finishEdit();
 	}
+	else if (hoverDraggerIndex == 9) { //点在旋转手柄上：记下起点，转由 mouseDrag 跟手算
+		// 编辑中先退出：编辑期间角度被归零记在 editAngle 里，不退出的话这里转出来的角度
+		// 会在下一次 finishEdit 时被 editAngle 盖回去，等于白转
+		if (isEditing) finishEdit();
+		pressX = x;
+		pressY = y;
+	}
 	else if (hoverDraggerIndex == 0) { //点在框外：结束编辑
 		finishEdit();
 	}
@@ -95,10 +161,29 @@ void ShapeText::mouseDown(const float x, const float y)
 void ShapeText::mouseMove(const float x, const float y)
 {
 	hoverDraggerIndex = -1;
+	// 手柄位置是 paintDragger 里算的，而它只在 hover 时才跑；这里先补算一次，
+	// 免得刚把鼠标移上去的那一帧拿着上一次的旧位置判不中
+	updateRotateDragger();
+	if (isInRect(rotateDragger, x, y)) {
+		hoverDraggerIndex = 9;
+		return;
+	}
+	// 转过之后框的可点区域也跟着转了，得把鼠标点逆着角度转回来再判 ——
+	// 否则框转了、能点中的那块还留在原处
+	auto lx = x, ly = y;
+	if (angle != 0.f) {
+		auto c = center();
+		float radians = -angle * 3.14159265358979323846f / 180.f;
+		float cosValue = cosf(radians);
+		float sinValue = sinf(radians);
+		auto dx = x - c.x, dy = y - c.y;
+		lx = c.x + dx * cosValue - dy * sinValue;
+		ly = c.y + dx * sinValue + dy * cosValue;
+	}
 	auto half{ borderPadding / 2.f + win->dpi };//多给一个 dpi，让判定范围宽松点
-	if (x >= rect.left - half && x <= rect.right + half && y >= rect.top - half && y <= rect.bottom + half)
+	if (lx >= rect.left - half && lx <= rect.right + half && ly >= rect.top - half && ly <= rect.bottom + half)
 	{
-		if (x <= rect.left + half || x >= rect.right - half || y <= rect.top + half || y >= rect.bottom - half) {
+		if (lx <= rect.left + half || lx >= rect.right - half || ly >= rect.top + half || ly >= rect.bottom - half) {
 			hoverDraggerIndex = 8;
 		}
 		else {
@@ -111,10 +196,12 @@ void ShapeText::mouseMove(const float x, const float y)
 		hoverDraggerIndex = 0;
 	}
 }
-
 void ShapeText::setCursor()
 {
-	if (hoverDraggerIndex == 8) {
+	if (hoverDraggerIndex == 9) {
+		SetCursor(LoadCursor(nullptr, IDC_CROSS));
+	}
+	else if (hoverDraggerIndex == 8) {
 		SetCursor(LoadCursor(nullptr, IDC_SIZEALL));
 	}
 	else if (hoverDraggerIndex == 1) {
@@ -131,6 +218,11 @@ void ShapeText::startEdit()
 	isEditing = true;
 	// 每次进入编辑都跟当前工具栏走：改了颜色/字号再点已有文本，就是要按新样式改
 	setAttr();
+	// 编辑中的文字是 TextBox 那个真控件画的，D2D 的变换管不到它（缩放当年就撞过同一堵墙，
+	// 旋转更没法靠乘一个数糊弄过去）。所以进编辑先把角度归零，退出时再转回去：
+	// 代价是编辑的这一瞬间文字会摆正，换来的是不必改 Ling 给 TextBox 加旋转
+	editAngle = angle;
+	angle = 0.f;
 	auto tb = win->getTextBox();
 	auto d = win->dpi;
 	// rect 是底图坐标，TextBox 是挂在窗口上的真控件、收的是逻辑像素，
@@ -166,7 +258,7 @@ void ShapeText::startEdit()
 		// 点到别处、按 ESC、窗口失焦都会走到这儿
 		if (!focused) finishEdit();
 	});
-	win->setEditingText(this);
+	win->setEditingShape(this);
 	tb->focus();
 	win->refresh();
 }
@@ -184,7 +276,8 @@ void ShapeText::finishEdit()
 	text = tb->getText();
 	tb->blur();
 	tb->hide();
-	win->setEditingText(nullptr);
+	win->setEditingShape(nullptr);
+	angle = editAngle;
 	makeTextLayout();
 	win->refresh();
 	if (text.empty()) {

@@ -11,30 +11,67 @@
 using Microsoft::WRL::ComPtr;
 
 namespace {
-	// 把 BGRA top-down 像素编码成 PNG 写进 stream。saveToClipboard 和 saveToFile 共用这段。
-	bool encodePng(IStream* stream, const int w, const int h, BYTE* data)
+	// 把 BGRA top-down 像素按指定格式编码写进 stream。saveToClipboard 和 saveToFile 共用这段。
+	// 只有 JPEG 需要真正动像素：它是 24bpp 且不带 alpha，得把 A 通道丢掉重排一行。
+	// WebP / PNG 都能直接吃 32bppBGRA，编码时给的也是同一份数据。
+	bool encodeImage(IStream* stream, const int w, const int h, BYTE* data,
+		const Util::ImgFormat format, const float quality = 90.f)
 	{
+		WICPixelFormatGUID requestFmt{ GUID_WICPixelFormat32bppBGRA };
 		UINT rowBytes = (UINT)w * 4;
+		std::vector<BYTE> converted;
+		BYTE* src = data;
+		if (format == Util::ImgFormat::Jpeg) {
+			requestFmt = GUID_WICPixelFormat24bppBGR;
+			rowBytes = (UINT)w * 3;
+			converted.resize((size_t)rowBytes * (size_t)h);
+			for (int y = 0; y < h; ++y) {
+				BYTE* s = data + (size_t)y * (size_t)w * 4;
+				BYTE* d = converted.data() + (size_t)y * rowBytes;
+				for (int x = 0; x < w; ++x) {
+					d[x * 3] = s[x * 4];
+					d[x * 3 + 1] = s[x * 4 + 1];
+					d[x * 3 + 2] = s[x * 4 + 2];
+				}
+			}
+			src = converted.data();
+		}
 		UINT imgBytes = rowBytes * (UINT)h;
 		ComPtr<IWICImagingFactory> factory;
 		auto hr = CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(factory.GetAddressOf()));
 		if (FAILED(hr)) return false;
+		GUID containerFmt{ GUID_ContainerFormatPng };
+		if (format == Util::ImgFormat::Jpeg) containerFmt = GUID_ContainerFormatJpeg;
+		else if (format == Util::ImgFormat::WebP) containerFmt = GUID_ContainerFormatWebp;
 		ComPtr<IWICBitmapEncoder> encoder;
-		hr = factory->CreateEncoder(GUID_ContainerFormatPng, nullptr, encoder.GetAddressOf());
+		hr = factory->CreateEncoder(containerFmt, nullptr, encoder.GetAddressOf());
 		if (FAILED(hr)) return false;
 		hr = encoder->Initialize(stream, WICBitmapEncoderNoCache);
 		if (FAILED(hr)) return false;
 		ComPtr<IWICBitmapFrameEncode> frame;
-		hr = encoder->CreateNewFrame(frame.GetAddressOf(), nullptr);
+		ComPtr<IPropertyBag2> encoderOptions;
+		hr = encoder->CreateNewFrame(frame.GetAddressOf(), encoderOptions.GetAddressOf());
 		if (FAILED(hr)) return false;
-		hr = frame->Initialize(nullptr);
+		// 有损格式才认 ImageQuality；PNG 不给这个选项，给了也是白给
+		if (encoderOptions && format != Util::ImgFormat::Png) {
+			PROPBAG2 option{};
+			option.pstrName = const_cast<wchar_t*>(L"ImageQuality");
+			VARIANT varQuality{};
+			VariantInit(&varQuality);
+			varQuality.vt = VT_R4;
+			varQuality.fltVal = std::clamp(quality, 0.f, 100.f) / 100.f;
+			// 写不进去就用编码器的默认值，不该因此让整次存盘失败
+			encoderOptions->Write(1, &option, &varQuality);
+		}
+		hr = frame->Initialize(encoderOptions.Get());
 		if (FAILED(hr)) return false;
 		hr = frame->SetSize((UINT)w, (UINT)h);
 		if (FAILED(hr)) return false;
-		WICPixelFormatGUID fmt = GUID_WICPixelFormat32bppBGRA;
+		WICPixelFormatGUID fmt = requestFmt;
 		hr = frame->SetPixelFormat(&fmt);
-		if (FAILED(hr) || !IsEqualGUID(fmt, GUID_WICPixelFormat32bppBGRA)) return false;
-		hr = frame->WritePixels((UINT)h, rowBytes, imgBytes, data);
+		// 编码器会把它真正接受的格式写回 fmt，与请求的不是同一个就说明这个格式它不吃
+		if (FAILED(hr) || !IsEqualGUID(fmt, requestFmt)) return false;
+		hr = frame->WritePixels((UINT)h, rowBytes, imgBytes, src);
 		if (FAILED(hr)) return false;
 		hr = frame->Commit();
 		if (FAILED(hr)) return false;
@@ -83,7 +120,7 @@ void Util::saveToClipboard(const int w, const int h, BYTE* data)
 	// ---------- 1) PNG 编码到内存流 ----------
 	ComPtr<IStream> pngStream;
 	if (FAILED(CreateStreamOnHGlobal(nullptr, TRUE, pngStream.GetAddressOf()))) return;
-	if (!encodePng(pngStream.Get(), w, h, data)) return;
+	if (!encodeImage(pngStream.Get(), w, h, data, Util::ImgFormat::Png)) return;
 	// 流内部的 HGLOBAL 尺寸可能大于实际字节数，拷一份精确大小的出来给剪切板
 	STATSTG stat{};
 	if (FAILED(pngStream->Stat(&stat, STATFLAG_NONAME))) return;
@@ -180,6 +217,12 @@ void Util::saveToClipboard(const int w, const int h, BYTE* data)
 
 bool Util::saveToFile(const std::wstring& path, const int w, const int h, BYTE* data)
 {
+	return saveToFile(path, w, h, data, ImgFormat::Png);
+}
+
+bool Util::saveToFile(const std::wstring& path, const int w, const int h, BYTE* data,
+	const ImgFormat format, const float quality)
+{
 	if (path.empty() || w <= 0 || h <= 0 || !data) return false;
 	ComPtr<IWICImagingFactory> factory;
 	auto hr = CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(factory.GetAddressOf()));
@@ -189,7 +232,83 @@ bool Util::saveToFile(const std::wstring& path, const int w, const int h, BYTE* 
 	if (FAILED(hr)) return false;
 	hr = stream->InitializeFromFilename(path.c_str(), GENERIC_WRITE);
 	if (FAILED(hr)) return false;
-	return encodePng(stream.Get(), w, h, data);
+	return encodeImage(stream.Get(), w, h, data, format, quality);
+}
+
+std::wstring Util::getExtOfFormat(const ImgFormat format)
+{
+	switch (format)
+	{
+	case ImgFormat::Jpeg: return L"jpg";
+	case ImgFormat::WebP: return L"webp";
+	default: return L"png";
+	}
+}
+
+int Util::getSaveFormat()
+{
+	// 夹一遍值域：配置文件可能被手工改坏，而下面直接拿它当枚举用
+	auto val = Setting::get()->getSaveFormat();
+	if (val < 0 || val > (int)ImgFormat::WebP) return (int)ImgFormat::Png;
+	return val;
+}
+
+// 自动保存开着就不再弹另存为：每次截图都要点一次目录，是这个工具最高频的打断，
+// 而"图去哪了"这个问题有目录 + 模板就够回答了
+std::wstring Util::resolveSavePath(HWND hwnd)
+{
+	auto setting = Setting::get();
+	if (!setting->getAutoSave()) {
+		return getSaveFilePath(hwnd, getExtOfFormat((ImgFormat)getSaveFormat()));
+	}
+	auto dir = std::filesystem::path{ setting->getSaveDir() };
+	if (dir.empty()) dir = setting->getDataPath().append(L"screenshot");
+	std::error_code ec;
+	std::filesystem::create_directories(dir, ec);
+	auto ext = getExtOfFormat((ImgFormat)getSaveFormat());
+	auto base = formatFileName(setting->getSaveNameTpl(), ext);
+	auto full = dir / base;
+	if (!std::filesystem::exists(full)) return full.wstring();
+	// 同一秒内连着截两张：模板算出来的名字会重，往后加序号直到撞不上
+	auto stem = std::filesystem::path{ base }.stem().wstring();
+	for (int i = 1; i < 999; ++i) {
+		auto candidate = dir / (stem + L"_" + std::to_wstring(i) + L"." + ext);
+		if (!std::filesystem::exists(candidate)) return candidate.wstring();
+	}
+	return {};
+}
+
+std::wstring Util::formatFileName(const std::wstring& tpl, const std::wstring& ext)
+{
+	SYSTEMTIME st;
+	GetLocalTime(&st);
+	std::wstring result;
+	for (size_t i = 0; i < tpl.size(); ++i)
+	{
+		if (tpl[i] != L'%' || i + 1 >= tpl.size()) {
+			result += tpl[i];
+			continue;
+		}
+		auto c = tpl[i + 1];
+		i++;
+		switch (c)
+		{
+		case L'y': result += std::format(L"{:04d}", st.wYear); break;
+		case L'm': result += std::format(L"{:02d}", st.wMonth); break;
+		case L'd': result += std::format(L"{:02d}", st.wDay); break;
+		case L'H': result += std::format(L"{:02d}", st.wHour); break;
+		case L'M': result += std::format(L"{:02d}", st.wMinute); break;
+		case L'S': result += std::format(L"{:02d}", st.wSecond); break;
+		case L'n': result += std::format(L"{:03d}", st.wMilliseconds); break;
+		case L'%': result += L'%'; break;
+		default:  result += c; break;   // 认不出的占位符原样留下，别把字符吃掉
+		}
+	}
+	// 模板里一个占位符都没有（或者被清空了）时退化成时间戳，
+	// 否则会产出一个只有扩展名的文件名
+	if (result.empty()) result = createFileName(L"");
+	if (!result.empty() && result.back() != L'.') result += L'.';
+	return result + ext;
 }
 
 std::wstring Util::getSaveFilePath(HWND hwnd, const std::wstring& ext)

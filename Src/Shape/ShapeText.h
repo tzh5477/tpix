@@ -25,8 +25,10 @@ public:
 	// 收尾：把 TextBox 里的文字取回来自己画，空文本则把自己从 history 里删掉。
 	// 除了本类内部，WinPin（导出图片前）和 History（删除 shape 前）也会调。
 	void finishEdit();
+	// WinPin 只认 ShapeBase，收尾时从基类转过来走到 finishEdit
+	void finishEditing() override { finishEdit(); }
 	// ToolSub 上的颜色/字号/粗斜体变了，编辑中的话立即生效
-	void applyStyle();
+	void applyStyle() override;
 public:
 	bool isEditing{ false };
 private:
@@ -34,8 +36,22 @@ private:
 	void makeTextLayout();
 	// 从 ToolSub 拉一份当前样式，并重建画刷
 	void setAttr();
+	// 旋转中心。rect 是轴对齐的存法，画的时候才绕这个点转
+	D2D1_POINT_2F center() const;
+	// 把点绕中心转 angle 度（与 D2D 的 Rotation 同一套约定：正角度在屏幕上顺时针）
+	D2D1_POINT_2F rotatedPoint(const D2D1_POINT_2F& p);
+	// 旋转手柄的矩形（在已经转过之后的坐标里），以及顺手更新它
+	void updateRotateDragger();
+	// 画布当前的变换里可能带着 WinPin 的缩放，旋转中心得跟着它落到画布坐标上
+	D2D1_POINT_2F transformCenter(ID2D1DeviceContext* ctx) const;
 private:
 	std::wstring text;
+	// 整块文字绕中心旋转的角度（度）。rect 本身始终轴对齐，旋转只在画的时候施加，
+	// 所以导出走同一条 paint 就能得到带旋转的图，不必额外处理
+	float angle{ 0.f };
+	// 编辑期间把角度临时归零（见 startEdit），这个值记着退出编辑时要还原的角度
+	float editAngle{ 0.f };
+	D2D1_RECT_F rotateDragger{};
 	// 物理像素。ToolSub::getSliderVal() 给的就是物理值，而 TextBox::setFontSize 收逻辑值，
 	// 传过去时要除回 dpi。
 	float fontSize{ 20.f };

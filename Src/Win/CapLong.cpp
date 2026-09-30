@@ -434,9 +434,10 @@ void CapLong::copyToClipboard()
 bool CapLong::saveToFile()
 {
     if (imgData.empty()) return false;
-    auto path = Util::getSaveFilePath(win->hwnd);
+    auto path = Util::resolveSavePath(win->hwnd);
     if (path.empty()) return false;
-    return Util::saveToFile(path, imgW, resultH, imgData.data());
+    auto fmt = (Util::ImgFormat)Util::getSaveFormat();
+    return Util::saveToFile(path, imgW, resultH, imgData.data(), fmt);
 }
 
 void CapLong::pin()

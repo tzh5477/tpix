@@ -1,13 +1,46 @@
 ﻿#include "pch.h"
+#include <shobjidl.h>
 #include "../Lang.h"
 #include "../Setting.h"
+#include "../Util.h"
 #include "WinSetting.h"
 #include "WinSettingCommon.h"
+
+namespace {
+    // 选目录对话框。返回 false 表示用户取消或调用失败，out 不动
+    bool pickFolder(HWND hwnd, std::wstring& out)
+    {
+        Microsoft::WRL::ComPtr<IFileDialog> dialog;
+        auto hr = CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER,
+            IID_PPV_ARGS(dialog.GetAddressOf()));
+        if (FAILED(hr)) return false;
+        DWORD flags{ 0 };
+        dialog->GetOptions(&flags);
+        dialog->SetOptions(flags | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM);
+        if (FAILED(dialog->Show(hwnd))) return false;
+        Microsoft::WRL::ComPtr<IShellItem> item;
+        if (FAILED(dialog->GetResult(item.GetAddressOf()))) return false;
+        PWSTR path{ nullptr };
+        if (FAILED(item->GetDisplayName(SIGDN_FILESYSPATH, &path))) return false;
+        out = path;
+        CoTaskMemFree(path);
+        return true;
+    }
+    // 目录可能很长，按钮只有 240 宽，超出就从尾部截断保留文件名那一段
+    std::wstring shortenPath(const std::wstring& path)
+    {
+        constexpr size_t maxLen{ 30 };
+        if (path.size() <= maxLen) return path;
+        return L"..." + path.substr(path.size() - maxLen);
+    }
+}
 
 WinSettingCommon::WinSettingCommon(Ling::WinBase* parent):Ling::Node(parent)
 {    
     initAutoStartCtrls();
     initLangCtrls();
+    initCapBtnCtrls();
+    initSaveCtrls();
     auto weakThis = getWeakThis();
     // 这个回调一直挂在窗口上，而本节点可能在窗口关闭之前就被菜单切换换掉了，
     // 所以先确认自己还活着再去碰成员
@@ -91,6 +124,175 @@ void WinSettingCommon::initLangCtrls()
     auto border = makeChild<Ling::Node>();
     border->setHeight(1.f);
     border->setBg(0xE0E0E0FF);
+}
+
+// ToolCap 上可配的标注工具。图标码位与 ToolMain 一一对应，
+// 默认主行五项与 ToolCap::defaultShapeIds 必须保持一致 —— 两处（工具条摆按钮、设置界面显示默认态）
+// 各写一份默认值的话，改一边就会冒出"设置里看着是关的、工具条上却出现了"这种事。
+namespace {
+    struct CapBtnDef { const wchar_t* id; const wchar_t* code; const wchar_t* tip; };
+    const CapBtnDef capBtnDefs[]{
+        { L"rect",    L"\ue8e8", L"tool.rect" },
+        { L"ellipse", L"\ue6bc", L"tool.ellipse" },
+        { L"arrow",   L"\ue603", L"tool.arrow" },
+        { L"number",  L"\ue776", L"tool.number" },
+        { L"line",    L"\ue601", L"tool.line" },
+        { L"text",    L"\ue6ec", L"tool.text" },
+        { L"mosaic",  L"\ue82e", L"tool.mosaic" },
+        { L"eraser",  L"\ue6be", L"tool.eraser" },
+    };
+    // 默认值在这份文件里也必须再写一遍：这里是"配置从来没写过"时的兜底，
+    // 与 ToolCap::defaultShapeIds 是同一套语义
+    const std::vector<std::wstring> capBtnDefaultIds{
+        L"rect", L"arrow", L"text", L"mosaic", L"number"
+    };
+}
+
+void WinSettingCommon::applyCapBtnStyle(Ling::Button* btn, bool selected)
+{
+    if (selected) {
+        btn->setBg(0xe6f4ffff);
+        btn->setHoverBg(0xe6f4ffff);
+    }
+    else {
+        btn->setBg(0);
+        btn->setHoverBg(0xF2F2F2ff);
+    }
+}
+
+void WinSettingCommon::initCapBtnCtrls()
+{
+    auto box = makeChild<Ling::Node>();
+    box->setHeight(39.f);
+    box->setFlexDirection(Ling::FlexDirection::Row);
+    box->setAlignItems(Ling::Align::Center);
+
+    auto label = box->makeChild<Ling::Label>();
+    label->setText(Lang::get(L"setting.capBtn"));
+    label->setHeightPercent(100.f);
+    label->setJustifyContent(Ling::Justify::Center);
+    label->setFlexGrow(1.f);
+
+    auto setting = Setting::get();
+    for (auto& def : capBtnDefs)
+    {
+        bool onMain = false;
+        for (auto& id : capBtnDefaultIds) {
+            if (id == def.id) { onMain = true; break; }
+        }
+        auto btn = box->makeChild<Ling::Button>();
+        btn->setWidth(28.f);
+        btn->setHeight(28.f);
+        btn->setText(def.code);
+        btn->setFontFamily(L"icon");
+        btn->setFontSize(13.f);
+        auto selected = setting->getToolFlag(L"toolCap", def.id, onMain);
+        applyCapBtnStyle(btn, selected);
+        // 每次都按同一个默认值去读：没写过的键读出来就是 onMain（与初始显示一致），
+        // 写过之后读到的就是上次写进去的值，所以这里不能换成"上次显示的那个布尔"
+        btn->onClick.add([this, id = std::wstring(def.id), onMain](Ling::Button* b) {
+            auto s = Setting::get();
+            auto next = !s->getToolFlag(L"toolCap", id, onMain);
+            s->setToolFlag(L"toolCap", id, next);
+            applyCapBtnStyle(b, next);
+        });
+    }
+
+    auto border = makeChild<Ling::Node>();
+    border->setHeight(1.f);
+    border->setBg(0xE0E0E0FF);
+}
+
+Ling::Node* WinSettingCommon::makeRow(const std::wstring& labelKey)
+{
+    auto box = makeChild<Ling::Node>();
+    box->setHeight(39.f);
+    box->setFlexDirection(Ling::FlexDirection::Row);
+    box->setAlignItems(Ling::Align::Center);
+
+    auto label = box->makeChild<Ling::Label>();
+    label->setText(Lang::get(labelKey));
+    label->setHeightPercent(100.f);
+    label->setJustifyContent(Ling::Justify::Center);
+    label->setFlexGrow(1.f);
+
+    auto border = makeChild<Ling::Node>();
+    border->setHeight(1.f);
+    border->setBg(0xE0E0E0FF);
+    return box;
+}
+
+void WinSettingCommon::initSaveCtrls()
+{
+    // 保存格式：三种循环切换，按钮上直接写扩展名（大写），比另起一套译名更不容易对不上
+    auto fmtRow = makeRow(L"setting.saveFormat");
+    auto fmtBtn = fmtRow->makeChild<Ling::Button>();
+    fmtBtn->setHeight(28.f);
+    fmtBtn->setWidth(80.f);
+    fmtBtn->setBorder(1.f, 0xE0E0E0FF);
+    fmtBtn->setHoverBg(0xFFFFFFFF);
+    auto applyFormat = [](Ling::Button* btn) {
+        auto ext = Util::getExtOfFormat((Util::ImgFormat)Util::getSaveFormat());
+        std::wstring upper;
+        for (auto c : ext) upper += (wchar_t)(c >= L'a' && c <= L'z' ? c - 32 : c);
+        btn->setText(upper);
+    };
+    applyFormat(fmtBtn);
+    fmtBtn->onClick.add([applyFormat](Ling::Button* btn) {
+        auto next = (Util::getSaveFormat() + 1) % 3;
+        Setting::get()->setSaveFormat(next);
+        applyFormat(btn);
+    });
+
+    auto autoRow = makeRow(L"setting.autoSave");
+    auto autoBtn = autoRow->makeChild<Ling::Button>();
+    autoBtn->setFontFamily(L"icon");
+    autoBtn->setHeightPercent(100.f);
+    autoBtn->setFontSize(18.f);
+    autoBtn->setWidth(60.f);
+    auto applyAutoSave = [](Ling::Button* btn, bool on) {
+        btn->setText(on ? L"\ue688" : L"\ue687");
+        btn->setColor(on ? 0x597ef7ff : 0x666666FF);
+        btn->setHoverColor(on ? 0x597ef7ff : 0x666666FF);
+    };
+    applyAutoSave(autoBtn, Setting::get()->getAutoSave());
+    autoBtn->onClick.add([applyAutoSave](Ling::Button* btn) {
+        auto setting = Setting::get();
+        auto next = !setting->getAutoSave();
+        setting->setAutoSave(next);
+        applyAutoSave(btn, next);
+    });
+
+    auto dirRow = makeRow(L"setting.saveDir");
+    auto dirBtn = dirRow->makeChild<Ling::Button>();
+    dirBtn->setHeight(28.f);
+    dirBtn->setWidth(240.f);
+    dirBtn->setBorder(1.f, 0xE0E0E0FF);
+    dirBtn->setHoverBg(0xFFFFFFFF);
+    auto applyDir = [](Ling::Button* btn) {
+        auto dir = Setting::get()->getSaveDir();
+        // 没设过目录时 Util::resolveSavePath 会落到数据目录下的 screenshot，这里照实说清
+        btn->setText(dir.empty() ? Lang::get(L"setting.saveDirDefault") : shortenPath(dir));
+    };
+    applyDir(dirBtn);
+    dirBtn->onClick.add([this, applyDir](Ling::Button* btn) {
+        std::wstring dir;
+        if (!pickFolder(win->hwnd, dir)) return;
+        Setting::get()->setSaveDir(dir);
+        applyDir(btn);
+    });
+
+    auto tplRow = makeRow(L"setting.saveNameTpl");
+    auto tplBox = tplRow->makeChild<Ling::TextBox>();
+    tplBox->setHeight(28.f);
+    tplBox->setWidth(200.f);
+    tplBox->setBorder(1.f, 0xE0E0E0FF);
+    tplBox->setVerticalCenter(true);
+    tplBox->setText(Setting::get()->getSaveNameTpl());
+    // setText 也会触发一次，写回的是同一个值，多存一次配置而已
+    tplBox->onTextChanged.add([](Ling::TextBox*, const std::wstring& val) {
+        Setting::get()->setSaveNameTpl(val);
+    });
 }
 
 void WinSettingCommon::setAutoStartBtn(Ling::Button* btn)

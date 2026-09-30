@@ -112,9 +112,8 @@ void History::removeHoverShape()
     auto target = win->shapeHover;
     // 正在编辑的话先收尾：TextBox 是 WinPin 上共用的一个，
     // 删了 shape 却留着它显示，下一次编辑就会带着上一次的文字。
-    if (auto txt = dynamic_cast<ShapeText*>(target)) {
-        txt->finishEdit();
-    }
+    // 走 ShapeBase 的统一口子，文字与序号两种可编辑 shape 都能收尾
+    target->finishEditing();
     removeShape(target);
 }
 

@@ -10,7 +10,8 @@ class WinPin : public Ling::WinBase
 {
 public:
 	~WinPin();
-	static void init(int x, int y, int w, int h);
+	// toolId 非空时，贴图窗口一打开就预选该标注工具（由 ToolCap 上的标注按钮直达进来）
+	static void init(int x, int y, int w, int h, const std::wstring& toolId = L"");
 	// 底图不来自 WinCap 的截屏，而是外部给的一块 BGRA、top-down、行紧凑（步长 = w*4）像素。
 	// 滚动截图（WinLong）拼出来的长图走这条路进贴图窗口。
 	static void initFromData(int x, int y, int w, int h, std::vector<BYTE>& data);
@@ -28,8 +29,10 @@ public:
 	// 共用而不是一个 shape 一个：TextBox 构造时会往窗口的十来个事件上挂回调，
 	// N 个实例意味着每次鼠标移动都要跑 N 遍，而同一时刻只可能有一个 ShapeText 在编辑。
 	Ling::TextBox* getTextBox();
-	// ShapeText 进入 / 退出编辑时登记自己。传 nullptr 表示没有在编辑的文本。
-	void setEditingText(ShapeText* shape);
+	// ShapeText / ShapeNumber 进入 / 退出编辑时登记自己。传 nullptr 表示没有元素在编辑。
+	void setEditingShape(ShapeBase* shape);
+	// ToolSub 上的序号样式 / 外圈样式变了，让图上所有已画的序号重排几何与文字
+	void refreshNumberShapes();
 	// ToolSub 上的颜色 / 字号 / 粗体 / 斜体变了，转给正在编辑的文本立即生效
 	void onToolStyleChanged();
 public:
@@ -50,7 +53,8 @@ public:
 	// 贴图窗口的底图。ShapeMosaic 要读它算马赛克块，ShapeEraser 拿它当"擦回原样"的画刷
 	Microsoft::WRL::ComPtr<ID2D1Bitmap1> screenImg;
 private:
-	WinPin(int x, int y, int w, int h, const std::vector<BYTE>* data = nullptr);
+	WinPin(int x, int y, int w, int h, const std::vector<BYTE>* data = nullptr,
+		const std::wstring& initToolId = L"");
 	void onCreated() override;
 	void layout() override;
 	void onMinMaxInfo(MINMAXINFO* mmi) override;
@@ -86,7 +90,7 @@ private:
 	// 文本输入框与当前正在编辑的 ShapeText。非空表示"编辑中"：此时落在文本框里的
 	// 鼠标事件、以及所有键盘事件都归 TextBox，WinPin 自己的那套要让路。
 	Ling::TextBox* textBox{ nullptr };
-	ShapeText* editingText{ nullptr };
+	ShapeBase* editingShape{ nullptr };
 	Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> borderBrush;
 	// 右上角的倍数提示。非空即显示，缩放停手一会儿由定时器清掉
 	Microsoft::WRL::ComPtr<IDWriteTextLayout> scaleTip;

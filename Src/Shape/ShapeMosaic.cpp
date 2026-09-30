@@ -24,7 +24,11 @@ ShapeMosaic::ShapeMosaic(WinPin* win) :ShapeBase(win), draggers{
 	// 松开鼠标后 buildMosaicBitmap 会算出真正的马赛克画刷把它替换掉
 	d2d->deviceContext->CreateSolidColorBrush(D2D1::ColorF(0xF00FF0, 0.38f), brush.GetAddressOf());
 	strokeWidth = toolSub->getSliderVal();
-	isRect = toolSub->isMosaicRect;
+	// 模式 0 = 矩形马赛克，1 = 涂抹马赛克，2 = 智能擦除（三者互斥，见 ToolSub::mosaicMode）。
+	// 智能擦除强制走矩形几何：自由涂抹用实色描边时，圆头的抗锯齿边缘会把底下的文字透出来一圈脏边
+	auto mode = toolSub->mosaicMode;
+	isRect = mode != 1;
+	isErase = mode == 2;
 	// 圆头圆角描边。本项目没有 App::getRoundStrokeStyle 那样的全局缓存，
 	// 就每个 shape 自己持一个 —— StrokeStyle 是不可变的轻对象，代价可以忽略
 	d2d->d2dFactory->CreateStrokeStyle(
@@ -43,6 +47,10 @@ ShapeMosaic::~ShapeMosaic()
 void ShapeMosaic::paint(ID2D1DeviceContext* ctx)
 {
 	if (isRect) {
+		if (eraseBrush) {
+			ctx->FillRectangle(rect, eraseBrush.Get());
+			return;
+		}
 		if (mosaicBrush) {
 			ctx->FillRectangle(rect, mosaicBrush.Get());
 		}
@@ -215,6 +223,10 @@ void ShapeMosaic::mouseUp(const float x, const float y)
 {
 	updateDraggers();
 	// 几何定下来了才算马赛克 —— 这一步要把 GPU 像素读回内存，拖拽过程中每帧做太贵
+	if (isErase) {
+		buildEraseBrush();
+		return;
+	}
 	buildMosaicBitmap();
 }
 
@@ -300,6 +312,9 @@ void ShapeMosaic::resetMosaic()
 {
 	mosaicBitmap.Reset();
 	mosaicBrush.Reset();
+	// 智能擦除的取样色不跟着每一次拖动重算：取样要走一遍 GPU 读回 + 直方图统计，
+	// 而拖动是按帧来的。留着上一次的色，等 mouseUp 再取一次，比退回占位色好看得多
+	if (!isErase) eraseBrush.Reset();
 	mosaicOrigin = { 0.f, 0.f };
 }
 
@@ -355,14 +370,31 @@ void ShapeMosaic::buildMosaicBitmap()
 }
 
 // 把"这个 shape 之前"的画面在包围盒范围内重现一遍，读回像素打成马赛克，再包成画刷。
-// 用 d2d->deviceContext 做离屏绘制是安全的：它是全项目共享的资源工厂，
-// 没有任何地方给它 SetTarget / BeginDraw（窗口绘制走的是各自 surface 或 swap chain 的 context）。
-// 这里 SetTarget → BeginDraw → EndDraw → SetTarget(nullptr) 在函数内闭环，不跨帧持有。
+// 读回这一段与智能擦除共用（见 renderBackground）。
 ComPtr<ID2D1Bitmap> ShapeMosaic::createMosaicBitmap(int blockSize)
 {
 	ComPtr<ID2D1Bitmap> result;
-	if ((!isRect && !path) || win->w <= 0 || win->h <= 0) return result;
-	if (!win->screenImg) return result;
+	std::vector<BYTE> pixels;
+	UINT32 pitch{ 0 }, width{ 0 }, height{ 0 };
+	D2D1_POINT_2F origin{};
+	// 往外扩一个 blockSize 是给马赛克取样用的：边缘那一列色块取样不足会偏色
+	if (!renderBackground(blockSize, pixels, pitch, width, height, origin)) return result;
+	mosaicOrigin = origin;
+	mosaicPixels(pixels.data(), pitch, width, height, blockSize);
+	auto bitmapProps = D2D1::BitmapProperties(D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED));
+	Ling::D2D::get()->deviceContext->CreateBitmap(D2D1::SizeU(width, height),
+		pixels.data(), pitch, &bitmapProps, result.GetAddressOf());
+	return result;
+}
+
+// 用 d2d->deviceContext 做离屏绘制是安全的：它是全项目共享的资源工厂，
+// 没有任何地方给它 SetTarget / BeginDraw（窗口绘制走的是各自 surface 或 swap chain 的 context）。
+// 这里 SetTarget → BeginDraw → EndDraw → SetTarget(nullptr) 在函数内闭环，不跨帧持有。
+bool ShapeMosaic::renderBackground(const int expand, std::vector<BYTE>& pixels,
+	UINT32& pitch, UINT32& width, UINT32& height, D2D1_POINT_2F& origin)
+{
+	if ((!isRect && !path) || win->w <= 0 || win->h <= 0) return false;
+	if (!win->screenImg) return false;
 
 	auto d2d = Ling::D2D::get();
 	auto ctx = d2d->deviceContext.Get();
@@ -375,18 +407,18 @@ ComPtr<ID2D1Bitmap> ShapeMosaic::createMosaicBitmap(int blockSize)
 	else {
 		// 描边后的实际覆盖范围，比 path 本身宽 strokeWidth
 		hr = path->GetWidenedBounds(strokeWidth, roundStyle.Get(), nullptr, &bounds);
-		if (FAILED(hr)) return result;
+		if (FAILED(hr)) return false;
 	}
 
-	// 往外扩一个 blockSize，避免边缘那一列色块取样不足；再夹到窗口范围内
+	// 四周各外扩 expand 像素再夹到窗口范围内
 	const int winW = (int)win->w, winH = (int)win->h;
-	int left = std::max(0, std::min((int)std::floor(bounds.left) - blockSize, winW));
-	int top = std::max(0, std::min((int)std::floor(bounds.top) - blockSize, winH));
-	int right = std::max(0, std::min((int)std::ceil(bounds.right) + blockSize + 1, winW));
-	int bottom = std::max(0, std::min((int)std::ceil(bounds.bottom) + blockSize + 1, winH));
-	if (left >= right || top >= bottom) return result;
+	int left = std::max(0, std::min((int)std::floor(bounds.left) - expand, winW));
+	int top = std::max(0, std::min((int)std::floor(bounds.top) - expand, winH));
+	int right = std::max(0, std::min((int)std::ceil(bounds.right) + expand + 1, winW));
+	int bottom = std::max(0, std::min((int)std::ceil(bounds.bottom) + expand + 1, winH));
+	if (left >= right || top >= bottom) return false;
 
-	mosaicOrigin = { (float)left, (float)top };
+	origin = { (float)left, (float)top };
 	auto localSize = D2D1::SizeU((UINT32)(right - left), (UINT32)(bottom - top));
 
 	D2D1_BITMAP_PROPERTIES1 targetProps{
@@ -396,12 +428,12 @@ ComPtr<ID2D1Bitmap> ShapeMosaic::createMosaicBitmap(int blockSize)
 	};
 	ComPtr<ID2D1Bitmap1> targetBitmap;
 	hr = ctx->CreateBitmap(localSize, nullptr, 0, &targetProps, targetBitmap.GetAddressOf());
-	if (FAILED(hr)) return result;
+	if (FAILED(hr)) return false;
 
 	// 底图 + 排在自己前面且没被撤销的 shape。平移变换让窗口坐标直接落到这块小位图里，
 	// 各 shape 的 paint 不用知道自己被画到了别处
 	ctx->SetTarget(targetBitmap.Get());
-	ctx->SetTransform(D2D1::Matrix3x2F::Translation(-mosaicOrigin.x, -mosaicOrigin.y));
+	ctx->SetTransform(D2D1::Matrix3x2F::Translation(-origin.x, -origin.y));
 	ctx->BeginDraw();
 	ctx->Clear(D2D1::ColorF(0, 0.0f));
 	ctx->DrawBitmap(win->screenImg.Get(), D2D1::RectF(0, 0, win->w, win->h));
@@ -417,7 +449,7 @@ ComPtr<ID2D1Bitmap> ShapeMosaic::createMosaicBitmap(int blockSize)
 	ctx->SetTransform(D2D1::Matrix3x2F::Identity());
 	// 解绑，下面 CopyFromBitmap 才能把它当源读
 	ctx->SetTarget(nullptr);
-	if (FAILED(hr)) return result;
+	if (FAILED(hr)) return false;
 
 	// GPU 上的 target 位图不能直接 Map，得先拷到一块带 CPU_READ 的位图上
 	D2D1_BITMAP_PROPERTIES1 cpuProps{
@@ -427,24 +459,81 @@ ComPtr<ID2D1Bitmap> ShapeMosaic::createMosaicBitmap(int blockSize)
 	};
 	ComPtr<ID2D1Bitmap1> cpuBitmap;
 	hr = ctx->CreateBitmap(localSize, nullptr, 0, &cpuProps, cpuBitmap.GetAddressOf());
-	if (FAILED(hr)) return result;
+	if (FAILED(hr)) return false;
 
 	hr = cpuBitmap->CopyFromBitmap(nullptr, targetBitmap.Get(), nullptr);
-	if (FAILED(hr)) return result;
+	if (FAILED(hr)) return false;
 
 	D2D1_MAPPED_RECT mapped{};
 	hr = cpuBitmap->Map(D2D1_MAP_OPTIONS_READ, &mapped);
-	if (FAILED(hr)) return result;
+	if (FAILED(hr)) return false;
 
-	std::vector<BYTE> pixels((size_t)mapped.pitch * localSize.height);
+	pixels.resize((size_t)mapped.pitch * localSize.height);
 	CopyMemory(pixels.data(), mapped.bits, pixels.size());
 	cpuBitmap->Unmap();
 
-	mosaicPixels(pixels.data(), mapped.pitch, localSize.width, localSize.height, blockSize);
+	pitch = mapped.pitch;
+	width = localSize.width;
+	height = localSize.height;
+	return true;
+}
 
-	auto bitmapProps = D2D1::BitmapProperties(D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED));
-	hr = ctx->CreateBitmap(localSize, pixels.data(), mapped.pitch, &bitmapProps, result.GetAddressOf());
-	return result;
+// 智能擦除要的是"选区周围那圈是什么颜色"，而不是"选区里平均是什么颜色"：
+// 十行文字里文字只占很少一部分像素，取均值会偏灰，取众数才稳定命中底色
+bool ShapeMosaic::sampleBgColor(D2D1_COLOR_F& out)
+{
+	std::vector<BYTE> pixels;
+	UINT32 pitch{ 0 }, width{ 0 }, height{ 0 };
+	D2D1_POINT_2F origin{};
+	// 环带取 4 像素：再窄就容易被抗锯齿边缘带偏，再宽会把相邻内容的颜色混进来
+	constexpr int ringPx{ 4 };
+	if (!renderBackground(ringPx, pixels, pitch, width, height, origin)) return false;
+
+	// 选区在读到这块像素里的位置（可能被窗口边界裁过，所以下面仍然逐点判断）
+	const int inLeft = (int)std::floor(rect.left - origin.x);
+	const int inTop = (int)std::floor(rect.top - origin.y);
+	const int inRight = (int)std::ceil(rect.right - origin.x);
+	const int inBottom = (int)std::ceil(rect.bottom - origin.y);
+
+	auto modal = [&](bool excludeInside) {
+		std::unordered_map<UINT32, int> counter;
+		int best{ 0 };
+		UINT32 bestKey{ 0 };
+		for (UINT32 y = 0; y < height; ++y) {
+			auto row = pixels.data() + y * pitch;
+			for (UINT32 x = 0; x < width; ++x) {
+				bool inside = (int)x >= inLeft && (int)x < inRight && (int)y >= inTop && (int)y < inBottom;
+				if (excludeInside && inside) continue;
+				auto px = row + x * 4;
+				// 全透明处没有颜色可言，别让它当上众数
+				if (px[3] < 128) continue;
+				// 键只装 RGB：alpha 恒为 255，拆开统计反而会把同一底色分成好几份
+				UINT32 key = ((UINT32)px[2] << 16) | ((UINT32)px[1] << 8) | px[0];
+				auto n = ++counter[key];
+				if (n > best) {
+					best = n;
+					bestKey = key;
+				}
+			}
+		}
+		if (best == 0) return false;
+		out = D2D1::ColorF(((bestKey >> 16) & 0xFF) / 255.f,
+			((bestKey >> 8) & 0xFF) / 255.f, (bestKey & 0xFF) / 255.f);
+		return true;
+	};
+	// 选区正好贴着窗口边时外圈被裁没了，退化成整块（含选区内）的众数 —— 纯色底上结果一致
+	if (modal(true)) return true;
+	return modal(false);
+}
+
+void ShapeMosaic::buildEraseBrush()
+{
+	eraseBrush.Reset();
+	if (rect.right <= rect.left || rect.bottom <= rect.top) return;
+	D2D1_COLOR_F color{};
+	if (!sampleBgColor(color)) return;
+	Ling::D2D::get()->deviceContext->CreateSolidColorBrush(color, eraseBrush.GetAddressOf());
+	win->refresh();
 }
 
 // 按 blockSize 分块，每块取平均色再整块填回去 —— 就是马赛克

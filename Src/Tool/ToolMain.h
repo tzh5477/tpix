@@ -9,6 +9,9 @@ public:
 	~ToolMain();
 	static void init();
 	float getBtnCenterX();
+	// 选中 id 对应的工具（等同于用户点了那个按钮，但不带"再点一次取消选中"的开关语义）。
+	// 从 ToolCap 上一个标注工具直接进贴图窗口时用它预选，省掉第二步点击
+	void selectTool(const std::wstring& id);
 	// 取消当前选中：清空 curId、把所有按钮恢复常态配色，并重排工具组（curId 空了 ToolSub 会隐藏）。
 	void cancelSelect();
 public:

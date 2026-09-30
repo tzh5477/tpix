@@ -224,6 +224,60 @@ void Setting::setToolNum(const std::wstring& tool, const std::wstring& key, floa
     save();
 }
 
+JsonObject Setting::getSaveObj()
+{
+	auto obj = configObj.GetNamedObject(L"save", nullptr);
+	if (!obj) {
+		obj = JsonObject();
+		configObj.SetNamedValue(L"save", obj);
+	}
+	return obj;
+}
+
+int Setting::getSaveFormat()
+{
+	return static_cast<int>(getSaveObj().GetNamedNumber(L"format", 0.0));
+}
+
+void Setting::setSaveFormat(int val)
+{
+	getSaveObj().SetNamedValue(L"format", JsonValue::CreateNumberValue(static_cast<double>(val)));
+	save();
+}
+
+bool Setting::getAutoSave()
+{
+	return getSaveObj().GetNamedBoolean(L"auto", false);
+}
+
+void Setting::setAutoSave(bool val)
+{
+	getSaveObj().SetNamedValue(L"auto", JsonValue::CreateBooleanValue(val));
+	save();
+}
+
+std::wstring Setting::getSaveDir()
+{
+	return std::wstring{ getSaveObj().GetNamedString(L"dir", L"") };
+}
+
+void Setting::setSaveDir(const std::wstring& dir)
+{
+	getSaveObj().SetNamedValue(L"dir", JsonValue::CreateStringValue(dir));
+	save();
+}
+
+std::wstring Setting::getSaveNameTpl()
+{
+	return std::wstring{ getSaveObj().GetNamedString(L"nameTpl", L"%y%m%d_%H%M%S") };
+}
+
+void Setting::setSaveNameTpl(const std::wstring& tpl)
+{
+	getSaveObj().SetNamedValue(L"nameTpl", JsonValue::CreateStringValue(tpl));
+	save();
+}
+
 long long Setting::getUpdateCheckDay()
 {
     auto common = configObj.GetNamedObject(L"common", nullptr);

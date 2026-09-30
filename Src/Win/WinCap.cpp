@@ -5,6 +5,7 @@
 #include "CutMask.h"
 #include "../App.h"
 #include "../Util.h"
+#include "../Setting.h"
 #include "../Lang.h"
 #include "../Update.h"
 #include "CapLong.h"
@@ -592,13 +593,13 @@ void WinCap::enterLiveStage()
     refresh();
 }
 
-void WinCap::startPin()
+void WinCap::startPin(const std::wstring& toolId)
 {
     if (!cutMask->hasRect()) return;
     auto& maskRect = cutMask->maskRect;
     // WinPin 构造里会回头来取 getCutImg()，所以得先把它建起来再关自己
     WinPin::init(int(maskRect.left) + x, int(maskRect.top) + y,
-        int(maskRect.right - maskRect.left), int(maskRect.bottom - maskRect.top));
+        int(maskRect.right - maskRect.left), int(maskRect.bottom - maskRect.top), toolId);
     close();
 }
 
@@ -743,19 +744,22 @@ void WinCap::saveToFile()
         SetWindowPos(toolCap->hwnd, topmost ? HWND_TOPMOST : HWND_NOTOPMOST,
             0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
     };
-    setToolTopmost(false);
-    auto path = Util::getSaveFilePath(hwnd);
+    // 自动保存不弹对话框，也就没有"对话框被工具条盖住"这回事，不用动层级
+    auto autoSave = Setting::get()->getAutoSave();
+    if (!autoSave) setToolTopmost(false);
+    auto path = Util::resolveSavePath(hwnd);
     // 对话框关掉后本窗口会被激活（会盖住降下来的工具条），所以只要还留在截图里，
     // 工具条就得重新压回最上层
     if (path.empty()) { //用户取消了
-        setToolTopmost(true);
+        if (!autoSave) setToolTopmost(true);
         return;
     }
-    if (Util::saveToFile(path, cw, ch, pixels.data())) {
+    auto fmt = (Util::ImgFormat)Util::getSaveFormat();
+    if (Util::saveToFile(path, cw, ch, pixels.data(), fmt)) {
         close();
     }
     else {
-        setToolTopmost(true);
+        if (!autoSave) setToolTopmost(true);
     }
 }
 

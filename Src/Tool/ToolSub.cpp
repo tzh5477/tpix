@@ -2,6 +2,8 @@
 #include "../Win/WinPin.h"
 #include "../Lang.h"
 #include "../Setting.h"
+#include "../History.h"
+#include "../Shape/ShapeNumber.h"
 #include "../Tip.h"
 #include "ToolSub.h"
 #include "ToolMain.h"
@@ -36,6 +38,9 @@ namespace {
 		}
 		return nullptr;
 	}
+	// 外圈样式循环按钮上显示的三样东西：实心圆 / 实心方 / 一条横线（表示"没有外圈"）。
+	// 这三个字符在任何语言的字体里都在，不必跟着语言包走
+	const wchar_t* RingSample[]{ L"\u25cf", L"\u25a0", L"\u2014" };
 }
 
 ToolSub::ToolSub(WinPin* win) :Ling::WinBase(), win(win)
@@ -146,12 +151,32 @@ void ToolSub::showArrowTools()
 	initColorBtns();
 }
 
+int ToolSub::getNumberSampleVal()
+{
+	int maxVal{ 0 };
+	for (auto& shape : win->history->shapes) {
+		auto number = dynamic_cast<ShapeNumber*>(shape.get());
+		if (number && !number->isUndo && number->val > maxVal) {
+			maxVal = number->val;
+		}
+	}
+	return maxVal > 0 ? maxVal : 1;
+}
+
 void ToolSub::showNumberTools()
 {
 	// 序号的滑块调的是圆半径（ShapeNumber 直接拿 getSliderVal 当 r），不是线宽
 	beginTool(L"number");
-	initSize(1, true);
+	initSize(3, true);
 	makeToggleBtn(L"\ue605", &isNumberFill, L"tool.numberFill", L"fill");
+	// 两个样式按钮上显示的是"当前编号在这个样式下长什么样"，比写死的图标好认：
+	// 图上已经有 3 个序号时，这里就显示 3 / c / C / III / 三
+	auto sampleVal = getNumberSampleVal();
+	makeCycleBtn(L"tool.numberStyle", L"numStyle", &numberStyle, 5,
+		[sampleVal](int index) { return ShapeNumber::serializeVal(sampleVal, (ShapeNumber::NumStyle)index); });
+	// 圆 / 方 / 无外圈，用几何符号，不依赖某一种语言
+	makeCycleBtn(L"tool.numberRing", L"ringStyle", &numberRing, 3,
+		[](int index) { return std::wstring{ RingSample[index] }; });
 	initSlider();
 	initColorBtns();
 }
@@ -177,10 +202,15 @@ void ToolSub::showTextTools()
 
 void ToolSub::showMosaicTools()
 {
-	// 这两个没有颜色按钮、窗口窄，initSize 要居中对齐到按钮上
+	// 这两种模式没有颜色按钮、窗口窄，initSize 要居中对齐到按钮上
 	beginTool(L"mosaic");
 	initSize(1, false, true);
-	makeToggleBtn(L"\ue602", &isMosaicRect, L"tool.rectFill", L"rect");
+	// 三个模式共用一个循环按钮：矩形马赛克 / 涂抹马赛克 / 智能擦除。
+	// 三个图标码位都是项目里已经在用的（矩形填充、线条、橡皮擦），不存在画成豆腐块的风险
+	static const wchar_t* mosaicIcons[]{ L"\ue602", L"\ue601", L"\ue6be" };
+	// 按钮上显示的是当前模式，提示写的是"每点一次就换到下一种模式"，所以只挂一条
+	makeCycleBtn(L"tool.mosaicMode", L"mode", &mosaicMode, 3,
+		[](int index) { return std::wstring{ mosaicIcons[index] }; }, true, false);
 	initSlider();
 }
 
@@ -353,6 +383,35 @@ Ling::Button* ToolSub::makeToggleBtn(const std::wstring& text, bool* flag, const
 		applyToggleStyle(b, *flag);
 		Setting::get()->setToolFlag(curToolId, cfgKey, *flag);
 		win->onToolStyleChanged();
+	});
+	return btn;
+}
+
+Ling::Button* ToolSub::makeCycleBtn(const std::wstring& tipKey, const std::wstring& cfgKey,
+	int* index, int count, std::function<std::wstring(int)> textOf,
+	bool useIconFont, bool refreshNumbers)
+{
+	// 与 makeToggleBtn 同理：上一次的选择在配置文件里，取回来盖掉内存里那份。
+	// 夹值域是因为配置文件可能被手工改坏，而这个值要用来 % count，越界就取到表外了
+	*index = std::clamp((int)Setting::get()->getToolNum(curToolId, cfgKey, 0.f), 0, count - 1);
+	auto btn = contentNode->makeChild<Ling::Button>();
+	btn->setHeight(btnSize - 2.5);
+	btn->setFlexGrow(1.f);
+	btn->setFontSize(13.f);
+	if (useIconFont) btn->setFontFamily(L"icon");
+	btn->setText(textOf(*index));
+	// 循环按钮没有"开 / 关"两种态，统一用常态配色
+	btn->setBg(0);
+	btn->setHoverBg(0xF2F2F2ff);
+	tip->bind(btn, Lang::get(tipKey));
+	// index 与 textOf 捕获到 lambda 里，按钮重建时会跟着 contentNode 一起销毁，
+	// 而 ToolSub 与 WinPin 同生命周期，index 指向的成员不会先没
+	btn->onClick.add([this, index, count, cfgKey, textOf, btn, refreshNumbers](Ling::Button*) {
+		*index = (*index + 1) % count;
+		Setting::get()->setToolNum(curToolId, cfgKey, (float)*index);
+		btn->setText(textOf(*index));
+		// 已经画在图上的序号跟着换样子，而不是等下一次新建才生效
+		if (refreshNumbers) win->refreshNumberShapes();
 	});
 	return btn;
 }
