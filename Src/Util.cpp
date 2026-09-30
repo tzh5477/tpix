@@ -111,6 +111,72 @@ namespace {
 		return {};
 	}
 
+	// 把 DIB（CF_DIB / CF_DIBV5 给的那块内存）转成 BGRA top-down。
+	// 只处理 BI_RGB 与 BI_BITFIELDS 的 24/32 bpp —— 剪贴板里出现的 4/8 bpp 调色板图
+	// 基本只来自老程序，认不出来就当没有图片，不强撑
+	bool dibToBGRA(BYTE* dib, std::vector<BYTE>& out, DWORD& w, DWORD& h)
+	{
+		auto header = reinterpret_cast<BITMAPINFOHEADER*>(dib);
+		if (header->biBitCount != 24 && header->biBitCount != 32) return false;
+		if (header->biCompression != BI_RGB && header->biCompression != BI_BITFIELDS) return false;
+		const int iw = header->biWidth;
+		const int ih = std::abs(header->biHeight);
+		if (iw <= 0 || ih <= 0) return false;
+		const bool bottomUp = header->biHeight > 0;
+		const int bpp = header->biBitCount / 8;
+		// 行按 4 字节对齐，这是 DIB 的规矩，与我们的行紧凑布局不一样
+		const int srcPitch = ((iw * bpp + 3) / 4) * 4;
+		UINT32 maskR{ 0x00FF0000 }, maskG{ 0x0000FF00 }, maskB{ 0x000000FF }, maskA{ 0 };
+		if (header->biCompression == BI_BITFIELDS) {
+			// BITMAPV5HEADER 的掩码就排在头后面；BITMAPINFOHEADER 带 BI_BITFIELDS 时同样如此
+			auto masks = reinterpret_cast<UINT32*>(dib + sizeof(BITMAPINFOHEADER));
+			maskR = masks[0]; maskG = masks[1]; maskB = masks[2];
+			if (header->biSize >= sizeof(BITMAPV5HEADER)) {
+				maskA = reinterpret_cast<BITMAPV5HEADER*>(dib)->bV5AlphaMask;
+			}
+		}
+		auto shift = [](UINT32 mask) -> int {
+			int n{ 0 };
+			while (mask && (mask & 1) == 0) { mask >>= 1; n++; }
+			return n;
+		};
+		const int sR = shift(maskR), sG = shift(maskG), sB = shift(maskB), sA = shift(maskA);
+		out.assign((size_t)iw * ih * 4, 0);
+		for (int y = 0; y < ih; ++y)
+		{
+			auto sy = bottomUp ? (ih - 1 - y) : y;
+			auto srcRow = dib + header->biSize + (size_t)sy * srcPitch;
+			auto dstRow = out.data() + (size_t)y * iw * 4;
+			for (int x = 0; x < iw; ++x)
+			{
+				UINT32 px{ 0 };
+				memcpy(&px, srcRow + x * bpp, bpp);
+				UINT32 r = (px & maskR) >> sR;
+				UINT32 g = (px & maskG) >> sG;
+				UINT32 b = (px & maskB) >> sB;
+				// 掩码位数可能不足 8（比如 565），按比例拉回 0–255，否则颜色整体偏暗
+				auto norm = [](UINT32 v, UINT32 mask) -> UINT32 {
+					if (mask == 0) return 0;
+					int bits{ 0 };
+					for (UINT32 m = mask; m; m >>= 1) bits++;
+					if (bits >= 8) return v & 0xFF;
+					auto maxV = (1u << bits) - 1;
+					return (v * 255 + maxV / 2) / maxV;
+				};
+				r = norm(r, maskR); g = norm(g, maskG); b = norm(b, maskB);
+				dstRow[x * 4 + 0] = (BYTE)b;
+				dstRow[x * 4 + 1] = (BYTE)g;
+				dstRow[x * 4 + 2] = (BYTE)r;
+				// 32bpp 且没给 alpha 掩码时，那 8 位大多是不透明，按不透明处理 ——
+				// 照掩码算出来是 0，整张图会变全透明
+				dstRow[x * 4 + 3] = (BYTE)(maskA ? (px & maskA) >> sA : 0xFF);
+			}
+		}
+		w = (DWORD)iw;
+		h = (DWORD)ih;
+		return true;
+	}
+
 	// 解码成 BGRA top-down 行紧凑。源可能是灰度 / CMYK / BGR 之类，统一走一次格式转换，
 	// 调用方拿到的永远是同一套布局
 	bool decodeFrame(IWICImagingFactory* factory, IWICBitmapDecoder* decoder,
@@ -272,6 +338,48 @@ bool Util::decodeImageBytes(BYTE* buf, DWORD size, std::vector<BYTE>& out, DWORD
 	if (FAILED(factory->CreateDecoderFromStream(stream.Get(), nullptr,
 		WICDecodeMetadataCacheOnDemand, decoder.GetAddressOf()))) return false;
 	return decodeFrame(factory.Get(), decoder.Get(), out, w, h);
+}
+
+Util::ClipContent Util::readClipboard(std::vector<BYTE>& img, int& w, int& h, std::wstring& text)
+{
+	if (!OpenClipboard(nullptr)) return ClipContent::None;
+	DWORD dw{ 0 }, dh{ 0 };
+	bool got{ false };
+	auto cfPng = RegisterClipboardFormatW(L"PNG");
+	if (cfPng != 0) {
+		auto handle = GetClipboardData(cfPng);
+		if (handle) {
+			auto buf = reinterpret_cast<BYTE*>(GlobalLock(handle));
+			auto size = GlobalSize(handle);
+			if (buf && size) got = decodeImageBytes(buf, (DWORD)size, img, dw, dh);
+			if (buf) GlobalUnlock(handle);
+		}
+	}
+	if (!got) {
+		auto handle = GetClipboardData(CF_DIBV5);
+		if (!handle) handle = GetClipboardData(CF_DIB);
+		if (handle) {
+			auto buf = reinterpret_cast<BYTE*>(GlobalLock(handle));
+			if (buf) got = dibToBGRA(buf, img, dw, dh);
+			if (buf) GlobalUnlock(handle);
+		}
+	}
+	if (got) {
+		w = (int)dw;
+		h = (int)dh;
+		CloseClipboard();
+		return ClipContent::Image;
+	}
+	if (auto handle = GetClipboardData(CF_UNICODETEXT)) {
+		if (auto buf = reinterpret_cast<wchar_t*>(GlobalLock(handle))) {
+			text = buf;
+			GlobalUnlock(handle);
+			CloseClipboard();
+			return ClipContent::Text;
+		}
+	}
+	CloseClipboard();
+	return ClipContent::None;
 }
 
 bool Util::saveToFile(const std::wstring& path, const int w, const int h, BYTE* data)

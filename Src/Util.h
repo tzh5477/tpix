@@ -5,6 +5,9 @@
 
 // 图像输出相关的工具函数。data 一律要求 BGRA、top-down、行紧凑（步长 = w*4），
 // 这也是 WinPin::getImagePixels 交出来的格式。
+// 剪贴板当前内容的形态。图与文都有可能同时在剪贴板上，这里按"图优先"只报一种
+enum class ClipContent { None, Image, Text };
+
 class Util
 {
 public:
@@ -47,6 +50,10 @@ public:
 	// 解码图片文件成 BGRA top-down 行紧凑。格式由 WIC 自己认（png/jpg/webp/bmp/gif 都行），
 	// 认不出来返回 false
 	static bool loadImageBytes(const std::wstring& path, std::vector<BYTE>& out, DWORD& w, DWORD& h);
+	// 读剪贴板：有图就出图（BGRA top-down），没图有文字就出文字。
+	// 图片优先取 PNG（浏览器和不少现代程序放的就是它，alpha 保得住），
+	// 回退 CF_DIBV5 / CF_DIB——这两种给的是 DIB，只认 24/32bpp 的 BI_RGB 与 BI_BITFIELDS
+	static ClipContent readClipboard(std::vector<BYTE>& img, int& w, int& h, std::wstring& text);
 	// 同上，但源是内存里的一段编码数据（剪贴板上的 PNG 就是这种）
 	static bool decodeImageBytes(BYTE* buf, DWORD size, std::vector<BYTE>& out, DWORD& w, DWORD& h);
 };
