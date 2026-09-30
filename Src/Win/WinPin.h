@@ -20,6 +20,10 @@ public:
 	static bool hasWindow();
 	// 退出流程里调：窗口对象是文件级静态变量，交给静态析构就在 CoUninitialize 之后了
 	static void dispose();
+	// 退出前把还开着的贴图合成存盘（数据目录 pin/），元数据写进 config.json 的 pin 组
+	static void saveAll();
+	// 启动时把上次退出前的贴图摆回原位，属性一并恢复
+	static void restoreAll();
 	void layoutTools();
 	// 把底图与所有未撤销的 shape 合成后写入剪切板，成功即关窗
 	void copyToClipboard();
@@ -107,6 +111,8 @@ private:
 	// 贴图属性。锁定不是改窗口样式实现的（Ling 自己管拖动），靠 onDown 里早退；
 	// 不透明度也不是 WS_EX_LAYERED（窗口带 WS_EX_NOREDIRECTIONBITMAP，与分层窗口冲突），
 	// 直接调 composition 树根节点的不透明度
+	float opacity{ 1.f };
+	bool isRounded{ false };
 	bool isLocked{ false };
 	std::wstring pinTitle;
 	Microsoft::WRL::ComPtr<IDWriteTextLayout> titleLayout;

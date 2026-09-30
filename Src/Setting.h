@@ -52,6 +52,12 @@ public:
 	// 从来没查过返回 0。一天最多查一次服务端，靠它记账 —— 每次空闲都去请求纯属浪费人家的流量
 	long long getUpdateCheckDay();
 	void setUpdateCheckDay(long long day);
+	// 贴图持久化。数组里每项是一张贴图的落点 / 尺寸 / 属性，图片文件在数据目录 pin/ 下。
+	// 序列化由 WinPin 自己做，这里只管存取
+	JsonArray getPins();
+	void setPins(const JsonArray& arr);
+	bool getRestorePins();
+	void setRestorePins(bool val);
 private:
 	Setting();
 	// toolPin.<tool> 那个 JsonObject。缺哪一层就现建一层挂上去 ——
@@ -59,6 +65,8 @@ private:
 	JsonObject getToolObj(const std::wstring& tool);
 	// save 那一组，缺则现建一层挂上去（理由同 getToolObj）
 	JsonObject getSaveObj();
+	// pin 那一组（贴图持久化），缺则现建
+	JsonObject getPinObj();
 	std::filesystem::path initDataPath();
 	// 决定配置文件用哪一份：exe 同目录有 config.json 就用它（绿色版，配置跟着程序走），
 	// 否则用 %appdata%\ScreenCapture\config.json。二者只认一个，读哪儿就写哪儿。

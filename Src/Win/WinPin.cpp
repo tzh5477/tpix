@@ -13,6 +13,7 @@
 #include "../Update.h"
 
 using namespace Microsoft::WRL;
+using namespace winrt::Windows::Data::Json;
 namespace {
 	std::vector<std::unique_ptr<WinPin>> winPins;
 
@@ -129,6 +130,71 @@ bool WinPin::hasWindow()
 void WinPin::dispose()
 {
 	winPins.clear();
+}
+
+// 贴图持久化：退出时把每张贴图合成一张 PNG 存进数据目录 pin/，
+// 落点 / 尺寸 / 属性写进 config.json。下次启动 restoreAll 按原样摆回去。
+// 顺序上 saveAll 必须在 dispose 之前 —— dispose 一跑位图就没了
+void WinPin::saveAll()
+{
+	auto arr = Setting::get()->getPins();
+	arr.Clear();
+	auto keep = Setting::get()->getRestorePins() && !winPins.empty();
+	if (keep)
+	{
+		auto dir = Setting::get()->getDataPath() / L"pin";
+		std::error_code ec;
+		std::filesystem::create_directories(dir, ec);
+		// 整目录重写：上一次留下的文件与这次的编号对不上，留着只会越积越多
+		for (auto& entry : std::filesystem::directory_iterator(dir)) {
+			std::filesystem::remove_all(entry.path(), ec);
+		}
+		int index{ 0 };
+		for (auto& pin : winPins)
+		{
+			std::vector<BYTE> pixels;
+			D2D1_SIZE_U size{};
+			if (!pin->getImagePixels(pixels, size)) continue;
+			auto name = std::format(L"{}.png", index++);
+			if (!Util::saveToFile((dir / name).wstring(), (int)size.width, (int)size.height, pixels.data())) continue;
+			JsonObject obj;
+			obj.SetNamedValue(L"img", JsonValue::CreateStringValue(name));
+			obj.SetNamedValue(L"x", JsonValue::CreateNumberValue((double)pin->x));
+			obj.SetNamedValue(L"y", JsonValue::CreateNumberValue((double)pin->y));
+			obj.SetNamedValue(L"w", JsonValue::CreateNumberValue((double)size.width));
+			obj.SetNamedValue(L"h", JsonValue::CreateNumberValue((double)size.height));
+			obj.SetNamedValue(L"opacity", JsonValue::CreateNumberValue((double)pin->opacity));
+			obj.SetNamedValue(L"round", JsonValue::CreateBooleanValue(pin->isRounded));
+			obj.SetNamedValue(L"lock", JsonValue::CreateBooleanValue(pin->isLocked));
+			obj.SetNamedValue(L"title", JsonValue::CreateStringValue(pin->pinTitle));
+			arr.Append(obj);
+		}
+		keep = arr.Size() > 0;
+	}
+	Setting::get()->setPins(arr);
+}
+
+void WinPin::restoreAll()
+{
+	if (!Setting::get()->getRestorePins()) return;
+	auto dir = Setting::get()->getDataPath() / L"pin";
+	for (auto&& value : Setting::get()->getPins())
+	{
+		auto obj = value.GetObject();
+		auto name = std::wstring{ obj.GetNamedString(L"img", L"") };
+		if (name.empty()) continue;
+		std::vector<BYTE> data;
+		DWORD w{ 0 }, h{ 0 };
+		if (!Util::loadImageBytes((dir / name).wstring(), data, w, h)) continue;
+		initFromData((int)obj.GetNamedNumber(L"x", 0.0), (int)obj.GetNamedNumber(L"y", 0.0),
+			(int)w, (int)h, data);
+		// initFromData 刚把新窗口压进 winPins，back() 就是它
+		auto pin = winPins.back().get();
+		pin->setOpacity((float)obj.GetNamedNumber(L"opacity", 1.0));
+		pin->setRounded(obj.GetNamedBoolean(L"round", false));
+		pin->setLocked(obj.GetNamedBoolean(L"lock", false));
+		pin->setPinTitle(std::wstring{ obj.GetNamedString(L"title", L"") });
+	}
 }
 
 D2D1_SIZE_U WinPin::getImgSize() const

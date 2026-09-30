@@ -26,6 +26,9 @@ void App::init()
 
 void App::dispose()
 {
+    // 退出前把还开着的贴图存一份，下次启动 restoreAll 摆回原位。
+    // 必须在 WinPin::dispose 之前：窗口一放掉，底图位图就跟着没了
+    WinPin::saveAll();
     // 窗口对象是文件级静态变量，交给静态析构就晚了（那时 CoUninitialize 已经跑完），
     // 所以趁这里把还开着的窗口先放掉
     WinPin::dispose();
@@ -117,6 +120,7 @@ App::App()
         bool flag = app->refuseSecondInstance();
         if (flag) return;
         Tray::init();
+		WinPin::restoreAll();   // 上次退出前贴着的图，回到原来的位置
 		// 开机自启不启动截图；--enter=tray 也一样，升级完重启新版本走的就是它 ——
 		// 都是"只挂个托盘图标待命"，这条路上一个窗口都不建，图形设备也就根本不会创建
 		if (app->args[L"--auto-start"] == L"true" || app->args[L"--enter"] == L"tray") {

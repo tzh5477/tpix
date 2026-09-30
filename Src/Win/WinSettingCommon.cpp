@@ -43,6 +43,7 @@ WinSettingCommon::WinSettingCommon(Ling::WinBase* parent):Ling::Node(parent)
     initCapBtnCtrls();
     initSaveCtrls();
     initHistoryCtrls();
+    initPinCtrls();
     auto weakThis = getWeakThis();
     // 这个回调一直挂在窗口上，而本节点可能在窗口关闭之前就被菜单切换换掉了，
     // 所以先确认自己还活着再去碰成员
@@ -352,6 +353,27 @@ void WinSettingCommon::initHistoryCtrls()
     openBtn->setBorder(1.f, 0xE0E0E0FF);
     openBtn->setHoverBg(0xFFFFFFFF);
     openBtn->onClick.add([](Ling::Button*) { WinHistory::init(); });
+}
+
+void WinSettingCommon::initPinCtrls()
+{
+    auto row = makeRow(L"setting.restorePins");
+    auto btn = row->makeChild<Ling::Button>();
+    btn->setFontFamily(L"icon");
+    btn->setHeightPercent(100.f);
+    btn->setFontSize(18.f);
+    btn->setWidth(60.f);
+    auto apply = [](Ling::Button* btn, bool on) {
+        btn->setText(on ? L"\ue688" : L"\ue687");
+        btn->setColor(on ? 0x597ef7ff : 0x666666FF);
+        btn->setHoverColor(on ? 0x597ef7ff : 0x666666FF);
+    };
+    apply(btn, Setting::get()->getRestorePins());
+    btn->onClick.add([apply](Ling::Button* b) {
+        auto next = !Setting::get()->getRestorePins();
+        Setting::get()->setRestorePins(next);
+        apply(b, next);
+    });
 }
 
 void WinSettingCommon::setAutoStartBtn(Ling::Button* btn)

@@ -304,6 +304,38 @@ void Setting::setClipboardHistory(bool val)
 	save();
 }
 
+JsonObject Setting::getPinObj()
+{
+	auto obj = configObj.GetNamedObject(L"pin", nullptr);
+	if (!obj) {
+		obj = JsonObject();
+		configObj.SetNamedValue(L"pin", obj);
+	}
+	return obj;
+}
+
+winrt::Windows::Data::Json::JsonArray Setting::getPins()
+{
+	return getPinObj().GetNamedArray(L"items", nullptr);
+}
+
+void Setting::setPins(const winrt::Windows::Data::Json::JsonArray& arr)
+{
+	getPinObj().SetNamedValue(L"items", arr);
+	save();
+}
+
+bool Setting::getRestorePins()
+{
+	return getPinObj().GetNamedBoolean(L"restore", true);
+}
+
+void Setting::setRestorePins(bool val)
+{
+	getPinObj().SetNamedValue(L"restore", JsonValue::CreateBooleanValue(val));
+	save();
+}
+
 long long Setting::getUpdateCheckDay()
 {
     auto common = configObj.GetNamedObject(L"common", nullptr);
