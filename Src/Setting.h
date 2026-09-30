@@ -42,6 +42,12 @@ public:
 	void setSaveDir(const std::wstring& dir);
 	std::wstring getSaveNameTpl();
 	void setSaveNameTpl(const std::wstring& tpl);
+	// 历史（截图 + 剪贴板）最多留多少条。超了从最旧那条开始删，连文件一起删
+	int getHistoryLimit();
+	void setHistoryLimit(int val);
+	// 是否记录剪贴板历史。关掉之后监听还挂着（省得重建窗口），只是不再往库里写
+	bool getClipboardHistory();
+	void setClipboardHistory(bool val);
 	// 上次检查更新是哪一天（std::chrono::days 的计数，即 1970-01-01 以来的天数），
 	// 从来没查过返回 0。一天最多查一次服务端，靠它记账 —— 每次空闲都去请求纯属浪费人家的流量
 	long long getUpdateCheckDay();

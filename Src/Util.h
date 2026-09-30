@@ -40,4 +40,13 @@ public:
 	// 用 quirc 识别图里的二维码，返回识别到的内容，没识别到返回空串。
 	// 图里有多个码时用换行拼在一起
 	static std::wstring decodeQrCode(const int w, const int h, BYTE* data);
+	// 缩放 BGRA 图。缩略图用，块平均而不是最近邻 —— 最近邻在小图上会出摩尔纹。
+	// 入参不合法返回 false，dst 不动
+	static bool resizeBGRA(const int srcW, const int srcH, BYTE* srcData,
+		const int dstW, const int dstH, std::vector<BYTE>& dstData);
+	// 解码图片文件成 BGRA top-down 行紧凑。格式由 WIC 自己认（png/jpg/webp/bmp/gif 都行），
+	// 认不出来返回 false
+	static bool loadImageBytes(const std::wstring& path, std::vector<BYTE>& out, DWORD& w, DWORD& h);
+	// 同上，但源是内存里的一段编码数据（剪贴板上的 PNG 就是这种）
+	static bool decodeImageBytes(BYTE* buf, DWORD size, std::vector<BYTE>& out, DWORD& w, DWORD& h);
 };

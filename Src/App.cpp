@@ -3,9 +3,11 @@
 #include "Setting.h"
 #include "Tray.h"
 #include "Lang.h"
+#include "ShotHistory.h"
 #include "Update.h"
 #include "./Win/WinCap.h"
 #include "./Win/WinPin.h"
+#include "./Win/WinHistory.h"
 #include "./Win/WinSetting.h"
 
 std::unique_ptr<App> app;
@@ -28,6 +30,8 @@ void App::dispose()
     WinPin::dispose();
     WinCap::dispose();
     WinSetting::dispose();
+    WinHistory::dispose();
+    ShotHistory::dispose();   // 必须在 Setting 之前：析构里要写索引文件
     Lang::dispose();
     Setting::dispose();
     app.reset();
@@ -101,6 +105,9 @@ App::App()
     app->onBeforeQuit.add([]() { WinCap::stopIfRecording(); });
     Setting::init();
     Lang::init();
+    // 建在 Setting 之后：历史目录从数据目录来。剪贴板监听也在这里挂上，
+    // 用完即走（--auto-quit）那条路同样要记历史，所以不跟着托盘走
+    ShotHistory::init();
     if (app->args[L"--auto-quit"] == L"true") {
         WinCap::init();
     }

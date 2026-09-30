@@ -36,6 +36,12 @@
     <ClCompile Include="Tray.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
+    <ClCompile Include="ShotHistory.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="Win\WinHistory.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
     <ClCompile Include="Win\WinSetting.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
@@ -154,6 +160,12 @@
       <Filter>头文件</Filter>
     </ClInclude>
     <ClInclude Include="Setting.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="ShotHistory.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Win\WinHistory.h">
       <Filter>头文件</Filter>
     </ClInclude>
     <ClInclude Include="Lang.h">

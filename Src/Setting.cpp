@@ -278,6 +278,32 @@ void Setting::setSaveNameTpl(const std::wstring& tpl)
 	save();
 }
 
+int Setting::getHistoryLimit()
+{
+	// 夹到 [10, 2000]：太小了历史没意义，太大了数据目录会堆出几个 G 的图片
+	auto val = (int)getSaveObj().GetNamedNumber(L"historyLimit", 100.0);
+	if (val < 10) return 10;
+	if (val > 2000) return 2000;
+	return val;
+}
+
+void Setting::setHistoryLimit(int val)
+{
+	getSaveObj().SetNamedValue(L"historyLimit", JsonValue::CreateNumberValue((double)val));
+	save();
+}
+
+bool Setting::getClipboardHistory()
+{
+	return getSaveObj().GetNamedBoolean(L"clipHistory", false);
+}
+
+void Setting::setClipboardHistory(bool val)
+{
+	getSaveObj().SetNamedValue(L"clipHistory", JsonValue::CreateBooleanValue(val));
+	save();
+}
+
 long long Setting::getUpdateCheckDay()
 {
     auto common = configObj.GetNamedObject(L"common", nullptr);

@@ -1,6 +1,7 @@
 ﻿#include "pch.h"
 #include <wincodec.h>
 #include <shobjidl.h>
+#include <algorithm>
 #include <format>
 #include <fstream>
 #include "Util.h"
@@ -109,6 +110,26 @@ namespace {
 		if (std::filesystem::exists(path)) return path;
 		return {};
 	}
+
+	// 解码成 BGRA top-down 行紧凑。源可能是灰度 / CMYK / BGR 之类，统一走一次格式转换，
+	// 调用方拿到的永远是同一套布局
+	bool decodeFrame(IWICImagingFactory* factory, IWICBitmapDecoder* decoder,
+		std::vector<BYTE>& out, DWORD& w, DWORD& h)
+	{
+		ComPtr<IWICBitmapFrameDecode> frame;
+		if (FAILED(decoder->GetFrame(0, frame.GetAddressOf()))) return false;
+		UINT fw{ 0 }, fh{ 0 };
+		if (FAILED(frame->GetSize(&fw, &fh)) || fw == 0 || fh == 0) return false;
+		ComPtr<IWICFormatConverter> converter;
+		if (FAILED(factory->CreateFormatConverter(converter.GetAddressOf()))) return false;
+		if (FAILED(converter->Initialize(frame.Get(), GUID_WICPixelFormat32bppBGRA,
+			WICBitmapDitherTypeNone, nullptr, 0.0, WICBitmapPaletteTypeCustom))) return false;
+		out.assign((size_t)fw * fh * 4, 0);
+		if (FAILED(converter->CopyPixels(nullptr, fw * 4, (UINT)out.size(), out.data()))) return false;
+		w = fw;
+		h = fh;
+		return true;
+	}
 }
 
 void Util::saveToClipboard(const int w, const int h, BYTE* data)
@@ -213,6 +234,44 @@ void Util::saveToClipboard(const int w, const int h, BYTE* data)
 		GlobalFree(hPng);
 	}
 	CloseClipboard();
+}
+
+bool Util::loadImageBytes(const std::wstring& path, std::vector<BYTE>& out, DWORD& w, DWORD& h)
+{
+	ComPtr<IWICImagingFactory> factory;
+	if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER,
+		IID_PPV_ARGS(factory.GetAddressOf())))) return false;
+	ComPtr<IWICBitmapDecoder> decoder;
+	if (FAILED(factory->CreateDecoderFromFilename(path.c_str(), nullptr, GENERIC_READ,
+		WICDecodeMetadataCacheOnDemand, decoder.GetAddressOf()))) return false;
+	return decodeFrame(factory.Get(), decoder.Get(), out, w, h);
+}
+
+bool Util::decodeImageBytes(BYTE* buf, DWORD size, std::vector<BYTE>& out, DWORD& w, DWORD& h)
+{
+	if (!buf || size == 0) return false;
+	ComPtr<IWICImagingFactory> factory;
+	if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER,
+		IID_PPV_ARGS(factory.GetAddressOf())))) return false;
+	// 不用 SHCreateMemStream：那要额外链 shlwapi.lib，而工程里本来就有 CreateStreamOnHGlobal
+	auto hGlobal = GlobalAlloc(GMEM_MOVEABLE, size);
+	if (!hGlobal) return false;
+	auto dst = GlobalLock(hGlobal);
+	if (!dst) {
+		GlobalFree(hGlobal);
+		return false;
+	}
+	memcpy(dst, buf, size);
+	GlobalUnlock(hGlobal);
+	ComPtr<IStream> stream;
+	if (FAILED(CreateStreamOnHGlobal(hGlobal, TRUE, stream.GetAddressOf()))) {
+		GlobalFree(hGlobal);
+		return false;
+	}
+	ComPtr<IWICBitmapDecoder> decoder;
+	if (FAILED(factory->CreateDecoderFromStream(stream.Get(), nullptr,
+		WICDecodeMetadataCacheOnDemand, decoder.GetAddressOf()))) return false;
+	return decodeFrame(factory.Get(), decoder.Get(), out, w, h);
 }
 
 bool Util::saveToFile(const std::wstring& path, const int w, const int h, BYTE* data)
@@ -472,5 +531,38 @@ std::wstring Util::decodeQrCode(const int w, const int h, BYTE* data)
 	}
 	quirc_destroy(qr);
 	return result;
+}
+
+bool Util::resizeBGRA(const int srcW, const int srcH, BYTE* srcData,
+	const int dstW, const int dstH, std::vector<BYTE>& dstData)
+{
+	if (srcW <= 0 || srcH <= 0 || !srcData || dstW <= 0 || dstH <= 0) return false;
+	dstData.assign((size_t)dstW * dstH * 4, 0);
+	for (int y = 0; y < dstH; ++y)
+	{
+		// 目标一行对应源图的哪几行：放大时这个区间可能只有一行，靠下面的 max 兜住
+		auto sy0 = y * srcH / dstH;
+		auto sy1 = std::max((y + 1) * srcH / dstH, sy0 + 1);
+		for (int x = 0; x < dstW; ++x)
+		{
+			auto sx0 = x * srcW / dstW;
+			auto sx1 = std::max((x + 1) * srcW / dstW, sx0 + 1);
+			UINT sumB{ 0 }, sumG{ 0 }, sumR{ 0 }, sumA{ 0 }, n{ 0 };
+			for (int sy = sy0; sy < sy1; ++sy) {
+				auto row = srcData + (size_t)sy * srcW * 4;
+				for (int sx = sx0; sx < sx1; ++sx) {
+					auto px = row + sx * 4;
+					sumB += px[0]; sumG += px[1]; sumR += px[2]; sumA += px[3];
+					n++;
+				}
+			}
+			auto d = dstData.data() + ((size_t)y * dstW + x) * 4;
+			d[0] = (BYTE)(sumB / n);
+			d[1] = (BYTE)(sumG / n);
+			d[2] = (BYTE)(sumR / n);
+			d[3] = (BYTE)(sumA / n);
+		}
+	}
+	return true;
 }
 

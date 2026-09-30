@@ -8,6 +8,7 @@
 #include "../Setting.h"
 #include "../Lang.h"
 #include "../Update.h"
+#include "../ShotHistory.h"
 #include "CapLong.h"
 #include "CapVideo.h"
 #include "../Tool/ToolCap.h"
@@ -756,6 +757,7 @@ void WinCap::saveToFile()
     }
     auto fmt = (Util::ImgFormat)Util::getSaveFormat();
     if (Util::saveToFile(path, cw, ch, pixels.data(), fmt)) {
+        recordHistory(cw, ch, pixels.data());
         close();
     }
     else {
@@ -769,7 +771,17 @@ void WinCap::copyToClipboard()
     int cw{ 0 }, ch{ 0 };
     if (!getCutPixels(pixels, cw, ch)) return;
     Util::saveToClipboard(cw, ch, pixels.data());
+    // 自己刚写进去的那次剪贴板变更不该再进剪贴板历史，否则同一张图会记两遍
+    ShotHistory::get()->skipNextClipboard();
+    recordHistory(cw, ch, pixels.data());
     close();
+}
+
+// 存盘 / 复制这两个"真正产出了一张图"的出口才入库。
+// 不放在选区确认那一刻：框完又按 Esc 的图也会进历史，列表很快就被废图填满
+void WinCap::recordHistory(const int w, const int h, BYTE* data)
+{
+    ShotHistory::get()->addImage(ShotHistory::Source::Shot, w, h, data);
 }
 
 // 从底图上把选区那块像素读回来。screenImg 在 GPU 上，不能直接 Map，

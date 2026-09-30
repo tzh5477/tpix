@@ -37,6 +37,8 @@ public:
 	void startQrcode();
 	void saveToFile();
 	void copyToClipboard();
+	// 一张图真正产出之后（存盘 / 复制）记进截图历史
+	void recordHistory(const int w, const int h, BYTE* data);
 	// ToolVideo，转给 capVideo
 	void startMp4(bool useSpeaker, bool useMic);
 	void startGif();

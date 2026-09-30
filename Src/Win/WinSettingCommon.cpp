@@ -5,6 +5,7 @@
 #include "../Util.h"
 #include "WinSetting.h"
 #include "WinSettingCommon.h"
+#include "WinHistory.h"
 
 namespace {
     // 选目录对话框。返回 false 表示用户取消或调用失败，out 不动
@@ -41,6 +42,7 @@ WinSettingCommon::WinSettingCommon(Ling::WinBase* parent):Ling::Node(parent)
     initLangCtrls();
     initCapBtnCtrls();
     initSaveCtrls();
+    initHistoryCtrls();
     auto weakThis = getWeakThis();
     // 这个回调一直挂在窗口上，而本节点可能在窗口关闭之前就被菜单切换换掉了，
     // 所以先确认自己还活着再去碰成员
@@ -293,6 +295,63 @@ void WinSettingCommon::initSaveCtrls()
     tplBox->onTextChanged.add([](Ling::TextBox*, const std::wstring& val) {
         Setting::get()->setSaveNameTpl(val);
     });
+}
+
+void WinSettingCommon::initHistoryCtrls()
+{
+    // 上限不做自由输入：历史条目的成本是磁盘上一整张原图，给个滑杆反而容易填出个 10000
+    constexpr int limitOpts[]{ 50, 100, 200, 500 };
+    auto limitRow = makeRow(L"setting.historyLimit");
+    auto limitBtn = limitRow->makeChild<Ling::Button>();
+    limitBtn->setHeight(28.f);
+    limitBtn->setWidth(80.f);
+    limitBtn->setBorder(1.f, 0xE0E0E0FF);
+    limitBtn->setHoverBg(0xFFFFFFFF);
+    auto applyLimit = [limitOpts](Ling::Button* btn) {
+        auto cur = Setting::get()->getHistoryLimit();
+        int idx{ 0 };
+        for (int i = 0; i < 4; ++i) {
+            if (limitOpts[i] == cur) { idx = i; break; }
+        }
+        btn->setText(std::to_wstring(limitOpts[idx]));
+    };
+    applyLimit(limitBtn);
+    limitBtn->onClick.add([limitOpts, applyLimit](Ling::Button* btn) {
+        auto cur = Setting::get()->getHistoryLimit();
+        int idx{ 0 };
+        for (int i = 0; i < 4; ++i) {
+            if (limitOpts[i] == cur) { idx = i; break; }
+        }
+        Setting::get()->setHistoryLimit(limitOpts[(idx + 1) % 4]);
+        applyLimit(btn);
+    });
+
+    auto clipRow = makeRow(L"setting.clipboardHistory");
+    auto clipBtn = clipRow->makeChild<Ling::Button>();
+    clipBtn->setFontFamily(L"icon");
+    clipBtn->setHeightPercent(100.f);
+    clipBtn->setFontSize(18.f);
+    clipBtn->setWidth(60.f);
+    auto applyClip = [](Ling::Button* btn, bool on) {
+        btn->setText(on ? L"\ue688" : L"\ue687");
+        btn->setColor(on ? 0x597ef7ff : 0x666666FF);
+        btn->setHoverColor(on ? 0x597ef7ff : 0x666666FF);
+    };
+    applyClip(clipBtn, Setting::get()->getClipboardHistory());
+    clipBtn->onClick.add([applyClip](Ling::Button* btn) {
+        auto next = !Setting::get()->getClipboardHistory();
+        Setting::get()->setClipboardHistory(next);
+        applyClip(btn, next);
+    });
+
+    auto openRow = makeRow(L"setting.openHistory");
+    auto openBtn = openRow->makeChild<Ling::Button>();
+    openBtn->setText(Lang::get(L"history.open"));
+    openBtn->setHeight(28.f);
+    openBtn->setWidth(120.f);
+    openBtn->setBorder(1.f, 0xE0E0E0FF);
+    openBtn->setHoverBg(0xFFFFFFFF);
+    openBtn->onClick.add([](Ling::Button*) { WinHistory::init(); });
 }
 
 void WinSettingCommon::setAutoStartBtn(Ling::Button* btn)

@@ -4,12 +4,14 @@
 #include "Lang.h"
 #include "Win/WinCap.h"
 #include "Win/WinSetting.h"
+#include "Win/WinHistory.h"
 #include "Setting.h"
 
 namespace {
 	static std::unique_ptr<Tray> trayIns;
 	static constexpr UINT settingMsg = 163;
 	static constexpr UINT exitMsg = 164;
+	static constexpr UINT historyMsg = 165;
 }
 
 Tray::Tray()
@@ -46,10 +48,15 @@ Tray* Tray::get()
 void Tray::onTrayRightClick()
 {
 	auto menu = CreatePopupMenu();
+	AppendMenu(menu, MF_STRING, historyMsg, Lang::get(L"tray.history").data());
 	AppendMenu(menu, MF_STRING, settingMsg, Lang::get(L"tray.setting").data());
 	AppendMenu(menu, MF_STRING, exitMsg, Lang::get(L"tray.exit").data());
 	auto menuId = Ling::App::get()->popupMenu(menu);
-	if (menuId == settingMsg)
+	if (menuId == historyMsg)
+	{
+		WinHistory::init();
+	}
+	else if (menuId == settingMsg)
 	{
 		WinSetting::init();
 	}
