@@ -44,6 +44,21 @@ namespace {
 	const wchar_t* RingSample[]{ L"\u25cf", L"\u25a0", L"\u2014" };
 	// 贴图不透明度的四档。index 落盘的是下标，百分比文本由 showPinTools 按这张表生成
 	const float pinOpacitySteps[]{ 1.f, 0.75f, 0.5f, 0.25f };
+	// 水印的透明度档位与旋转档位。透明度与 pin 那组共用一套档位
+	const float watermarkOpacitySteps[]{ 1.f, 0.75f, 0.5f, 0.25f };
+	const float watermarkRotateSteps[]{ 0.f, 30.f, 45.f, 60.f };
+}
+
+float ToolSub::getWatermarkOpacity() const
+{
+	auto i = std::clamp(watermarkOpacity, 0, 3);
+	return watermarkOpacitySteps[i];
+}
+
+float ToolSub::getWatermarkRotation() const
+{
+	auto i = std::clamp(watermarkRotate, 0, 3);
+	return watermarkRotateSteps[i];
 }
 
 ToolSub::ToolSub(WinPin* win) :Ling::WinBase(), win(win)
@@ -477,6 +492,44 @@ Ling::Button* ToolSub::makeTextToggle(const std::wstring& text, const std::wstri
 	return btn;
 }
 
+void ToolSub::showWatermarkTools()
+{
+	beginTool(L"watermark");
+	initSize(3, true, true, 150.f);
+	auto setting = Setting::get();
+	// 文字从配置读回：水印十有八九每张截图都写同一句，不该每次都重打
+	watermarkText = setting->getToolStr(L"watermark", L"text", L"");
+	// 文字输入框的宽度已在 initSize 里预留（extraW），放最前面
+	auto textBox = contentNode->makeChild<Ling::TextBox>();
+	textBox->setHeight(btnSize - 2.5);
+	textBox->setWidth(150.f);
+	textBox->setVerticalCenter(true);
+	textBox->setFontSize(12.f);
+	textBox->setMarginLeft(sliderMargin);
+	textBox->setMarginRight(sliderMargin);
+	textBox->setPlaceholder(Lang::get(L"tool.watermarkTip"));
+	textBox->setText(watermarkText);
+	textBox->onTextChanged.add([this](Ling::TextBox*, const std::wstring& val) {
+		watermarkText = val;
+		// 没写完也落盘：下次打开工具条接着上次的写，符合"水印一般是固定那句"的用法
+		Setting::get()->setToolStr(L"watermark", L"text", val);
+		win->refresh();
+		});
+	// 水印是画的时候现读工具条状态的，档位一变就得刷一下才看得见
+	auto opacityBtn = makeCycleBtn(L"tool.watermarkOpacity", L"opacity", &watermarkOpacity, 4, [](int i) {
+		return std::format(L"{}%", (int)std::lround(watermarkOpacitySteps[i] * 100));
+		});
+	opacityBtn->onClick.add([this](Ling::Button*) { win->refresh(); });
+	auto rotateBtn = makeCycleBtn(L"tool.watermarkRotate", L"rotate", &watermarkRotate, 4, [](int i) {
+		return std::format(L"{}\u00b0", (int)watermarkRotateSteps[i]);
+		});
+	rotateBtn->onClick.add([this](Ling::Button*) { win->refresh(); });
+	makeTextToggle(Lang::get(L"tool.watermarkTile"), L"tool.watermarkTile", L"tile", false,
+		[this](bool) { win->refresh(); });
+	initSlider();
+	initColorBtns();
+}
+
 void ToolSub::initSlider()
 {
 	slider = contentNode->makeChild<Ling::Slider>();
@@ -520,15 +573,16 @@ float ToolSub::getDesiredHeight()
 // 宽度 = 工具按钮 + 颜色按钮 + 滑块（含左右 margin）。
 // 之前这里漏算了滑块的真实宽度，宽工具栏靠 10 个 flexGrow 按钮把误差摊薄了看不出来，
 // 而 mosaic/eraser 只有 1 个按钮，误差全压在这个按钮和滑块上，看起来就像被压缩了。
-void ToolSub::initSize(int btnCount, bool withColors, bool centerOnBtn)
+void ToolSub::initSize(int btnCount, bool withColors, bool centerOnBtn, float extraW)
 {
 	hasTools = true;
 	this->centerOnBtn = centerOnBtn;
 	sizeBtnCount = btnCount;
 	sizeWithColors = withColors;
+	sizeExtraW = extraW;
 	auto count = btnCount + (withColors ? static_cast<int>(colors.size()) : 0);
 	// 宽度只按内容算，边框画在内容之内（与 ToolMain 一致，那边宽度也只累加按钮）。
-	auto pxW = toPx(btnSize) * count + toPx(sliderSize) + toPx(sliderMargin) * 2;
+	auto pxW = toPx(btnSize) * count + toPx(sliderSize) + toPx(sliderMargin) * 2 + toPx(extraW);
 	// setSize 收逻辑像素、内部再乘 dpi，所以这里把算好的物理宽高除回去
 	setSize(pxW / dpi, getDesiredHeight() / dpi);
 }
@@ -536,7 +590,7 @@ void ToolSub::initSize(int btnCount, bool withColors, bool centerOnBtn)
 void ToolSub::refreshSize()
 {
 	if (!hasTools) return;   //没内容时窗口是藏着的，等下次 show*Tools 自然会按新 dpi 算
-	initSize(sizeBtnCount, sizeWithColors, centerOnBtn);
+	initSize(sizeBtnCount, sizeWithColors, centerOnBtn, sizeExtraW);
 }
 
 D2D1_COLOR_F ToolSub::getSelectedColor() const

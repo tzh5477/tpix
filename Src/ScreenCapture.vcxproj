@@ -174,6 +174,7 @@
     <ClCompile Include="Ocr.cpp" />
     <ClCompile Include="PinSource.cpp" />
     <ClCompile Include="ShotHistory.cpp" />
+    <ClCompile Include="Shape\ShapeWatermark.cpp" />
     <ClCompile Include="Win\WinHistory.cpp" />
     <ClCompile Include="Shape\ShapeArrow.cpp" />
     <ClCompile Include="Shape\ShapeBase.cpp" />
@@ -252,6 +253,7 @@
     <ClInclude Include="ShotHistory.h" />
     <ClInclude Include="Win\WinHistory.h" />
     <ClInclude Include="Shape\ShapeArrow.h" />
+    <ClInclude Include="Shape\ShapeWatermark.h" />
     <ClInclude Include="Shape\ShapeBase.h" />
     <ClInclude Include="Shape\ShapeEllipse.h" />
     <ClInclude Include="Shape\ShapeEraser.h" />

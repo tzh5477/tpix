@@ -105,6 +105,9 @@
     <ClCompile Include="Shape\ShapeEraser.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
+    <ClCompile Include="Shape\ShapeWatermark.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
     <ClCompile Include="Tool\ToolCap.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
@@ -220,6 +223,9 @@
       <Filter>头文件</Filter>
     </ClInclude>
     <ClInclude Include="Shape\ShapeBase.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Shape\ShapeWatermark.h">
       <Filter>头文件</Filter>
     </ClInclude>
     <ClInclude Include="Shape\ShapeRect.h">

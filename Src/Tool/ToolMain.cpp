@@ -204,6 +204,9 @@ void ToolMain::selectTool(const std::wstring& id)
 	else if (curId == L"pin") {
 		win->toolSub->showPinTools();
 	}
+	else if (curId == L"watermark") {
+		win->toolSub->showWatermarkTools();
+	}
 	else {
 		win->toolSub->hideTools();
 	}

@@ -8,6 +8,7 @@
 #include "Shape/ShapeEllipse.h"
 #include "Shape/ShapeArrow.h"
 #include "Shape/ShapeNumber.h"
+#include "Shape/ShapeWatermark.h"
 #include "Shape/ShapeLine.h"
 #include "Shape/ShapeText.h"
 #include "Shape/ShapeMosaic.h"
@@ -64,6 +65,11 @@ ShapeBase* History::createShape(const std::wstring& state, const int& x, const i
     }
     else if (toolMain->curId == L"eraser") {
         auto shape = std::make_unique<ShapeEraser>(win);
+        result = shape.get();
+        shapes.push_back(std::move(shape));
+    }
+    else if (toolMain->curId == L"watermark") {
+        auto shape = std::make_unique<ShapeWatermark>(win);
         result = shape.get();
         shapes.push_back(std::move(shape));
     }

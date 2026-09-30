@@ -21,6 +21,8 @@ public:
 	void showEraserTools();
 	// 贴图本身的属性：不透明度、圆角、锁定、鼠标穿透、标题
 	void showPinTools();
+	// 文字水印：文字、字号、颜色、透明度、旋转、平铺
+	void showWatermarkTools();
 
 	void hideTools();
 	bool hasContent();
@@ -52,6 +54,12 @@ public:
 	int numberStyle{ 0 }, numberRing{ 0 };
 	// 贴图不透明度的当前档位（下标进 .cpp 里的 pinOpacitySteps 表），值本身落盘
 	int pinOpacity{ 0 };
+	// 水印。文字 / 平铺是状态本体；档位存下标，换算成透明度与角度的表在 .cpp 里
+	std::wstring watermarkText{ L"" };
+	bool watermarkTile{ false };
+	int watermarkOpacity{ 0 }, watermarkRotate{ 0 };
+	float getWatermarkOpacity() const;
+	float getWatermarkRotation() const;
 private:
 	void onCreated() override;
 	void layout() override;
@@ -87,7 +95,8 @@ private:
 	void beginTool(const std::wstring& id);
 	// 按内容算出窗口尺寸并应用。btnCount 只数工具按钮，不含颜色按钮。
 	// centerOnBtn 为 true 时窗口居中对齐到 ToolMain 上选中的那个按钮，否则与 ToolMain 左对齐。
-	void initSize(int btnCount, bool withColors, bool centerOnBtn = false);
+	// extraW 给文字输入框这类"宽度不是一格按钮"的控件预留
+	void initSize(int btnCount, bool withColors, bool centerOnBtn = false, float extraW = 0.f);
 	// 内容不变、只是 dpi 变了：按上次 initSize 的入参重算一遍尺寸
 	void refreshSize();
 	// 逻辑像素 → 物理像素
@@ -121,6 +130,7 @@ private:
 	// 上一次 initSize 的入参，DPI 变了要照原样再算一遍尺寸
 	int sizeBtnCount{ 0 };
 	bool sizeWithColors{ false };
+	float sizeExtraW{ 0.f };
 	UINT selectColorIndex{ 0 };
 	// 滑块值。每次切换工具都由 beginTool 从 config.json 里换成那个工具自己的那份。
 	float sliderVal{ 2.f };

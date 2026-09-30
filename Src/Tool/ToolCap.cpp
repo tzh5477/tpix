@@ -24,6 +24,7 @@ const std::vector<ToolCap::BtnDef> ToolCap::shapeBtns{
 	{ L"text",    L"\ue6ec", L"tool.text" },
 	{ L"mosaic",  L"\ue82e", L"tool.mosaic" },
 	{ L"eraser",  L"\ue6be", L"tool.eraser" },
+	{ L"watermark", L"\ue607", L"tool.watermark" },
 };
 
 const std::vector<std::wstring> ToolCap::defaultShapeIds{

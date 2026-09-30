@@ -30,6 +30,9 @@ public:
 	void setToolFlag(const std::wstring& tool, const std::wstring& key, bool val);
 	float getToolNum(const std::wstring& tool, const std::wstring& key, float def);
 	void setToolNum(const std::wstring& tool, const std::wstring& key, float val);
+	// 工具面板上的文本项（水印文字这类）。同一张 getToolObj 表，只是取的是字符串
+	std::wstring getToolStr(const std::wstring& tool, const std::wstring& key, const std::wstring& def);
+	void setToolStr(const std::wstring& tool, const std::wstring& key, const std::wstring& val);
 	// 输出与自动保存。存在 config.json 的 save 组里：
 	// format（0=PNG / 1=JPEG / 2=WebP）、auto（自动保存，不弹另存为）、
 	// dir（自动保存目录，空串表示走每次弹窗时用户选的那个目录所在的数据目录）、

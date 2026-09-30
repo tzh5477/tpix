@@ -143,6 +143,7 @@ namespace {
         { L"text",    L"\ue6ec", L"tool.text" },
         { L"mosaic",  L"\ue82e", L"tool.mosaic" },
         { L"eraser",  L"\ue6be", L"tool.eraser" },
+        { L"watermark", L"\ue607", L"tool.watermark" },
     };
     // 默认值在这份文件里也必须再写一遍：这里是"配置从来没写过"时的兜底，
     // 与 ToolCap::defaultShapeIds 是同一套语义

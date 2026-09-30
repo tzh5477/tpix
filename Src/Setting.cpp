@@ -222,6 +222,17 @@ float Setting::getToolNum(const std::wstring& tool, const std::wstring& key, flo
     return static_cast<float>(getToolObj(tool).GetNamedNumber(key, def));
 }
 
+std::wstring Setting::getToolStr(const std::wstring& tool, const std::wstring& key, const std::wstring& def)
+{
+    return std::wstring{ getToolObj(tool).GetNamedString(key, def) };
+}
+
+void Setting::setToolStr(const std::wstring& tool, const std::wstring& key, const std::wstring& val)
+{
+    getToolObj(tool).SetNamedValue(key, JsonValue::CreateStringValue(val));
+    save();
+}
+
 void Setting::setToolNum(const std::wstring& tool, const std::wstring& key, float val)
 {
     getToolObj(tool).SetNamedValue(key, JsonValue::CreateNumberValue(val));
