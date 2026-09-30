@@ -171,6 +171,7 @@
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Create</PrecompiledHeader>
     </ClCompile>
     <ClCompile Include="Setting.cpp" />
+    <ClCompile Include="Ocr.cpp" />
     <ClCompile Include="ShotHistory.cpp" />
     <ClCompile Include="Win\WinHistory.cpp" />
     <ClCompile Include="Shape\ShapeArrow.cpp" />
@@ -245,6 +246,7 @@
     <ClInclude Include="Lang.h" />
     <ClInclude Include="pch.h" />
     <ClInclude Include="Setting.h" />
+    <ClInclude Include="Ocr.h" />
     <ClInclude Include="ShotHistory.h" />
     <ClInclude Include="Win\WinHistory.h" />
     <ClInclude Include="Shape\ShapeArrow.h" />

@@ -8,6 +8,7 @@
 #include "./Win/WinCap.h"
 #include "./Win/WinPin.h"
 #include "./Win/WinHistory.h"
+#include "./Win/WinOcr.h"
 #include "./Win/WinSetting.h"
 
 std::unique_ptr<App> app;
@@ -30,6 +31,7 @@ void App::dispose()
     WinPin::dispose();
     WinCap::dispose();
     WinSetting::dispose();
+    WinOcr::dispose();
     WinHistory::dispose();
     ShotHistory::dispose();   // 必须在 Setting 之前：析构里要写索引文件
     Lang::dispose();
