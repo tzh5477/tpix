@@ -35,6 +35,12 @@ public:
 	void refreshNumberShapes();
 	// ToolSub 上的颜色 / 字号 / 粗体 / 斜体变了，转给正在编辑的文本立即生效
 	void onToolStyleChanged();
+	// ---- 贴图属性（ToolSub 的 pin 面板驱动，各项独立生效，见各自实现里的注释）----
+	void setOpacity(float v);
+	void setRounded(bool on);
+	void setLocked(bool on);
+	void setMouseThrough(bool on);
+	void setPinTitle(const std::wstring& t);
 public:
 	// Ctrl+滚轮的缩放倍数，1 = 原始大小。底图与所有 shape 的坐标一律按底图的原始像素存，
 	// 缩放只体现在两处：画的时候给 D2D 上一个缩放变换、收到鼠标坐标时先除回原始像素。
@@ -83,6 +89,8 @@ private:
 	// 缩放后窗口跟着改大小，并反向挪一下窗口位置，让 anchor 底下的那块图还停在原处
 	void applyScale(float newScale, POINT anchor);
 	void paintScaleTip(ID2D1DeviceContext* ctx);
+	// pinTitle 非空时画在窗口顶部的一条标题。属窗口装饰，不进导出图
+	void paintTitle(ID2D1DeviceContext* ctx);
 private:
 	// 整个窗口内容都画在这块画布上，走 swap chain 后端：贴图窗口拖动 shape 时每帧重绘，
 	// 单缓冲的合成表面会被采样到"擦干净→逐个重画"的中间态，表现为 shape 和边框整帧闪掉。
@@ -96,6 +104,12 @@ private:
 	Microsoft::WRL::ComPtr<IDWriteTextLayout> scaleTip;
 	Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brushTipBg, brushTipText;
 	bool isMouseDown{ false }, isClosed{ false };
+	// 贴图属性。锁定不是改窗口样式实现的（Ling 自己管拖动），靠 onDown 里早退；
+	// 不透明度也不是 WS_EX_LAYERED（窗口带 WS_EX_NOREDIRECTIONBITMAP，与分层窗口冲突），
+	// 直接调 composition 树根节点的不透明度
+	bool isLocked{ false };
+	std::wstring pinTitle;
+	Microsoft::WRL::ComPtr<IDWriteTextLayout> titleLayout;
 	// onDpiChanged 与 onSizeChanged 之间的接力标记，见构造函数里的注释
 	bool dpiChanged{ false };
 	POINT pressPos{ 0,0 };

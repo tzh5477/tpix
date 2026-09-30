@@ -201,6 +201,9 @@ void ToolMain::selectTool(const std::wstring& id)
 	else if (curId == L"eraser") {
 		win->toolSub->showEraserTools();
 	}
+	else if (curId == L"pin") {
+		win->toolSub->showPinTools();
+	}
 	else {
 		win->toolSub->hideTools();
 	}

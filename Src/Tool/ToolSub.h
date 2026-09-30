@@ -19,6 +19,8 @@ public:
 	void showTextTools();
 	void showMosaicTools();
 	void showEraserTools();
+	// 贴图本身的属性：不透明度、圆角、锁定、鼠标穿透、标题
+	void showPinTools();
 
 	void hideTools();
 	bool hasContent();
@@ -48,6 +50,8 @@ public:
 	// 序号的编号样式（阿拉伯 / 字母小写 / 字母大写 / 罗马 / 中文）与外圈样式（圆 / 方 / 无）。
 	// 值与 ShapeNumber 的两个枚举一一对应，转枚举行取 static_cast
 	int numberStyle{ 0 }, numberRing{ 0 };
+	// 贴图不透明度的当前档位（下标进 .cpp 里的 pinOpacitySteps 表），值本身落盘
+	int pinOpacity{ 0 };
 private:
 	void onCreated() override;
 	void layout() override;
@@ -70,6 +74,11 @@ private:
 	Ling::Button* makeCycleBtn(const std::wstring& tipKey, const std::wstring& cfgKey,
 		int* index, int count, std::function<std::wstring(int)> textOf,
 		bool useIconFont = false, bool refreshNumbers = true);
+	// pin 面板用的文字开关：跟 makeToggleBtn 一样的两态配色，但按钮上写的是字（圆角 / 锁定 / 穿透）
+	// 而不是图标 —— 图标字体里没有锁、穿透这类符号，硬猜码位只会显示成方块。
+	// apply 由调用方给，开关翻转后直接调 WinPin 上对应的 setter
+	Ling::Button* makeTextToggle(const std::wstring& text, const std::wstring& tipKey,
+		const std::wstring& cfgKey, bool def, std::function<void(bool)> apply);
 	// 样式切换按钮上示例用哪个序号：取图上最大的那个编号，没有序号时用 1
 	int getNumberSampleVal();
 	// 每个 show*Tools 开头都要做的事：收提示、清旧内容、记下当前工具，

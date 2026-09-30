@@ -1,4 +1,5 @@
 #include "pch.h"
+#include <cmath>
 #include "../Win/WinPin.h"
 #include "../Lang.h"
 #include "../Setting.h"
@@ -41,6 +42,8 @@ namespace {
 	// 外圈样式循环按钮上显示的三样东西：实心圆 / 实心方 / 一条横线（表示"没有外圈"）。
 	// 这三个字符在任何语言的字体里都在，不必跟着语言包走
 	const wchar_t* RingSample[]{ L"\u25cf", L"\u25a0", L"\u2014" };
+	// 贴图不透明度的四档。index 落盘的是下标，百分比文本由 showPinTools 按这张表生成
+	const float pinOpacitySteps[]{ 1.f, 0.75f, 0.5f, 0.25f };
 }
 
 ToolSub::ToolSub(WinPin* win) :Ling::WinBase(), win(win)
@@ -220,6 +223,40 @@ void ToolSub::showEraserTools()
 	initSize(1, false, true);
 	makeToggleBtn(L"\ue602", &isEraserRect, L"tool.rectFill", L"rect");
 	initSlider();
+}
+
+void ToolSub::showPinTools()
+{
+	beginTool(L"pin");
+	initSize(4, false, true);
+	// 四档不透明度循环。按钮上直接写百分比，比一个滑杆直观、也比滑杆少占一截宽度
+	auto opacityBtn = makeCycleBtn(L"tool.pinOpacity", L"opacity", &pinOpacity, 4, [](int i) {
+		return std::format(L"{}%", (int)std::lround(pinOpacitySteps[i] * 100));
+		}, false, false);
+	win->setOpacity(pinOpacitySteps[pinOpacity]);
+	// makeCycleBtn 只负责换档与落盘，"档位变了要作用到窗口"这半截由这里补上
+	opacityBtn->onClick.add([this](Ling::Button*) {
+		win->setOpacity(pinOpacitySteps[pinOpacity]);
+		});
+	makeTextToggle(Lang::get(L"tool.pinRound"), L"tool.pinRound", L"round", false,
+		[this](bool on) { win->setRounded(on); });
+	makeTextToggle(Lang::get(L"tool.pinLock"), L"tool.pinLock", L"lock", false,
+		[this](bool on) { win->setLocked(on); });
+	makeTextToggle(Lang::get(L"tool.pinThrough"), L"tool.pinThrough", L"through", false,
+		[this](bool on) { win->setMouseThrough(on); });
+	// 标题：写什么显示什么，清空即隐藏。失焦才生效，边打边刷没必要
+	auto titleBox = contentNode->makeChild<Ling::TextBox>();
+	titleBox->setHeight(btnSize - 2.5);
+	titleBox->setFlexGrow(1.f);
+	titleBox->setMarginLeft(sliderMargin);
+	titleBox->setMarginRight(sliderMargin);
+	titleBox->setVerticalCenter(true);
+	titleBox->setFontSize(12.f);
+	titleBox->setPlaceholder(Lang::get(L"tool.pinTitleTip"));
+	titleBox->setText(win->pinTitle);
+	titleBox->onTextChanged.add([this](Ling::TextBox*, const std::wstring& val) {
+		win->setPinTitle(val);
+		});
 }
 
 float ToolSub::setShapeSliderVal(const std::wstring& tool, float px)
@@ -412,6 +449,30 @@ Ling::Button* ToolSub::makeCycleBtn(const std::wstring& tipKey, const std::wstri
 		btn->setText(textOf(*index));
 		// 已经画在图上的序号跟着换样子，而不是等下一次新建才生效
 		if (refreshNumbers) win->refreshNumberShapes();
+	});
+	return btn;
+}
+
+Ling::Button* ToolSub::makeTextToggle(const std::wstring& text, const std::wstring& tipKey,
+	const std::wstring& cfgKey, bool def, std::function<void(bool)> apply)
+{
+	bool on = Setting::get()->getToolFlag(curToolId, cfgKey, def);
+	auto btn = contentNode->makeChild<Ling::Button>();
+	btn->setText(text);
+	btn->setHeight(btnSize - 2.5);
+	btn->setFlexGrow(1.f);
+	// 字要小一号：三个开关各两个字，13 号放不下会被 flex 压扁
+	btn->setFontSize(12.f);
+	btn->setBg(0);
+	btn->setHoverBg(0xF2F2F2ff);
+	applyToggleStyle(btn, on);
+	apply(on);
+	tip->bind(btn, Lang::get(tipKey));
+	btn->onClick.add([this, cfgKey, apply](Ling::Button* b) {
+		auto next = !Setting::get()->getToolFlag(curToolId, cfgKey, false);
+		Setting::get()->setToolFlag(curToolId, cfgKey, next);
+		applyToggleStyle(b, next);
+		apply(next);
 	});
 	return btn;
 }

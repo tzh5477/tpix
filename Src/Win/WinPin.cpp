@@ -1,4 +1,5 @@
 #include "pch.h"
+#include <algorithm>
 #include "../Tool/ToolMain.h"
 #include "../Tool/ToolSub.h"
 #include "../Shape/ShapeBase.h"
@@ -199,6 +200,61 @@ void WinPin::paintScaleTip(ID2D1DeviceContext* ctx)
 	ctx->DrawTextLayout({ bgRect.left + pad, bgRect.top + pad }, scaleTip.Get(), brushTipText.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
 }
 
+void WinPin::paintTitle(ID2D1DeviceContext* ctx)
+{
+	if (!titleLayout || !brushTipBg) return;
+	DWRITE_TEXT_METRICS tm{};
+	if (FAILED(titleLayout->GetMetrics(&tm))) return;
+	auto pad = 4.f * dpi;
+	// 贴着边框内侧画，标题条底部留一道 1px 的分隔，与边框区分开
+	D2D1_RECT_F bar{ 1.f, 1.f, w - 1.f, 1.f + tm.height + pad * 2 };
+	ctx->FillRectangle(bar, brushTipBg.Get());
+	ctx->DrawTextLayout({ bar.left + pad, bar.top + pad }, titleLayout.Get(), brushTipText.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
+}
+
+void WinPin::setOpacity(float v)
+{
+	// 不透明度低于 20% 基本看不见了，压住下限，免得一档调完图就"消失"
+	opacity = std::clamp(v, 0.2f, 1.f);
+	// 窗口本身没有背景，整棵合成树就是 body 这一层，调它的不透明度即可全窗生效
+	body->visual.Opacity(opacity);
+}
+
+void WinPin::setRounded(bool on)
+{
+	body->setBorderRadius(on ? 8.f : 0.f);
+	refresh();
+}
+
+void WinPin::setLocked(bool on)
+{
+	// 锁定只拦"对图本身的操作"：不许拖动窗口、不许画、不许改 shape。
+	// 工具条是独立窗口，仍然可点，所以解锁这条路永远是通的
+	isLocked = on;
+}
+
+void WinPin::setMouseThrough(bool on)
+{
+	// WS_EX_TRANSPARENT 让命中测试直接穿过去。开着的时候图上什么都点不到，
+	// 只能从工具条上关掉 —— 所以同样依赖"工具条是独立窗口"这一点
+	auto ex = GetWindowLongPtr(hwnd, GWL_EXSTYLE);
+	if (on) ex |= WS_EX_TRANSPARENT;
+	else ex &= ~WS_EX_TRANSPARENT;
+	SetWindowLongPtr(hwnd, GWL_EXSTYLE, ex);
+}
+
+void WinPin::setPinTitle(const std::wstring& t)
+{
+	pinTitle = t;
+	titleLayout.Reset();
+	if (!t.empty()) {
+		// 标题画在窗口物理像素坐标系里（不跟 scale 变换），字号按 dpi 放大才不会在缩放屏上变小
+		titleLayout = Ling::D2D::makeTextLayout(t, 13.f * dpi);
+	}
+	refresh();
+}
+
+
 // 把 ToolMain / ToolSub 摆到 WinPin 周围，始终靠 WinPin 右对齐，并尽量留在屏幕可视区内。
 // 三种模式，按 ToolMain+ToolSub 的总高度决定（与 curId 是否为空无关，避免选中按钮时整组跳动）：
 //   bottom : WinPin 下方，自上而下 ToolMain -> ToolSub
@@ -309,6 +365,7 @@ void WinPin::layout()
 	// 边框也因此从"底图矩形"改成"窗口矩形"，任何倍数下都是 2*dpi 粗
 	ctx->SetTransform(D2D1::Matrix3x2F::Identity());
 	ctx->DrawRectangle(D2D1::RectF(0.f, 0.f, w, h), borderBrush.Get(), 2*dpi);
+	paintTitle(ctx);
 	paintScaleTip(ctx);
     canvas->finishPaint();
 }
@@ -330,6 +387,9 @@ void WinPin::onMinMaxInfo(MINMAXINFO* mmi)
 
 void WinPin::onDown(POINT pos, BOOL isRight)
 {
+	// 锁定后图上什么都不许动。右键单独放开：收/放工具条是解锁的入口，
+	// 全拦了的话锁死的贴图就只能靠任务栏找回工具条
+	if (isLocked && !isRight) return;
 	// 编辑文本时，落在文本框里的点击整个交给 TextBox（它自己订阅了窗口的鼠标事件）。
 	// 这里不能抢先 SetCapture / 置 isMouseDown，否则拖选文本会被当成拖 shape。
 	if (editingShape && textBox && textBox->isPosIn(pos)) return;
@@ -399,6 +459,7 @@ void WinPin::onDown(POINT pos, BOOL isRight)
 
 void WinPin::onMove(POINT pos)
 {
+	if (isLocked) return;   // 锁定时不给 hover 高亮，也不给拖动
 	// 同 onDown：文本框里的移动归 TextBox（拖选、滚动条 hover），不参与 shape 的 hover 判定
 	if (editingShape && textBox && textBox->isPosIn(pos)) return;
 	// 拖窗口用的是窗口坐标（pressPos 也是），只有交给 shape 的才换算成底图像素
@@ -528,6 +589,7 @@ void WinPin::refreshNumberShapes()
 
 void WinPin::onKey(UINT key)
 {
+	if (isLocked) return;
 	// 编辑文本时所有按键都归 TextBox：否则 Ctrl+C 复制的是截图、回车会保存并关窗、
 	// Delete 删掉的是整个 shape、ESC 直接把窗口关了。ESC 结束编辑由 TextBox 自己处理。
 	// 选中某个元素时先把按键交给它：序号用 +/- 改编号、F2 编辑序号里的文字。
