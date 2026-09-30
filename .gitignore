@@ -1,9 +1,57 @@
-**/.vs/**
-*.TMP
+# Visual Studio / MSBuild
+.vs/
+*.user
+*.suo
+*.sdf
+*.opensdf
+*.VC.db
+*.VC.opendb
+*.aps
+*.ncb
 *.log
-/enc_temp_folder/
-Res.aps
-/x64/
-/ScreenCapture/x64/
-/ScreenCapture/ScreenCapture/x64/
-**/x64/**
+*.tlog
+*.obj
+*.idb
+*.pdb
+*.ilk
+*.iobj
+*.ipdb
+*.exp
+*.metagen
+*.cache
+*.cachefile
+*.VC.db-shm
+*.VC.db-wal
+
+# 构建输出
+x64/
+x86/
+Win32/
+Release/
+Debug/
+ScreenCapture/x64/
+ScreenCapture/ScreenCapture/x64/
+[Bb]in/
+[Oo]bj/
+[Ll]og/
+[Tt]emp/
+
+# 自研框架 Ling 不在本仓库，本身不要被提交；也不要提交它的构建产物
+[Ll]ing/
+[Ll]ing.lib
+[Yy]oga.lib
+*.lib
+
+# 本地 OCR / 第三方 SDK 符号
+[Ss]dk/
+opencv/
+onnxruntime/
+
+# Agent 工作区
+.workbuddy/
+
+# 系统
+Thumbs.db
+desktop.ini
+.DS_Store
+$RECYCLE.BIN/
