@@ -29,6 +29,7 @@ namespace {
 		{ L"text",    { L"fontSize", 10.f, 60.f, 20.f } },
 		{ L"mosaic",  { L"width",    18.f, 68.f, 28.f } },
 		{ L"eraser",  { L"width",    18.f, 68.f, 28.f } },
+		{ L"watermark", { L"fontSize", 10.f, 72.f, 24.f } },
 	};
 	// 找不到就返回 nullptr：调用方传的都是本文件里的字面量或图形自己的工具名，
 	// 真没命中说明表漏了一项，此时什么都不做比崩掉或按错值域夹要好
@@ -127,6 +128,8 @@ void ToolSub::beginTool(const std::wstring& id)
 	// 按钮和滑块马上要被销毁，onLeave 不会触发，提示得手动收掉
 	tip->hide();
 	contentNode->removeAllChildren();
+	// 滑块也一起作废：pin 面板不建滑块，留着的话 onMouseMove 里就是悬垂指针
+	slider = nullptr;
 	curToolId = id;
 	auto cfg = findSliderCfg(id);
 	if (!cfg) return;
@@ -268,7 +271,7 @@ void ToolSub::showPinTools()
 	titleBox->setVerticalCenter(true);
 	titleBox->setFontSize(12.f);
 	titleBox->setPlaceholder(Lang::get(L"tool.pinTitleTip"));
-	titleBox->setText(win->pinTitle);
+	titleBox->setText(win->getPinTitle());
 	titleBox->onTextChanged.add([this](Ling::TextBox*, const std::wstring& val) {
 		win->setPinTitle(val);
 		});

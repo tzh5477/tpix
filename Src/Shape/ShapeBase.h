@@ -27,7 +27,7 @@ public:
 	bool isInRect(const D2D1_RECT_F rect, const float x, const float y);
 public:
 	WinPin* win;
-	bool isUndo;
+	bool isUndo{ false };
 	int hoverDraggerIndex{ -1 };
 protected:
 protected:

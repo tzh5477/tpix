@@ -190,11 +190,13 @@ void PinSource::fromColor(const std::wstring& color)
 	pin(data, w, h);
 }
 
-// 依次贴历史截图的记账：连按到第几张、上次按是什么时候、上一张贴在了哪
-int pinCursor{ 0 };
-long long lastPinAt{ 0 };
-int lastPinX{ 0 }, lastPinY{ 0 };
-bool hasLastPin{ false };
+namespace {
+	// 依次贴历史截图的记账：连按到第几张、上次按是什么时候、上一张贴在了哪
+	int pinCursor{ 0 };
+	long long lastPinAt{ 0 };
+	int lastPinX{ 0 }, lastPinY{ 0 };
+	bool hasLastPin{ false };
+}
 
 void PinSource::pinNextOlder()
 {

@@ -120,13 +120,14 @@ App::App()
         bool flag = app->refuseSecondInstance();
         if (flag) return;
         Tray::init();
-		WinPin::restoreAll();   // 上次退出前贴着的图，回到原来的位置
-		// 开机自启不启动截图；--enter=tray 也一样，升级完重启新版本走的就是它 ——
-		// 都是"只挂个托盘图标待命"，这条路上一个窗口都不建，图形设备也就根本不会创建
-		if (app->args[L"--auto-start"] == L"true" || app->args[L"--enter"] == L"tray") {
-			Update::checkLater();
-			return;
-		}
+        // 开机自启不启动截图；--enter=tray 也一样，升级完重启新版本走的就是它 ——
+        // 都是"只挂个托盘图标待命"，这条路上一个窗口都不建，图形设备也就根本不会创建。
+        // 恢复贴图也要建窗口，所以放在这个判断之后
+        if (app->args[L"--auto-start"] == L"true" || app->args[L"--enter"] == L"tray") {
+            Update::checkLater();
+            return;
+        }
+        WinPin::restoreAll();   // 上次退出前贴着的图，回到原来的位置
 		WinCap::init();//默认情况下，应用启动随即进入截图模式
     }
 }

@@ -5,12 +5,12 @@
 
 // 图像输出相关的工具函数。data 一律要求 BGRA、top-down、行紧凑（步长 = w*4），
 // 这也是 WinPin::getImagePixels 交出来的格式。
-// 剪贴板当前内容的形态。图与文都有可能同时在剪贴板上，这里按"图优先"只报一种
-enum class ClipContent { None, Image, Text };
-
 class Util
 {
 public:
+	// 剪贴板当前内容的形态。图与文都有可能同时在剪贴板上，这里按"图优先"只报一种。
+	// 放在类里：调用方都用 Util::ClipContent 限定名取它
+	enum class ClipContent { None, Image, Text };
 	// 存盘格式。PNG 之外都是"有损/无 alpha"的格式，编码前按各格式的规矩处理像素
 	enum class ImgFormat { Png = 0, Jpeg, WebP };
 	// 同时写入 CF_DIBV5（Office / 微信 / WPS 这类原生程序认）和 "PNG" 注册格式

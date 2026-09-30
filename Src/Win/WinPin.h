@@ -45,6 +45,7 @@ public:
 	void setLocked(bool on);
 	void setMouseThrough(bool on);
 	void setPinTitle(const std::wstring& t);
+	const std::wstring& getPinTitle() const { return pinTitle; }
 	// 翻历史截图：step 正负表示往更早 / 更新翻一张（0 = 最新）。换底图会作废旧标注
 	void previewHistory(int step);
 	// 收成贴边细条 / 展开。悬停细条即展开，Ctrl+M 触发

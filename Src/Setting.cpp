@@ -331,7 +331,14 @@ JsonObject Setting::getPinObj()
 
 winrt::Windows::Data::Json::JsonArray Setting::getPins()
 {
-	return getPinObj().GetNamedArray(L"items", nullptr);
+	// 缺 items 时现建一个挂上去：GetNamedArray 对不存在的键返回的是"空对象"而不是
+	// 空 JsonArray，直接拿去迭代/清空会在启动时必崩
+	auto arr = getPinObj().GetNamedArray(L"items", nullptr);
+	if (!arr) {
+		arr = JsonArray();
+		getPinObj().SetNamedValue(L"items", arr);
+	}
+	return arr;
 }
 
 void Setting::setPins(const winrt::Windows::Data::Json::JsonArray& arr)

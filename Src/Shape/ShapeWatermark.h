@@ -21,8 +21,10 @@ public:
 private:
 	// 按当前样式建文字布局。返回 false 表示没有可画的东西（没写文字）
 	bool makeLayout();
-	// 在 (x, y) 处以 rotation 角度画一次文字，布局以该点为中心
-	void drawOne(ID2D1DeviceContext* ctx, float x, float y, float rotation);
+	// 在 (x, y) 处以 rotation 角度画一次文字，布局以该点为中心。
+	// outer 是外层已有的变换（屏幕上是缩放、导出时是单位阵），必须左乘保住
+	void drawOne(ID2D1DeviceContext* ctx, float x, float y, float rotation,
+		const D2D1_MATRIX_3X2_F& outer);
 	float cx{ 0.f }, cy{ 0.f };
 	Microsoft::WRL::ComPtr<IDWriteTextLayout> layout;
 	Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brush;

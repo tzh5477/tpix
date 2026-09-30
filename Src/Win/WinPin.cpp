@@ -11,6 +11,7 @@
 #include "../App.h"
 #include "../Util.h"
 #include "../Update.h"
+#include "../Setting.h"
 #include "../ShotHistory.h"
 
 using namespace Microsoft::WRL;
@@ -146,9 +147,14 @@ void WinPin::saveAll()
 		auto dir = Setting::get()->getDataPath() / L"pin";
 		std::error_code ec;
 		std::filesystem::create_directories(dir, ec);
-		// 整目录重写：上一次留下的文件与这次的编号对不上，留着只会越积越多
-		for (auto& entry : std::filesystem::directory_iterator(dir)) {
-			std::filesystem::remove_all(entry.path(), ec);
+		// 整目录重写：上一次留下的文件与这次的编号对不上，留着只会越积越多。
+		// 先收集再删 —— 边枚举边删目录项，没枚举到的可能被跳过
+		std::vector<std::filesystem::path> stale;
+		for (auto& entry : std::filesystem::directory_iterator(dir, ec)) {
+			stale.push_back(entry.path());
+		}
+		for (auto& path : stale) {
+			std::filesystem::remove_all(path, ec);
 		}
 		int index{ 0 };
 		for (auto& pin : winPins)
@@ -705,14 +711,16 @@ void WinPin::onKey(UINT key)
 // 旧图上的标注跟着作废 —— 换了底图，坐标就对不上了
 void WinPin::previewHistory(int step)
 {
+	auto shots = ShotHistory::get();
+	if (!shots) return;
 	if (previewIndex < 0) previewIndex = 0;
-	auto list = ShotHistory::get()->list(ShotHistory::Source::Shot);
+	auto list = shots->list(ShotHistory::Source::Shot);
 	if (list.empty()) return;
 	auto next = std::clamp(previewIndex + step, 0, (int)list.size() - 1);
 	if (next == previewIndex) return;
 	std::vector<BYTE> data;
 	int w{ 0 }, h{ 0 };
-	if (!ShotHistory::get()->loadImage(list[next], data, w, h)) return;
+	if (!shots->loadImage(list[next], data, w, h)) return;
 	if (!swapImage(data, w, h)) return;
 	previewIndex = next;
 }

@@ -57,10 +57,12 @@ bool ShapeWatermark::makeLayout()
 	return true;
 }
 
-void ShapeWatermark::drawOne(ID2D1DeviceContext* ctx, float x, float y, float rotation)
+void ShapeWatermark::drawOne(ID2D1DeviceContext* ctx, float x, float y, float rotation,
+	const D2D1_MATRIX_3X2_F& outer)
 {
-	// 平移到落点、旋转、再把布局的中心对齐到原点 —— 这样旋转是绕文字中心转的
-	auto m = D2D1::Matrix3x2F::Translation(x, y) * D2D1::Matrix3x2F::Rotation(rotation);
+	// 外层变换（屏幕上是缩放、导出时是单位阵）要左乘保住，否则 scale != 1 时
+	// 水印不跟随缩放；平移、旋转、居中三步排在内层
+	auto m = outer * D2D1::Matrix3x2F::Translation(x, y) * D2D1::Matrix3x2F::Rotation(rotation);
 	ctx->SetTransform(m);
 	ctx->DrawTextLayout({ -textW / 2.f, -textH / 2.f }, layout.Get(), brush.Get());
 }
@@ -86,13 +88,13 @@ void ShapeWatermark::paint(ID2D1DeviceContext* ctx)
 		{
 			for (float x = -stepX; x < sz.width + stepX; x += stepX)
 			{
-				drawOne(ctx, x, y, rotation);
+				drawOne(ctx, x, y, rotation, prev);
 			}
 		}
 	}
 	else {
 		// 居中：以鼠标落点为水印中心
-		drawOne(ctx, cx, cy, rotation);
+		drawOne(ctx, cx, cy, rotation, prev);
 	}
 	ctx->SetTransform(prev);
 }
@@ -103,9 +105,6 @@ void ShapeWatermark::paintDragger(ID2D1DeviceContext* ctx)
 	// 画一圈边框表示它整体可选中，不做八向夹点 —— 拖动水印没有意义
 	if (!win->screenImg) return;
 	auto sz = win->screenImg->GetSize();
-	auto prev = ctx->GetTransform();
-	ctx->SetTransform(D2D1::Matrix3x2F::Identity());
-	ctx->DrawRectangle(D2D1::RectF(0.f, 0.f, (float)sz.width, (float)sz.height),
-		brushDragger.Get(), 1.f);
-	ctx->SetTransform(prev);
+	// 外层变换保持不变：屏幕上跟着缩放走，导出时就是单位阵
+	ctx->DrawRectangle(D2D1::RectF(0.f, 0.f, sz.width, sz.height), brushDragger.Get(), 1.f);
 }
