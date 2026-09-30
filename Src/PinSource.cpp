@@ -4,6 +4,7 @@
 #include "PinSource.h"
 #include "Util.h"
 #include "Win/WinPin.h"
+#include "ShotHistory.h"
 
 using Microsoft::WRL::ComPtr;
 
@@ -187,4 +188,37 @@ void PinSource::fromColor(const std::wstring& color)
 		data[i * 4 + 3] = (BYTE)std::lround(c.a * 255);
 	}
 	pin(data, w, h);
+}
+
+// 依次贴历史截图的记账：连按到第几张、上次按是什么时候、上一张贴在了哪
+int pinCursor{ 0 };
+long long lastPinAt{ 0 };
+int lastPinX{ 0 }, lastPinY{ 0 };
+bool hasLastPin{ false };
+
+void PinSource::pinNextOlder()
+{
+	auto shots = ShotHistory::get();
+	if (!shots) return;
+	auto list = shots->list(ShotHistory::Source::Shot);
+	if (list.empty()) return;
+	auto now = GetTickCount64();
+	// 停手超过 2 秒就当是新的一轮：从第二新那张开始
+	pinCursor = (now - lastPinAt > 2000) ? 1 : pinCursor + 1;
+	lastPinAt = (long long)now;
+	if (pinCursor > (int)list.size()) pinCursor = (int)list.size();
+	std::vector<BYTE> data;
+	int w{ 0 }, h{ 0 };
+	if (!shots->loadImage(list[pinCursor - 1], data, w, h)) return;
+	int x{ 0 }, y{ 0 };
+	placeCenter(w, h, x, y);
+	// 连着贴的那几张往右下错开一点，不偏移的话会严丝合缝叠在一起，看不出贴了几张
+	if (hasLastPin) {
+		x = lastPinX + 24;
+		y = lastPinY + 24;
+	}
+	hasLastPin = true;
+	lastPinX = x;
+	lastPinY = y;
+	WinPin::initFromData(x, y, w, h, data);
 }

@@ -16,4 +16,6 @@ public:
 	static void fromText(const std::wstring& text);
 	// 颜色值渲染成一块纯色图贴出来。认不出来（不是 # 开头的十六进制）就什么都不做
 	static void fromColor(const std::wstring& color);
+	// 从截图历史里贴图：连着按 = 依次把第 2、第 3… 新的那张贴出来，停手两秒重新从第 2 张数
+	static void pinNextOlder();
 };

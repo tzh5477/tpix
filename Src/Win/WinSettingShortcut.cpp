@@ -97,7 +97,7 @@ namespace {
 
 WinSettingShortcut::WinSettingShortcut(Ling::WinBase* parent):Ling::Node(parent)
 {
-    std::vector<std::wstring> keys = { L"cap" };
+    std::vector<std::wstring> keys = { L"cap", L"pinLast" };
     for (auto& key:keys)
     {
         auto box = makeChild<Ling::Node>();

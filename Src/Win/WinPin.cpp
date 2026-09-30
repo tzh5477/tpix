@@ -11,6 +11,7 @@
 #include "../App.h"
 #include "../Util.h"
 #include "../Update.h"
+#include "../ShotHistory.h"
 
 using namespace Microsoft::WRL;
 using namespace winrt::Windows::Data::Json;
@@ -525,6 +526,11 @@ void WinPin::onDown(POINT pos, BOOL isRight)
 
 void WinPin::onMove(POINT pos)
 {
+	// 收成细条时鼠标一碰就展开 —— 这是细条唯一的展开方式
+	if (isMinimized) {
+		setMinimized(false);
+		return;
+	}
 	if (isLocked) return;   // 锁定时不给 hover 高亮，也不给拖动
 	// 同 onDown：文本框里的移动归 TextBox（拖选、滚动条 hover），不参与 shape 的 hover 判定
 	if (editingShape && textBox && textBox->isPosIn(pos)) return;
@@ -681,9 +687,86 @@ void WinPin::onKey(UINT key)
 	else if (key == VK_DELETE) {
 		history->removeHoverShape();
 	}
+	else if (key == VK_PRIOR) {     // PageUp：往前翻历史截图（更早的那张）
+		previewHistory(1);
+	}
+	else if (key == VK_NEXT) {      // PageDown：往回翻（更新的那张）
+		previewHistory(-1);
+	}
+	else if (ctrl && key == 'M') {  // Ctrl+M：收成贴边细条 / 展开。悬停细条也会展开
+		setMinimized(!isMinimized);
+	}
 	else if (key == VK_ESCAPE) {
 		close();
 	}
+}
+
+// 翻历史截图：把底图换成历史里第 previewIndex + step 张（0 = 最新）。
+// 旧图上的标注跟着作废 —— 换了底图，坐标就对不上了
+void WinPin::previewHistory(int step)
+{
+	if (previewIndex < 0) previewIndex = 0;
+	auto list = ShotHistory::get()->list(ShotHistory::Source::Shot);
+	if (list.empty()) return;
+	auto next = std::clamp(previewIndex + step, 0, (int)list.size() - 1);
+	if (next == previewIndex) return;
+	std::vector<BYTE> data;
+	int w{ 0 }, h{ 0 };
+	if (!ShotHistory::get()->loadImage(list[next], data, w, h)) return;
+	if (!swapImage(data, w, h)) return;
+	previewIndex = next;
+}
+
+// 换底图。共用构造函数里那套位图属性：ShapeMosaic / ShapeEraser 把它当取样源，
+// 属性不一致的话马赛克会取错
+bool WinPin::swapImage(const std::vector<BYTE>& data, const int w, const int h)
+{
+	if (w <= 0 || h <= 0 || data.empty()) return false;
+	D2D1_BITMAP_PROPERTIES1 props{};
+	props.pixelFormat = D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED);
+	props.bitmapOptions = D2D1_BITMAP_OPTIONS_NONE;
+	props.dpiX = 96.0f;
+	props.dpiY = 96.0f;
+	ComPtr<ID2D1Bitmap1> bmp;
+	if (FAILED(Ling::D2D::get()->deviceContext->CreateBitmap(D2D1::SizeU(w, h), data.data(),
+		w * 4, &props, bmp.GetAddressOf()))) return false;
+	screenImg = bmp;
+	scale = 1.f;
+	history->shapes.clear();
+	shapeHover = nullptr;
+	editingShape = nullptr;
+	applyWinSize();
+	layoutTools();
+	refresh();
+	return true;
+}
+
+// 收成一条贴在屏幕左缘的细条。悬停（onMove）即展开，Ctrl+M 再收回去
+void WinPin::setMinimized(bool on)
+{
+	if (on == isMinimized) return;
+	isMinimized = on;
+	if (on) {
+		savedX = x;
+		savedY = y;
+		savedW = static_cast<int>(w);
+		savedH = static_cast<int>(h);
+		MONITORINFO mi{ sizeof(MONITORINFO) };
+		GetMonitorInfo(MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST), &mi);
+		auto stripW = static_cast<int>(std::lround(6 * dpi));
+		w = static_cast<float>(stripW);
+		h = static_cast<float>(savedH);
+		SetWindowPos(hwnd, nullptr, mi.rcWork.left, savedY, stripW, savedH,
+			SWP_NOZORDER | SWP_NOACTIVATE);
+	}
+	else {
+		w = static_cast<float>(savedW);
+		h = static_cast<float>(savedH);
+		SetWindowPos(hwnd, nullptr, savedX, savedY, savedW, savedH,
+			SWP_NOZORDER | SWP_NOACTIVATE);
+		layoutTools();
+	}
+	refresh();
 }
 
 void WinPin::copyToClipboard()

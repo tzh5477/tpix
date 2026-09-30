@@ -45,6 +45,10 @@ public:
 	void setLocked(bool on);
 	void setMouseThrough(bool on);
 	void setPinTitle(const std::wstring& t);
+	// 翻历史截图：step 正负表示往更早 / 更新翻一张（0 = 最新）。换底图会作废旧标注
+	void previewHistory(int step);
+	// 收成贴边细条 / 展开。悬停细条即展开，Ctrl+M 触发
+	void setMinimized(bool on);
 public:
 	// Ctrl+滚轮的缩放倍数，1 = 原始大小。底图与所有 shape 的坐标一律按底图的原始像素存，
 	// 缩放只体现在两处：画的时候给 D2D 上一个缩放变换、收到鼠标坐标时先除回原始像素。
@@ -80,6 +84,12 @@ private:
 	// size 是出参，给的是底图的原始尺寸 —— 必须拿它去解释 pixels，不能用窗口的 w/h：
 	// Ctrl+滚轮缩放改的只有窗口大小，两者对不上就是按错误的宽高读缓冲区（越界崩溃、图也是花的）
 	bool getImagePixels(std::vector<BYTE>& pixels, D2D1_SIZE_U& size);
+	bool swapImage(const std::vector<BYTE>& data, const int w, const int h);
+	// 历史翻页当前指到哪一张（0 = 最新一张）。-1 表示还没翻过页
+	int previewIndex{ -1 };
+	// 收成细条前的位置与尺寸，展开时恢复
+	bool isMinimized{ false };
+	int savedX{ 0 }, savedY{ 0 }, savedW{ 0 }, savedH{ 0 };
 	// 另存为对话框会抢走前台并把 WinPin 激活，取消保存后用它把窗口层级和前台窗口恢复原样
 	void restoreWindowState(HWND foregroundBeforeDialog);
 	// 把窗口尺寸掰成"底图像素 × scale"。系统在 DPI 变化时会按新旧缩放比擅自缩放窗口
