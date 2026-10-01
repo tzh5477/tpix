@@ -1,6 +1,7 @@
 ﻿#include "pch.h"
 #include <shobjidl.h>
 #include "../Lang.h"
+#include "../Ocr.h"
 #include "../Setting.h"
 #include "../Util.h"
 #include "WinSetting.h"
@@ -41,9 +42,11 @@ WinSettingCommon::WinSettingCommon(Ling::WinBase* parent):Ling::Node(parent)
     initAutoStartCtrls();
     initLangCtrls();
     initCapBtnCtrls();
+    initCapCtrls();
     initSaveCtrls();
     initHistoryCtrls();
     initPinCtrls();
+    initOcrCtrls();
     auto weakThis = getWeakThis();
     // 这个回调一直挂在窗口上，而本节点可能在窗口关闭之前就被菜单切换换掉了，
     // 所以先确认自己还活着再去碰成员
@@ -226,6 +229,97 @@ Ling::Node* WinSettingCommon::makeRow(const std::wstring& labelKey)
     return box;
 }
 
+void WinSettingCommon::initCapCtrls()
+{
+    // 开 / 关两套配色，与 ToolSub::applyToggleStyle、initPinCtrls 里的保持一致
+    auto applySwitch = [](Ling::Button* btn, bool on) {
+        btn->setText(on ? L"\ue688" : L"\ue687");
+        btn->setColor(on ? 0x597ef7ff : 0x666666FF);
+        btn->setHoverColor(on ? 0x597ef7ff : 0x666666FF);
+    };
+    // 延时：0 就是关。给固定几档而不是自由输入 —— 这几秒是用来摆菜单、等悬停态的，
+    // 真要精确到 7 秒的场景不存在
+    constexpr int delayOpts[]{ 0, 2, 3, 5, 10 };
+    auto delayRow = makeRow(L"setting.capDelay");
+    auto delayBtn = delayRow->makeChild<Ling::Button>();
+    delayBtn->setHeight(28.f);
+    delayBtn->setWidth(80.f);
+    delayBtn->setBorder(1.f, 0xE0E0E0FF);
+    delayBtn->setHoverBg(0xFFFFFFFF);
+    auto applyDelay = [delayOpts](Ling::Button* btn) {
+        auto cur = Setting::get()->getCapDelay();
+        int idx{ 0 };
+        for (int i = 0; i < 5; ++i) {
+            if (delayOpts[i] == cur) { idx = i; break; }
+        }
+        btn->setText(delayOpts[idx] == 0 ? Lang::get(L"setting.delayOff")
+            : std::to_wstring(delayOpts[idx]) + Lang::get(L"setting.sec"));
+    };
+    applyDelay(delayBtn);
+    delayBtn->onClick.add([delayOpts, applyDelay](Ling::Button* btn) {
+        auto cur = Setting::get()->getCapDelay();
+        int idx{ 0 };
+        for (int i = 0; i < 5; ++i) {
+            if (delayOpts[i] == cur) { idx = i; break; }
+        }
+        Setting::get()->setCapDelay(delayOpts[(idx + 1) % 5]);
+        applyDelay(btn);
+    });
+
+    auto cursorRow = makeRow(L"setting.includeCursor");
+    auto cursorBtn = cursorRow->makeChild<Ling::Button>();
+    cursorBtn->setFontFamily(L"icon");
+    cursorBtn->setHeightPercent(100.f);
+    cursorBtn->setFontSize(18.f);
+    cursorBtn->setWidth(60.f);
+    applySwitch(cursorBtn, Setting::get()->getIncludeCursor());
+    cursorBtn->onClick.add([applySwitch](Ling::Button* btn) {
+        auto next = !Setting::get()->getIncludeCursor();
+        Setting::get()->setIncludeCursor(next);
+        applySwitch(btn, next);
+    });
+
+    auto shotRow = makeRow(L"setting.autoShot");
+    auto shotBtn = shotRow->makeChild<Ling::Button>();
+    shotBtn->setFontFamily(L"icon");
+    shotBtn->setHeightPercent(100.f);
+    shotBtn->setFontSize(18.f);
+    shotBtn->setWidth(60.f);
+    applySwitch(shotBtn, Setting::get()->getAutoShot());
+    shotBtn->onClick.add([applySwitch](Ling::Button* btn) {
+        auto next = !Setting::get()->getAutoShot();
+        Setting::get()->setAutoShot(next);
+        applySwitch(btn, next);
+    });
+
+    // 间隔：定时截图是无人值守的，太密会把硬盘堆满，给到分钟这一档
+    constexpr int minOpts[]{ 1, 5, 10, 30, 60 };
+    auto minRow = makeRow(L"setting.autoShotMin");
+    auto minBtn = minRow->makeChild<Ling::Button>();
+    minBtn->setHeight(28.f);
+    minBtn->setWidth(80.f);
+    minBtn->setBorder(1.f, 0xE0E0E0FF);
+    minBtn->setHoverBg(0xFFFFFFFF);
+    auto applyMin = [minOpts](Ling::Button* btn) {
+        auto cur = Setting::get()->getAutoShotMin();
+        int idx{ 0 };
+        for (int i = 0; i < 5; ++i) {
+            if (minOpts[i] == cur) { idx = i; break; }
+        }
+        btn->setText(std::to_wstring(minOpts[idx]) + Lang::get(L"setting.min"));
+    };
+    applyMin(minBtn);
+    minBtn->onClick.add([minOpts, applyMin](Ling::Button* btn) {
+        auto cur = Setting::get()->getAutoShotMin();
+        int idx{ 0 };
+        for (int i = 0; i < 5; ++i) {
+            if (minOpts[i] == cur) { idx = i; break; }
+        }
+        Setting::get()->setAutoShotMin(minOpts[(idx + 1) % 5]);
+        applyMin(btn);
+    });
+}
+
 void WinSettingCommon::initSaveCtrls()
 {
     // 保存格式：三种循环切换，按钮上直接写扩展名（大写），比另起一套译名更不容易对不上
@@ -374,6 +468,42 @@ void WinSettingCommon::initPinCtrls()
         auto next = !Setting::get()->getRestorePins();
         Setting::get()->setRestorePins(next);
         apply(b, next);
+    });
+}
+
+void WinSettingCommon::initOcrCtrls()
+{
+    auto langs = Ocr::languages();
+    auto row = makeRow(L"setting.ocrLang");
+    auto btn = row->makeChild<Ling::Button>();
+    btn->setHeight(28.f);
+    btn->setWidth(140.f);
+    btn->setBorder(1.f, 0xE0E0E0FF);
+    btn->setHoverBg(0xFFFFFFFF);
+    if (langs.empty()) {
+        // 一个识别语言包都没装：这行只能当提示用，点了也没得切
+        btn->setText(Lang::get(L"ocr.notInstalled"));
+        return;
+    }
+    auto apply = [langs](Ling::Button* b) {
+        auto tag = Setting::get()->getToolStr(L"ocr", L"lang", L"");
+        auto name = std::wstring{ Lang::get(L"ocr.langAuto") };
+        for (auto const& lang : langs) {
+            if (lang.tag == tag) { name = lang.name; break; }
+        }
+        b->setText(name);
+    };
+    apply(btn);
+    btn->onClick.add([langs, apply](Ling::Button* b) {
+        auto tag = Setting::get()->getToolStr(L"ocr", L"lang", L"");
+        // 空标签（跟随系统）算第 0 项，之后依次是列表里的每一项
+        int idx{ 0 };
+        for (int i = 0; i < static_cast<int>(langs.size()); ++i) {
+            if (langs[i].tag == tag) { idx = i + 1; break; }
+        }
+        auto next = (idx + 1) % static_cast<int>(langs.size() + 1);
+        Setting::get()->setToolStr(L"ocr", L"lang", next == 0 ? L"" : langs[next - 1].tag);
+        apply(b);
     });
 }
 

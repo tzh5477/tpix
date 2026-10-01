@@ -51,6 +51,16 @@ public:
 	// 是否记录剪贴板历史。关掉之后监听还挂着（省得重建窗口），只是不再往库里写
 	bool getClipboardHistory();
 	void setClipboardHistory(bool val);
+	// 捕获。存在 config.json 的 cap 组里：delay（延时秒数）、autoShot / autoShotMin
+	//（定时自动截图的开关与间隔分钟）、cursor（截图里带上鼠标指针）
+	int getCapDelay();
+	void setCapDelay(int val);
+	bool getAutoShot();
+	void setAutoShot(bool val);
+	int getAutoShotMin();
+	void setAutoShotMin(int val);
+	bool getIncludeCursor();
+	void setIncludeCursor(bool val);
 	// 上次检查更新是哪一天（std::chrono::days 的计数，即 1970-01-01 以来的天数），
 	// 从来没查过返回 0。一天最多查一次服务端，靠它记账 —— 每次空闲都去请求纯属浪费人家的流量
 	long long getUpdateCheckDay();
@@ -70,6 +80,8 @@ private:
 	JsonObject getSaveObj();
 	// pin 那一组（贴图持久化），缺则现建
 	JsonObject getPinObj();
+	// cap 那一组（捕获：延时 / 定时 / 指针），缺则现建
+	JsonObject getCapObj();
 	std::filesystem::path initDataPath();
 	// 决定配置文件用哪一份：exe 同目录有 config.json 就用它（绿色版，配置跟着程序走），
 	// 否则用 %appdata%\ScreenCapture\config.json。二者只认一个，读哪儿就写哪儿。

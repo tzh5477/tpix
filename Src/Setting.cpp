@@ -358,6 +358,67 @@ void Setting::setRestorePins(bool val)
 	save();
 }
 
+JsonObject Setting::getCapObj()
+{
+	auto obj = configObj.GetNamedObject(L"cap", nullptr);
+	if (!obj) {
+		obj = JsonObject();
+		configObj.SetNamedValue(L"cap", obj);
+	}
+	return obj;
+}
+
+int Setting::getCapDelay()
+{
+	// 夹到 [0, 60]：延时是给"摆好菜单/悬停态再截"用的，再长就没有意义了
+	auto val = (int)getCapObj().GetNamedNumber(L"delay", 0.0);
+	if (val < 0) return 0;
+	if (val > 60) return 60;
+	return val;
+}
+
+void Setting::setCapDelay(int val)
+{
+	getCapObj().SetNamedValue(L"delay", JsonValue::CreateNumberValue((double)val));
+	save();
+}
+
+bool Setting::getAutoShot()
+{
+	return getCapObj().GetNamedBoolean(L"autoShot", false);
+}
+
+void Setting::setAutoShot(bool val)
+{
+	getCapObj().SetNamedValue(L"autoShot", JsonValue::CreateBooleanValue(val));
+	save();
+}
+
+int Setting::getAutoShotMin()
+{
+	auto val = (int)getCapObj().GetNamedNumber(L"autoShotMin", 5.0);
+	if (val < 1) return 1;
+	if (val > 1440) return 1440;
+	return val;
+}
+
+void Setting::setAutoShotMin(int val)
+{
+	getCapObj().SetNamedValue(L"autoShotMin", JsonValue::CreateNumberValue((double)val));
+	save();
+}
+
+bool Setting::getIncludeCursor()
+{
+	return getCapObj().GetNamedBoolean(L"cursor", false);
+}
+
+void Setting::setIncludeCursor(bool val)
+{
+	getCapObj().SetNamedValue(L"cursor", JsonValue::CreateBooleanValue(val));
+	save();
+}
+
 long long Setting::getUpdateCheckDay()
 {
     auto common = configObj.GetNamedObject(L"common", nullptr);

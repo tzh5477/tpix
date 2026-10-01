@@ -49,6 +49,26 @@ bool Ocr::isAvailable()
 	}
 }
 
+std::vector<OcrLang> Ocr::languages()
+{
+	std::vector<OcrLang> list;
+	try {
+		for (auto const& lang : wmo::OcrEngine::AvailableRecognizerLanguages()) {
+			auto tag = std::wstring{ std::wstring_view{ lang.LanguageTag() } };
+			// 显示名在个别语言包上是空的（只有标签），那就直接显示标签，
+			// 总比在下拉里留一个空白项强
+			auto name = std::wstring{ std::wstring_view{ lang.DisplayName() } };
+			list.push_back({ tag, name.empty() ? tag : name });
+		}
+	}
+	catch (...) {
+	}
+	// 顺序按标签排：系统给的顺序没有保证，不排的话每次开窗口语言列表都在跳
+	std::sort(list.begin(), list.end(),
+		[](const OcrLang& a, const OcrLang& b) { return a.tag < b.tag; });
+	return list;
+}
+
 std::wstring Ocr::recognize(const int w, const int h, BYTE* data, const std::wstring& langTag)
 {
 	if (w <= 0 || h <= 0 || !data) return {};

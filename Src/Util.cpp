@@ -436,6 +436,12 @@ std::wstring Util::resolveSavePath(HWND hwnd)
 	if (!setting->getAutoSave()) {
 		return getSaveFilePath(hwnd, getExtOfFormat((ImgFormat)getSaveFormat()));
 	}
+	return autoSavePath();
+}
+
+std::wstring Util::autoSavePath()
+{
+	auto setting = Setting::get();
 	auto dir = std::filesystem::path{ setting->getSaveDir() };
 	if (dir.empty()) dir = setting->getDataPath().append(L"screenshot");
 	std::error_code ec;
@@ -525,7 +531,48 @@ std::wstring Util::createFileName(const std::wstring& ext)
 		st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond, st.wMilliseconds, ext);
 }
 
-std::vector<BYTE> Util::captureScreen(const int x, const int y, const int w, const int h)
+namespace {
+// 指针的快照。hCursor 是系统共享的句柄，等到画的时候它可能已经换人了，所以拷一份图标存着
+HICON snapshotIcon{ nullptr };
+POINT snapshotPos{ 0, 0 };
+
+// 把指针画到 hdc 上。hdc 的原点对应屏幕上的 (x, y)
+void drawCursor(HDC hdc, const int x, const int y)
+{
+	HICON icon{ snapshotIcon };
+	POINT pos{ snapshotPos };
+	if (!icon) {
+		// 没快照：现取一个。定时自动截图走这条路 —— 那时屏幕上没有 tpix 的窗口，
+		// 取到的就是用户真正在用的那个指针
+		CURSORINFO ci{ .cbSize = sizeof(CURSORINFO) };
+		if (!GetCursorInfo(&ci) || !(ci.flags & CURSOR_SHOWING)) return;
+		icon = ci.hCursor;
+		pos = ci.ptScreenPos;
+	}
+	ICONINFO ii{};
+	if (!GetIconInfo(icon, &ii)) return;
+	// GetIconInfo 造出来的这两张位图得自己删；单色指针没有 hbmColor
+	DrawIconEx(hdc, pos.x - x - (int)ii.xHotspot, pos.y - y - (int)ii.yHotspot,
+		icon, 0, 0, 0, nullptr, DI_NORMAL);
+	if (ii.hbmMask) DeleteObject(ii.hbmMask);
+	if (ii.hbmColor) DeleteObject(ii.hbmColor);
+}
+}
+
+void Util::snapshotCursor()
+{
+	CURSORINFO ci{ .cbSize = sizeof(CURSORINFO) };
+	if (!GetCursorInfo(&ci) || !(ci.flags & CURSOR_SHOWING) || !ci.hCursor) {
+		snapshotIcon = nullptr;
+		return;
+	}
+	if (snapshotIcon) DestroyIcon(snapshotIcon);
+	snapshotIcon = CopyIcon(ci.hCursor);
+	snapshotPos = ci.ptScreenPos;
+}
+
+std::vector<BYTE> Util::captureScreen(const int x, const int y, const int w, const int h,
+	bool withCursor)
 {
 	std::vector<BYTE> data;
 	if (w <= 0 || h <= 0) return data;
@@ -535,6 +582,7 @@ std::vector<BYTE> Util::captureScreen(const int x, const int y, const int w, con
 	auto oldObj = SelectObject(hDC, hBitmap);
 	BitBlt(hDC, 0, 0, w, h, hScreen, x, y, SRCCOPY);
 	ReleaseDC(nullptr, hScreen);
+	if (withCursor) drawCursor(hDC, x, y);
 	data.resize((size_t)w * 4 * h);
 	BITMAPINFO bmi{};
 	bmi.bmiHeader.biSize = sizeof(BITMAPINFOHEADER);

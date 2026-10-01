@@ -11,7 +11,9 @@ class WinCap:public Ling::WinBase
 {
 public:
 	~WinCap();
+	// 进截图。配了延时就先走倒计时，数完由 WinDelay 回调下面这个
 	static void init();
+	static void initNow();
 	static WinCap* get();
 	// 退出流程里调：窗口对象是文件级静态变量，交给静态析构就在 CoUninitialize 之后了
 	static void dispose();

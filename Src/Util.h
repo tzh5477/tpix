@@ -34,8 +34,16 @@ public:
 	static std::wstring formatFileName(const std::wstring& tpl, const std::wstring& ext);
 	// 以当前时间生成默认文件名，精确到毫秒，避免连续保存时重名
 	static std::wstring createFileName(const std::wstring& ext);
-	// GDI 抓屏。返回 BGRA、top-down、行紧凑（步长 = w*4），与本类其他函数的入参格式一致
-	static std::vector<BYTE> captureScreen(const int x, const int y, const int w, const int h);
+	// 自动保存那套目录 + 模板算出来的路径，不弹窗。定时自动截图这种没人盯着的时候走它
+	static std::wstring autoSavePath();
+	// GDI 抓屏。返回 BGRA、top-down、行紧凑（步长 = w*4），与本类其他函数的入参格式一致。
+	// withCursor 为真时把鼠标指针画上去（指针位置与形状取自 snapshotCursor 的快照，
+	// 没快照就现取一个）—— 滚动截图那一帧帧的拼接不该带指针，所以默认不画
+	static std::vector<BYTE> captureScreen(const int x, const int y, const int w, const int h,
+		bool withCursor = false);
+	// 记下"此刻"鼠标指针的形状与位置。必须在截图窗口建起来之前调：
+	// 窗口一出来指针就换成 tpix 自己的了，那时再取，截到的是我们的箭头
+	static void snapshotCursor();
 	// 把文件路径以 CF_HDROP 写进剪切板，粘贴到资源管理器/聊天窗口就是一个文件
 	static void addFileToClipboard(const std::wstring& filePath);
 	// 把图存成缓存文件，再交给外部插件 ImageReader.exe 做文字识别。插件先在本 exe

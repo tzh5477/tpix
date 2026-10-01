@@ -19,7 +19,9 @@ WinSetting::WinSetting() :Ling::WinBase()
 		Ling::App::get()->dq.TryEnqueue([]() { winSetting.reset(); });
 	});
 	setTitle(Lang::get(L"setting.title"));
-	setSize(680, 560);
+	// 通用设置每一行是定高的（连分隔线 40），既不压缩也不滚动，
+	// 所以窗口高度得跟着行数走 —— 拦在底部的那几行点不到，等于没做
+	setSize(680, 720);
 	setCenter();
 	createNativeWindow();
 }

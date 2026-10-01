@@ -3,6 +3,7 @@
 #include "WinCap.h"
 #include "WinPin.h"
 #include "CutMask.h"
+#include "WinDelay.h"
 #include "../App.h"
 #include "../Util.h"
 #include "../Setting.h"
@@ -61,6 +62,21 @@ void WinCap::init()
 {
     // 双击托盘图标会连着来两下，已经开着就不再建第二个
     if (winCap) return;
+    // 延时截图：倒计时那几秒里屏幕还得是活的（摆菜单、等悬停态），
+    // 建窗就取屏，所以只能让倒计时先顶着，数完再回来
+    if (Setting::get()->getCapDelay() > 0) {
+        WinDelay::start(Setting::get()->getCapDelay());
+        return;
+    }
+    initNow();
+}
+
+void WinCap::initNow()
+{
+    if (winCap) return;
+    // 指针快照必须在建窗之前取：窗口一出来指针就换成 tpix 自己的了，
+    // 那时再取，截到的是我们的箭头而不是用户当时指着的那个
+    Util::snapshotCursor();
     auto ptr = new WinCap();
     winCap.reset(ptr);
 	ptr->cutMask = std::make_unique<CutMask>(ptr);
