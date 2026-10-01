@@ -9,6 +9,7 @@
 #include "./Win/WinPin.h"
 #include "./Win/WinHistory.h"
 #include "./Win/WinOcr.h"
+#include "./Win/WinBall.h"
 #include "./Win/WinSetting.h"
 
 std::unique_ptr<App> app;
@@ -35,6 +36,7 @@ void App::dispose()
     WinCap::dispose();
     WinSetting::dispose();
     WinOcr::dispose();
+    WinBall::dispose();
     WinHistory::dispose();
     ShotHistory::dispose();   // 必须在 Setting 之前：析构里要写索引文件
     Lang::dispose();
@@ -128,6 +130,7 @@ App::App()
             return;
         }
         WinPin::restoreAll();   // 上次退出前贴着的图，回到原来的位置
+		WinBall::init();        // 悬浮球：配置里开过就一直挂着，位置是上次拖到的地方
 		WinCap::init();//默认情况下，应用启动随即进入截图模式
     }
 }

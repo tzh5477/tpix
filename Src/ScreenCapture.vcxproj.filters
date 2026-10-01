@@ -51,6 +51,9 @@
     <ClCompile Include="Win\WinHistory.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
+    <ClCompile Include="Win\WinBall.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
     <ClCompile Include="Win\WinOcr.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
@@ -199,6 +202,9 @@
       <Filter>头文件</Filter>
     </ClInclude>
     <ClInclude Include="Tray.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Win\WinBall.h">
       <Filter>头文件</Filter>
     </ClInclude>
     <ClInclude Include="Win\WinOcr.h">

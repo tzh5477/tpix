@@ -158,6 +158,12 @@ void PinSource::fromFile(HWND hwnd)
 	if (FAILED(item->GetDisplayName(SIGDN_FILESYSPATH, &rawPath))) return;
 	std::wstring path{ rawPath };
 	CoTaskMemFree(rawPath);
+	fromPath(path);
+}
+
+void PinSource::fromPath(const std::wstring& path)
+{
+	if (path.empty()) return;
 	// 动图走另一条路：解出帧序列交给贴图窗口自己播，静态图才合成一块像素
 	std::vector<AnimFrame> frames;
 	if (AnimImage::load(path, frames)) {

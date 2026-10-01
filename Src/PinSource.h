@@ -12,6 +12,8 @@ public:
 	static void fromClipboard();
 	// 弹打开文件对话框，选中的图片贴出来
 	static void fromFile(HWND hwnd);
+	// 直接按路径贴图（悬浮球拖放走的就是它）。不是图片就什么都不做
+	static void fromPath(const std::wstring& path);
 	// 一段文字渲染成一张图贴出来。空串什么都不做
 	static void fromText(const std::wstring& text);
 	// 颜色值渲染成一块纯色图贴出来。认不出来（不是 # 开头的十六进制）就什么都不做
