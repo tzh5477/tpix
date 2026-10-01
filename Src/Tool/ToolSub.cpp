@@ -531,6 +531,8 @@ const std::vector<std::wstring>& ToolSub::onOffItems()
 
 void ToolSub::showOnOff(Ling::Button* btn, bool cur, std::function<void(bool)> apply)
 {
+	// 列表可能翻到按钮上方，那时它正好压在悬停提示的位置上，先把提示收掉
+	tip->hide();
 	SelectPopup::show(this, btn, onOffItems(), cur ? 1 : 0,
 		[apply](int index) { apply(index == 1); }, L"icon");
 }
@@ -555,6 +557,8 @@ Ling::Button* ToolSub::makeSelectBtn(const std::wstring& tipKey, const std::wstr
 	// index 与 items 捕获到 lambda 里，按钮重建时会跟着 contentNode 一起销毁，
 	// 而 ToolSub 与 WinPin 同生命周期，index 指向的成员不会先没
 	btn->onClick.add([this, index, items, cfgKey, btn, onPicked, refreshNumbers, useIconFont](Ling::Button*) {
+		// 列表可能翻到按钮上方，那时它正好压在悬停提示的位置上，先把提示收掉
+		tip->hide();
 		SelectPopup::show(this, btn, items, *index,
 			[this, index, items, cfgKey, btn, onPicked, refreshNumbers](int picked) {
 				*index = picked;
