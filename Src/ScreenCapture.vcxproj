@@ -197,6 +197,7 @@
     <ClCompile Include="Shape\ShapeRectBase.cpp" />
     <ClCompile Include="Shape\ShapeText.cpp" />
     <ClCompile Include="Tool\ToolCap.cpp" />
+    <ClCompile Include="Tool\ToolCapStage.cpp" />
     <ClCompile Include="Tool\ToolLong.cpp" />
     <ClCompile Include="Tool\ToolSub.cpp" />
     <ClCompile Include="Tool\ToolMain.cpp" />
@@ -285,6 +286,7 @@
     <ClInclude Include="Shape\ShapeRectBase.h" />
     <ClInclude Include="Shape\ShapeText.h" />
     <ClInclude Include="Tool\ToolCap.h" />
+    <ClInclude Include="Tool\ToolCapStage.h" />
     <ClInclude Include="Tool\ToolLong.h" />
     <ClInclude Include="Tool\ToolSub.h" />
     <ClInclude Include="Tool\ToolMain.h" />

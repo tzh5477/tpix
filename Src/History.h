@@ -12,7 +12,8 @@ public:
 	ShapeBase* createShape(const std::wstring& state, const int& x, const int& y);
 	void undo();
 	void redo();
-	void removeHoverShape();
+	// 删掉当前活动的那个：选中的优先，其次悬停的
+	void removeActiveShape();
 	// 删掉指定 shape。ShapeText 输入为空时会异步调它把自己抹掉。
 	void removeShape(ShapeBase* target);
 public:

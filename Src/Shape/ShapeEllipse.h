@@ -11,6 +11,7 @@ public:
 	~ShapeEllipse();
 	void paint(ID2D1DeviceContext* ctx) override;
 	void mouseWheel(const float x, const float y, const short delta) override;
+	void applyStyle() override;
 protected:
 	void hitBody(const float x, const float y) override;
 	void syncFromRect() override;

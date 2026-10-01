@@ -14,6 +14,7 @@ public:
 	void mouseMove(const float x, const float y) override;
 	void mouseWheel(const float x, const float y, const short delta) override;
 	void setCursor() override;
+	void applyStyle() override;
 public:
 private:
 	void makeArrow();

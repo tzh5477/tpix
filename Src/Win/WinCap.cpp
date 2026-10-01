@@ -15,6 +15,7 @@
 #include "CapLong.h"
 #include "CapVideo.h"
 #include "../Tool/ToolCap.h"
+#include "../Tool/ToolCapStage.h"
 using namespace Microsoft::WRL;
 
 namespace
@@ -423,7 +424,7 @@ void WinCap::onDown(POINT pos, bool isRight)
         // 选区外面按下不是重新框选，而是按落点所在的那一块调对应的边或角
         isPress = true;
         cutMask->startAdjust(pos);
-        layoutTool(toolCap.get());
+        relayoutToolCap();
     }
 }
 
@@ -444,7 +445,7 @@ void WinCap::onMove(POINT pos)
         if (!isPress) return;
         cutMask->adjust(pos);
         // 选区变了，工具条跟着走位
-        layoutTool(toolCap.get());
+        relayoutToolCap();
     }
     else if (stage == CapStage::Long && capLong) {
         capLong->onMove(pos);
@@ -487,6 +488,7 @@ void WinCap::onClosed()
     if (capVideo) capVideo->dispose();
     if (capLong) capLong->dispose();
     if (toolCap) toolCap->close();
+    if (toolCapStage) toolCapStage->close();
     Ling::App::get()->dq.TryEnqueue([]() {
         winCap.reset();
         // 用完即走模式下截图结束就退出进程，与 App 构造里的判断对称。
@@ -513,14 +515,25 @@ void WinCap::stopIfRecording()
 void WinCap::makeToolCap()
 {
     if (toolCap) {
-        layoutTool(toolCap.get());
+        relayoutToolCap();
         toolCap->show();
+        toolCapStage->show();
         return;
     }
     toolCap = std::make_unique<ToolCap>(this);
-    // 尺寸在 ToolCap 构造里算好了，这里只定位；两者都要在建窗口之前设好
-    layoutTool(toolCap.get());
+    // 尺寸在两个构造里各自算好了，这里只定位；两者都要在建窗口之前设好
+    relayoutToolCap();
     toolCap->createNativeWindow(WS_EX_TOPMOST | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW, WS_POPUP);
+
+    toolCapStage = std::make_unique<ToolCapStage>(this);
+    relayoutToolCap();
+    toolCapStage->createNativeWindow(WS_EX_TOPMOST | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW, WS_POPUP);
+}
+
+void WinCap::relayoutToolCap()
+{
+    if (toolCap) layoutTool(toolCap.get());
+    if (toolCapStage) layoutToolSide(toolCapStage.get());
 }
 
 bool WinCap::enterByArg()
@@ -547,7 +560,7 @@ void WinCap::relayoutTool()
 {
     if (capLong) capLong->layoutTool();
     else if (capVideo) capVideo->layoutTool();
-    else if (toolCap) layoutTool(toolCap.get());
+    else relayoutToolCap();
 }
 
 void WinCap::layoutTool(Ling::WinBase* tool)
@@ -597,6 +610,42 @@ void WinCap::layoutTool(Ling::WinBase* tool)
     tool->setPosition(toolX, toolY);
 }
 
+// 选区右边缘外的竖排工具条：与选区顶部对齐，右侧摆不下换左边，上下都夹在工作区内。
+// CapLong 也是"右边放不下换左边"这套判断，逻辑像素与 gap 的算法与 layoutTool 保持一致
+void WinCap::layoutToolSide(Ling::WinBase* tool)
+{
+    if (!tool) return;
+    const int toolW = (int)(tool->w + 0.5f);
+    const int toolH = (int)(tool->h + 0.5f);
+    // maskRect 是本窗口的客户区坐标，换算到屏幕坐标
+    const int maskLeftScr = x + (int)cutMask->maskRect.left;
+    const int maskTopScr = y + (int)cutMask->maskRect.top;
+    const int maskRightScr = x + (int)cutMask->maskRect.right;
+    const int maskBottomScr = y + (int)cutMask->maskRect.bottom;
+
+    RECT maskScrRect{ maskLeftScr, maskTopScr, maskRightScr, maskBottomScr };
+    HMONITOR hMon = MonitorFromRect(&maskScrRect, MONITOR_DEFAULTTONEAREST);
+    MONITORINFO mi{ sizeof(MONITORINFO) };
+    GetMonitorInfo(hMon, &mi);
+
+    const int gap = (int)(cutMask->strokeWidth + 2.f * tool->dpi + 0.5f);
+    // 右边放不下（选区贴着屏幕右边缘时必然如此）就换到左边
+    int toolX;
+    if (w - cutMask->maskRect.right - 2.f * tool->dpi < toolW) {
+        toolX = maskLeftScr - toolW - gap;
+    }
+    else {
+        toolX = maskRightScr + gap;
+    }
+    // 顶部与选区对齐，再上下左右都夹进工作区
+    int toolY = maskTopScr;
+    if (toolY < mi.rcWork.top) toolY = mi.rcWork.top;
+    if (toolY + toolH > mi.rcWork.bottom) toolY = mi.rcWork.bottom - toolH;
+    if (toolX < mi.rcWork.left) toolX = mi.rcWork.left;
+    if (toolX + toolW > mi.rcWork.right) toolX = mi.rcWork.right - toolW;
+    tool->setPosition(toolX, toolY);
+}
+
 void WinCap::enterLiveStage()
 {
     // 底图是拖框那一刻的静态截图，从这里开始不能再画它 ——
@@ -607,6 +656,7 @@ void WinCap::enterLiveStage()
     // 不必再拿 WDA_EXCLUDEFROMCAPTURE 去摘整块屏幕大小的宿主窗口
     cutMask->hideLabel = true;
     if (toolCap) toolCap->hide();
+    if (toolCapStage) toolCapStage->hide();
     // 原来的 WinLong / WinVideo 建窗口时就是 topmost，这里补上
     SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
     refresh();
@@ -744,6 +794,7 @@ void WinCap::startQrcode()
     // 真关了就会在弹框还开着的时候把脚下的 this 抽掉，弹框关闭后再真正退场
     hide();
     if (toolCap) toolCap->hide();
+    if (toolCapStage) toolCapStage->hide();
     auto title = Lang::get(L"about.sysTip");
     if (text.empty()) {
         MessageBox(nullptr, Lang::get(L"cap.qrcodeEmpty").data(), title.data(), MB_OK | MB_ICONINFORMATION);
@@ -766,9 +817,12 @@ void WinCap::saveToFile()
     // ToolCap 却是 topmost 的，topmost 那一层永远盖在普通层之上，于是工具条浮在对话框上面。
     // 所以开对话框前先把工具条降回普通层，关掉之后再压回去
     auto setToolTopmost = [this](bool topmost) {
-        if (!toolCap || !toolCap->hwnd) return;
-        SetWindowPos(toolCap->hwnd, topmost ? HWND_TOPMOST : HWND_NOTOPMOST,
-            0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+        // 两个工具条是一对，压就一起压下去
+        for (auto* tool : { toolCap.get(), toolCapStage.get() }) {
+            if (!tool || !tool->hwnd) continue;
+            SetWindowPos(tool->hwnd, topmost ? HWND_TOPMOST : HWND_NOTOPMOST,
+                0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+        }
     };
     // 自动保存不弹对话框，也就没有"对话框被工具条盖住"这回事，不用动层级
     auto autoSave = Setting::get()->getAutoSave();

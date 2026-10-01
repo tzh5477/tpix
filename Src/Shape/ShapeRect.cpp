@@ -41,3 +41,13 @@ void ShapeRect::mouseWheel(const float x, const float y, const short delta)
 	strokeWidth = applied;
 	win->refresh();
 }
+
+// ToolSub 上的颜色 / 线宽 / 填充改了，重新取一遍。取法与构造函数里一模一样 ——
+// 颜色是构造那一刻的快照，不重取的话改样式对已经画出去的矩形毫无作用
+void ShapeRect::applyStyle()
+{
+	auto toolSub = win->getToolSub();
+	brush->SetColor(toolSub->getSelectedColor());
+	strokeWidth = toolSub->getSliderVal();
+	isFill = toolSub->isRectFill;
+}

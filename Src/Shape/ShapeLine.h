@@ -9,4 +9,5 @@ public:
 	ShapeLine(Canvas* win);
 	~ShapeLine();
 	void paint(ID2D1DeviceContext* ctx) override;
+	void applyStyle() override;
 };

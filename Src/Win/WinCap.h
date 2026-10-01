@@ -3,6 +3,7 @@
 
 class CutMask;
 class ToolCap;
+class ToolCapStage;
 class CapLong;
 class CapVideo;
 // 截图主窗口。铺满整个虚拟桌面，拖框结束后并不马上让位，而是留下来当宿主：
@@ -23,6 +24,9 @@ public:
 	// 工具条统一定位规则：右边与选区右边对齐，下方空间够就摆在选区右下方，
 	// 不够就摆右上方，上下都不够就盖在选区右下角内部（留一点边距）
 	void layoutTool(Ling::WinBase* tool);
+	// 选区右边缘外那条竖排工具条的定位：与选区顶部对齐，右侧摆不下换左边，
+	// 上下都要夹在工作区内。CapLong 的工具条就是"右边放不下换左边"这套判断
+	void layoutToolSide(Ling::WinBase* tool);
 	// 整窗让出鼠标：录制中用户要能直接操作被录的应用
 	void setMouseTransparent(bool transparent);
 	// CapLong 开始滚动之前把选区抠成一个洞，滚轮消息才落得到底下的目标窗口上
@@ -74,6 +78,9 @@ private:
 	void onUp(POINT pos, bool isRight);
 	void onClosed();
 	void makeToolCap();
+	// 两个工具条（下方横排 + 右侧竖排）一起按当前选区重新定位。
+	// 选区一动它们就得跟着走，三处调用点共用这一份，免得哪处漏摆一个
+	void relayoutToolCap();
 	// 命令行给了 --enter=xxx（long / video / ocr / qr / pin）时，框完选区不出 ToolCap，
 	// 直接走对应的那条路 —— 等于替用户点了工具条上的那个按钮。
 	// 返回是否已经接手；值不认识（拼错了）就返回 false，照常出工具条
@@ -90,6 +97,9 @@ private:
 	enum class CapStage { Select, Adjust, Long, Video };
 	CapStage stage{ CapStage::Select };
 	std::unique_ptr<ToolCap> toolCap;
+	// 选区右边缘外的竖排工具条（长截图 / 录屏 / OCR / 二维码）。
+	// 与 toolCap 是两个窗口，凡是 show / hide / close / 重排都得成对处理
+	std::unique_ptr<ToolCapStage> toolCapStage;
 	std::unique_ptr<CapLong> capLong;
 	std::unique_ptr<CapVideo> capVideo;
 	Microsoft::WRL::ComPtr<ID2D1Bitmap1> screenImg,pixImg;

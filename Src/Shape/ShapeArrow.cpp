@@ -23,6 +23,16 @@ ShapeArrow::~ShapeArrow()
 
 }
 
+// 箭头尺寸是按 path 画出来的，改了就得按新 arrowSize 重画一次几何
+void ShapeArrow::applyStyle()
+{
+	auto toolSub = win->getToolSub();
+	brush->SetColor(toolSub->getSelectedColor());
+	arrowSize = toolSub->getSliderVal() * 4.f;
+	isFill = toolSub->isArrowFill;
+	if (path) makeArrow();
+}
+
 void ShapeArrow::paint(ID2D1DeviceContext* ctx)
 {
 	// makeArrow 要等第一次 mouseDown 才建 path，这之前可能先来一次 paint
@@ -39,7 +49,9 @@ void ShapeArrow::paintDragger(ID2D1DeviceContext* ctx)
 {
 	for (auto& dragger : draggers)
 	{
+		// 选中的填实、悬停的留空：光标掠过一串元素时能分出改样式会作用到谁
 		ctx->DrawRectangle(dragger, brushDragger.Get(), win->getDpi());
+		if (win->selected == this) ctx->FillRectangle(dragger, brushDragger.Get());
 	}
 }
 

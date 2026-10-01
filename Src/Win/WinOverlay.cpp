@@ -29,7 +29,7 @@ WinOverlay::WinOverlay(OverlayMode mode) : Ling::WinBase(), mode(mode)
 		if (id != cursorTimerId) return;
 		// 穿透层一点就把焦点让给底下的窗口，之后 WM_KEYDOWN 再也到不了这里 ——
 		// 而"开着标尺继续点东西"正是它的主用法，所以 Esc 靠轮询兜底（&1 = 上次查询后按过）
-		if (mode != OverlayMode::Focus && (GetAsyncKeyState(VK_ESCAPE) & 1)) {
+		if (this->mode != OverlayMode::Focus && (GetAsyncKeyState(VK_ESCAPE) & 1)) {
 			close();
 			return;
 		}

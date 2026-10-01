@@ -152,6 +152,7 @@ void ToolSub::showRectTools()
 	makeToggleBtn(L"\ue602", &isRectFill, L"tool.rectFill", L"fill");
 	initSlider();
 	initColorBtns();
+	makeApplyAllBtn();
 }
 
 void ToolSub::showEllipseTools()
@@ -161,6 +162,7 @@ void ToolSub::showEllipseTools()
 	makeToggleBtn(L"\ue600", &isEllipseFill, L"tool.ellipseFill", L"fill");
 	initSlider();
 	initColorBtns();
+	makeApplyAllBtn();
 }
 
 void ToolSub::showArrowTools()
@@ -170,6 +172,7 @@ void ToolSub::showArrowTools()
 	makeToggleBtn(L"\ue604", &isArrowFill, L"tool.arrowFill", L"fill");
 	initSlider();
 	initColorBtns();
+	makeApplyAllBtn();
 }
 
 int ToolSub::getNumberSampleVal()
@@ -200,6 +203,7 @@ void ToolSub::showNumberTools()
 		[](int index) { return std::wstring{ RingSample[index] }; });
 	initSlider();
 	initColorBtns();
+	makeApplyAllBtn();
 }
 
 void ToolSub::showLineTools()
@@ -209,6 +213,7 @@ void ToolSub::showLineTools()
 	makeToggleBtn(L"\ue607", &isLineTransparent, L"tool.semiTransparent", L"semiTransparent");
 	initSlider();
 	initColorBtns();
+	makeApplyAllBtn();
 }
 
 void ToolSub::showTextTools()
@@ -219,6 +224,7 @@ void ToolSub::showTextTools()
 	makeToggleBtn(L"\ue682", &isTextItalic, L"tool.italic", L"italic");
 	initSlider();
 	initColorBtns();
+	makeApplyAllBtn();
 }
 
 void ToolSub::showMosaicTools()
@@ -233,6 +239,7 @@ void ToolSub::showMosaicTools()
 	makeCycleBtn(L"tool.mosaicMode", L"mode", &mosaicMode, 3,
 		[](int index) { return std::wstring{ mosaicIcons[index] }; }, true, false);
 	initSlider();
+	makeApplyAllBtn();
 }
 
 void ToolSub::showEraserTools()
@@ -241,6 +248,7 @@ void ToolSub::showEraserTools()
 	initSize(1, false, true);
 	makeToggleBtn(L"\ue602", &isEraserRect, L"tool.rectFill", L"rect");
 	initSlider();
+	makeApplyAllBtn();
 }
 
 void ToolSub::showPinTools()
@@ -529,6 +537,22 @@ Ling::Button* ToolSub::makeTextToggle(const std::wstring& text, const std::wstri
 		apply(next);
 	});
 	return btn;
+}
+
+// 「应用到全部」：把工具条当前样式套到图上同工具的所有标注。
+// 用文字不用图标字体 —— 图标码位里没有合适的"应用"符号，硬猜只会显示成方块
+void ToolSub::makeApplyAllBtn()
+{
+	auto btn = contentNode->makeChild<Ling::Button>();
+	btn->setText(L"全");
+	btn->setHeight(btnSize - 2.5);
+	btn->setFlexGrow(1.f);
+	btn->setFontSize(12.f);
+	// 它是动作按钮不是开关，取循环按钮那一档的常态配色
+	btn->setBg(0);
+	btn->setHoverBg(0xF2F2F2ff);
+	tip->bind(btn, Lang::get(L"tool.applyAll"));
+	btn->onClick.add([this](Ling::Button*) { win->applyStyleToAllShapes(); });
 }
 
 void ToolSub::showWatermarkTools()

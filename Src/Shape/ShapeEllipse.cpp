@@ -18,6 +18,15 @@ ShapeEllipse::~ShapeEllipse()
 
 }
 
+// 颜色是构造那一刻的快照，改样式必须重取一遍 —— 取法与构造函数里一模一样
+void ShapeEllipse::applyStyle()
+{
+	auto toolSub = win->getToolSub();
+	brush->SetColor(toolSub->getSelectedColor());
+	strokeWidth = toolSub->getSliderVal();
+	isFill = toolSub->isEllipseFill;
+}
+
 void ShapeEllipse::paint(ID2D1DeviceContext* ctx)
 {
 	D2D1_ELLIPSE ellipse = D2D1::Ellipse({ cx,cy }, rx, ry);

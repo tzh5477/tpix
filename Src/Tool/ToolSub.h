@@ -87,6 +87,9 @@ private:
 	// apply 由调用方给，开关翻转后直接调 WinPin 上对应的 setter
 	Ling::Button* makeTextToggle(const std::wstring& text, const std::wstring& tipKey,
 		const std::wstring& cfgKey, bool def, std::function<void(bool)> apply);
+	// 「应用到全部」：把工具条当前样式套到图上同工具的所有标注。
+	// 只在改了样式真能看出来的那些工具条上建（水印单实例且每次 paint 现取样式，不建）
+	void makeApplyAllBtn();
 	// 样式切换按钮上示例用哪个序号：取图上最大的那个编号，没有序号时用 1
 	int getNumberSampleVal();
 	// 每个 show*Tools 开头都要做的事：收提示、清旧内容、记下当前工具，

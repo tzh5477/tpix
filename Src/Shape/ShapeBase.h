@@ -31,6 +31,10 @@ public:
 	Canvas* win;
 	bool isUndo{ false };
 	int hoverDraggerIndex{ -1 };
+	// 建这一笔时的工具 id，由 History::createShape 填。
+	// 「应用到全部」拿它筛同类 —— ToolSub 的颜色是每个工具各存一份的，
+	// 跨类型套样式会让文字、序号被矩形的那个颜色污染
+	std::wstring toolId;
 protected:
 	float draggerSize;
 	Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brushDragger;

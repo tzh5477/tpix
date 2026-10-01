@@ -12,6 +12,7 @@ public:
 	~ShapeEraserLine();
 	void paint(ID2D1DeviceContext* ctx) override;
 	void mouseUp(const float x, const float y) override;
+	void applyStyle() override;
 protected:
 	// 几何一动就退出擦除态退回占位色。ShapeLineBase 每次改完点都调 makePath，
 	// 覆写它顺手退状态，比在 mouseDrag 里再开一个钩子少一层

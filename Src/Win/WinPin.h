@@ -68,6 +68,8 @@ public:
 	void refreshNumberShapes();
 	// ToolSub 上的颜色 / 字号 / 粗体 / 斜体变了，转给正在编辑的文本立即生效
 	void onToolStyleChanged();
+	// 「应用到全部」：把工具条当前样式套到图上同工具的所有标注
+	void applyStyleToAllShapes();
 	// ---- 贴图属性（ToolSub 的 pin 面板驱动，各项独立生效，见各自实现里的注释）----
 	void setOpacity(float v);
 	void setRounded(bool on);

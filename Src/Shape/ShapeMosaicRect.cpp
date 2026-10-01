@@ -23,6 +23,14 @@ ShapeMosaicRect::~ShapeMosaicRect()
 
 }
 
+// 马赛克块大小是从 strokeWidth 折算的，改线宽要按新块大小重新生成马赛克位图。
+// 只在已经生成过时重建 —— 还没 mouseUp 的那一笔交回 paint 自己处理
+void ShapeMosaicRect::applyStyle()
+{
+	strokeWidth = win->getToolSub()->getSliderVal();
+	if (mosaicBrush) buildMosaic();
+}
+
 void ShapeMosaicRect::paint(ID2D1DeviceContext* ctx)
 {
 	if (eraseBrush) {

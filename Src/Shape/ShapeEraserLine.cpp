@@ -18,6 +18,12 @@ ShapeEraserLine::~ShapeEraserLine()
 
 }
 
+// strokeWidth 直接就是涂抹擦除的笔宽，paint 里描边、盖底两处都用它
+void ShapeEraserLine::applyStyle()
+{
+	strokeWidth = win->getToolSub()->getSliderVal();
+}
+
 void ShapeEraserLine::paint(ID2D1DeviceContext* ctx)
 {
 	// makePath 要等第一次 mouseDown 才建 path，这之前可能先来一次 paint

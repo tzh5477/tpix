@@ -18,6 +18,13 @@ ShapeMosaicLine::~ShapeMosaicLine()
 
 }
 
+// strokeWidth 既是描边宽度也是马赛克块大小的来源，改了要把马赛克重新糊一遍
+void ShapeMosaicLine::applyStyle()
+{
+	strokeWidth = win->getToolSub()->getSliderVal();
+	if (mosaicBrush) buildMosaic();
+}
+
 void ShapeMosaicLine::paint(ID2D1DeviceContext* ctx)
 {
 	// makePath 要等第一次 mouseDown 才建 path，这之前可能先来一次 paint

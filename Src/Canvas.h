@@ -43,8 +43,12 @@ public:
 	Microsoft::WRL::ComPtr<ID2D1Bitmap1> screenImg;
 	// 标注图层。undo / redo 与 shape 的生命周期都在这里
 	std::unique_ptr<History> history;
-	// 鼠标悬停上的那个元素
+	// 鼠标悬停上的那个元素。跟鼠标走，移出即清 —— 只做提示，不承载选中态
 	ShapeBase* shapeHover{ nullptr };
+	// 选中的那个元素。点击建立，移出鼠标不清，一直保持到点空白处或点另一个为止。
+	// 改样式、Delete 都作用在它身上：鼠标为了去够工具条/按键必然离开标注，
+	// 选中态如果挂在 shapeHover 上一准半路丢
+	ShapeBase* selected{ nullptr };
 	// 本次按下新建出来的那个元素（还没抬手）。抬手时按"有没有画出东西"决定留不留
 	ShapeBase* shapeCur{ nullptr };
 	// —— 窗口侧状态的转发 ——

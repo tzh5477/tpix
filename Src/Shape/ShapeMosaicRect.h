@@ -16,6 +16,7 @@ public:
 	void paint(ID2D1DeviceContext* ctx) override;
 	void mouseDrag(const float x, const float y) override;
 	void mouseUp(const float x, const float y) override;
+	void applyStyle() override;
 private:
 	// 打好的马赛克画刷。与 eraseBrush 互斥：一个 shape 只会走到其中一条路上
 	Microsoft::WRL::ComPtr<ID2D1BitmapBrush> mosaicBrush;

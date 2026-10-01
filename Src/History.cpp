@@ -85,6 +85,7 @@ ShapeBase* History::createShape(const std::wstring& state, const int& x, const i
     }
     // curId 落在没有对应 shape 的工具上时 result 是空的，直接返回
     if (!result) return nullptr;
+    result->toolId = curId;
     result->mouseDown((float)x, (float)y);
     return result;
 }
@@ -120,12 +121,14 @@ void History::redo()
 }
 
 /// <summary>
-/// 进删除除 hover 状态的 shape
+/// 删掉当前活动的 shape：选中的那个优先，其次才是鼠标悬停的那个
 /// </summary>
-void History::removeHoverShape()
+void History::removeActiveShape()
 {
-    if (!canvas->shapeHover) return;
-    auto target = canvas->shapeHover;
+    // 分离 hover 与 selected 之后，Delete 要作用在选中的元素上 —— 鼠标为了去按
+    // Delete 早就移开了，悬停那份必然已经是空的
+    auto target = canvas->selected ? canvas->selected : canvas->shapeHover;
+    if (!target) return;
     // 正在编辑的话先收尾：TextBox 是窗口上共用的一个，
     // 删了 shape 却留着它显示，下一次编辑就会带着上一次的文字。
     // 走 ShapeBase 的统一口子，文字与序号两种可编辑 shape 都能收尾
@@ -135,13 +138,16 @@ void History::removeHoverShape()
 
 void History::removeShape(ShapeBase* target)
 {
+    // erase / return 必须写在 if 内：挪到 for 体里第一轮就无条件删掉 shapes[0]，
+    // 点空白处收掉空笔那一趟删掉的会是上一笔标注
     for (auto it = shapes.begin(); it != shapes.end(); ++it) {
         if (it->get() == target) {
 			canvas->shapeHover = nullptr;
+            canvas->selected = nullptr;
+            shapes.erase(it);
+            canvas->refresh();
+            return;
         }
-        shapes.erase(it);
-        canvas->refresh();
-        return;
     }
 }
 

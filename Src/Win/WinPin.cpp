@@ -129,6 +129,7 @@ void WinPin::onClosed()
 	if (toolSub) toolSub->close();
 	if (toolMain) toolMain->close();
 	drawing->shapeHover = nullptr;
+	drawing->selected = nullptr;
 	editingShape = nullptr;
 	// screenImg / canvas / drawing 都是成员（canvas 挂在 body 的子节点上），随下面这次 erase 一并释放
 	Ling::App::get()->dq.TryEnqueue([this]() {
@@ -365,6 +366,7 @@ void WinPin::setThumbMode(bool on)
 		if (editingShape) editingShape->finishEditing();
 		// hover 的夹点也是按当前倍率画的，留着会画到缩略图框外面去
 		drawing->shapeHover = nullptr;
+		drawing->selected = nullptr;
 		savedX = x;
 		savedY = y;
 		savedW = static_cast<int>(w);
@@ -699,8 +701,15 @@ void WinPin::layout()
 			shape->paint(ctx);
 		}
 	}
-	if (!isMouseDown && drawing->shapeHover) {
-		drawing->shapeHover->paintDragger(ctx);
+	// 手柄是"这里能拖动"的提示，所以悬停的那个要画；选中的那个画得更重（实心），
+	// 好让人看得出改样式会作用到谁。两者同时指着一个元素时只画一次
+	if (!isMouseDown) {
+		if (drawing->selected && drawing->selected != drawing->shapeHover) {
+			drawing->selected->paintDragger(ctx);
+		}
+		if (drawing->shapeHover) {
+			drawing->shapeHover->paintDragger(ctx);
+		}
 	}
 	// 蓝边框和倍数提示属于窗口装饰，不跟着图缩放：变换收回来，按窗口坐标画。
 	// 边框也因此从"底图矩形"改成"窗口矩形"，任何倍数下都是 2*dpi 粗
@@ -797,10 +806,14 @@ void WinPin::onDown(POINT pos, BOOL isRight)
 	// 以下都是交给 shape 的坐标，一律换算成底图像素（拖窗口那条路仍用窗口坐标）
 	auto imgPos = toImgPos(pos);
 	if (drawing->shapeHover) {
+		// 点在已有元素上：这一下建立选中。选中态独立于悬停，移开鼠标也不会丢
+		drawing->selected = drawing->shapeHover;
 		drawing->shapeCur = nullptr; //改的是已有元素，不参与空元素判定
 		drawing->shapeHover->mouseDown((float)imgPos.x, (float)imgPos.y);
 		return;
 	}
+	// 点在空白处：取消选中。下面新建的这笔如果只是单击，抬手时空笔判定会把它自己收掉
+	drawing->selected = nullptr;
 	drawing->shapeHover = drawing->history->createShape(toolMain->curId, imgPos.x, imgPos.y);
 	drawing->shapeCur = drawing->shapeHover;
 }
@@ -890,6 +903,9 @@ void WinPin::onUp(POINT pos, BOOL isRight)
 		prevPressCreatedShape = (drawing->shapeHover == justCreated);
 		auto imgPos = toImgPos(pos);
 		drawing->shapeHover->mouseUp((float)imgPos.x, (float)imgPos.y);
+		// 画完的这一笔保持选中，紧接着就能改它的样式。上面空笔那条路已经 return 了，
+		// 走到这里的都是留在图上的
+		drawing->selected = drawing->shapeHover;
 		refresh();
 		setTimer(800, 100);
 	}
@@ -956,7 +972,13 @@ History* WinPin::getHistory() const
 
 void WinPin::onToolStyleChanged()
 {
-	if (editingShape) editingShape->applyStyle();
+	// 优先级：正在编辑的文本 > 选中的元素。两者都没有就什么都不改 ——
+	// 这条链路以前只认 editingShape，选中态没有单独的载体，选中的矩形族
+	// 连 applyStyle 都没实现，颜色永远是构造那一刻的快照
+	auto target = editingShape ? editingShape : drawing->selected;
+	if (!target) return;
+	target->applyStyle();
+	refresh();
 }
 
 // ToolSub 上的编号样式 / 外圈样式切换之后：图上已经画着的序号要跟着换样子，
@@ -967,6 +989,18 @@ void WinPin::refreshNumberShapes()
 	{
 		auto number = dynamic_cast<ShapeNumber*>(shape.get());
 		if (number) number->applyStyle();
+	}
+	refresh();
+}
+
+// 「应用到全部」：把工具条当前样式套到图上同工具的所有标注。
+// 只认同类 —— 颜色是按工具各存一份的，跨类型套会让文字、序号被矩形的颜色污染
+void WinPin::applyStyleToAllShapes()
+{
+	for (auto& shape : drawing->history->shapes)
+	{
+		if (shape->isUndo) continue;
+		if (shape->toolId == toolMain->curId) shape->applyStyle();
 	}
 	refresh();
 }
@@ -1009,7 +1043,7 @@ void WinPin::onKey(UINT key)
 		copyToClipboard();
 	}
 	else if (key == VK_DELETE) {
-		drawing->history->removeHoverShape();
+		drawing->history->removeActiveShape();
 	}
 	else if (key == VK_PRIOR) {     // PageUp：往前翻历史截图（更早的那张）
 		previewHistory(1);
@@ -1073,6 +1107,7 @@ bool WinPin::swapImage(const std::vector<BYTE>& data, const int w, const int h)
 	scale = 1.f;
 	drawing->history->shapes.clear();
 	drawing->shapeHover = nullptr;
+	drawing->selected = nullptr;
 	editingShape = nullptr;
 	applyWinSize();
 	layoutTools();

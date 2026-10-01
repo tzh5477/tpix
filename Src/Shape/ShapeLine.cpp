@@ -21,6 +21,18 @@ ShapeLine::~ShapeLine()
 
 }
 
+// 半透明开关也在 ToolSub 上，颜色带 alpha 时要连它一起重算
+void ShapeLine::applyStyle()
+{
+	auto toolSub = win->getToolSub();
+	auto color = toolSub->getSelectedColor();
+	if (toolSub->isLineTransparent) {
+		color.a = 0.5f;
+	}
+	brush->SetColor(color);
+	strokeWidth = toolSub->getSliderVal();
+}
+
 void ShapeLine::paint(ID2D1DeviceContext* ctx)
 {
 	// makePath 要等第一次 mouseDown 才建 path，这之前可能先来一次 paint
