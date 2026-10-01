@@ -97,6 +97,9 @@ Src/
 - E5：横向滚动截图（CapLong 支持滚动轴：转置灰度条带复用竖向匹配、`MOUSEEVENTF_HWHEEL`、
   成图尺寸用 `resultW × resultH`、配置的那个方向滚不动自动换一次向）
 - H5：屏幕标尺 / 十字准线 / 屏幕聚焦（WinOverlay 一个铺满桌面的顶层窗口 + 托盘三项开关）
+- H1（前半）：全局快捷键体系扩充 —— `Setting.cpp` 里一张 `shortcutDefs` 表管住
+  「配置键名 → 消息 id → 默认组合」，可配的动作从 2 个扩到 8 个（新增历史记录、
+  悬浮球、剪贴板贴图、三个屏幕辅助层）
 - refactor(shape)（作者主导）：Canvas / CanvasHost 抽出画布宿主，ShapeRectBase / ShapeLineBase
   两个中间基类，马赛克与擦除拆成四变体；**Shape 层此后只认 Canvas，不认 WinPin**
 
@@ -104,8 +107,8 @@ Src/
 Alt+方向 = 贴到屏幕边；Ctrl+Alt+左右 = 搬到相邻显示器。
 
 待做：C5 的「Win+拖拽快速贴图」（需全局键盘钩子 + 全屏拖放层，风险较高，单独评估）、
-D2（表格识别，需 ONNX Runtime + 模型文件）、E2（手绘 / 固定尺寸区域 / 多窗口）、
-G1/G2（画中画 / 点击可视化 / 录制暂停 / 动作录制）、H1（快捷键体系扩充）、
+D2（表格识别，需 ONNX Runtime + 模型文件，需先定模型从哪来）、E2（手绘 / 固定尺寸区域 / 多窗口）、
+G1/G2（画中画 / 点击可视化 / 录制暂停 / 动作录制）、H1 剩下的「配置导入导出」、
 H3（剪贴板历史已有，剩"自动粘贴到输入焦点"）。
 
 > 记一笔 E4 的坑：`App::takeScreenShot` 与 `Util::captureScreen` 曾经是两份 GDI 抓屏代码，
