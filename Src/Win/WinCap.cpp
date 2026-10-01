@@ -818,7 +818,7 @@ void WinCap::saveToFile()
     // 所以开对话框前先把工具条降回普通层，关掉之后再压回去
     auto setToolTopmost = [this](bool topmost) {
         // 两个工具条是一对，压就一起压下去
-        for (auto* tool : { toolCap.get(), toolCapStage.get() }) {
+        for (auto tool : { static_cast<Ling::WinBase*>(toolCap.get()), static_cast<Ling::WinBase*>(toolCapStage.get()) }) {
             if (!tool || !tool->hwnd) continue;
             SetWindowPos(tool->hwnd, topmost ? HWND_TOPMOST : HWND_NOTOPMOST,
                 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);

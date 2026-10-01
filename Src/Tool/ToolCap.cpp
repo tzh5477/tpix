@@ -69,7 +69,7 @@ void ToolCap::onCreated()
 	// 标注工具全部平铺，不再按配置分主次 —— "更多"折叠去掉之后，开关也就没有意义了
 	for (auto& def : shapeBtns)
 	{
-		makeBtn(body, def.id, def.code, def.tip);
+		makeBtn(body.get(), def.id, def.code, def.tip);
 	}
 	// 分隔线留着：左边是"往图上加东西"，右边是"拿这张图怎么办"
 	auto spliter = body->makeChild<Ling::Node>();
@@ -77,7 +77,7 @@ void ToolCap::onCreated()
 	spliter->setBg(0xDDDDDDff);
 	for (auto& def : actionBtns)
 	{
-		makeBtn(body, def.id, def.code, def.tip);
+		makeBtn(body.get(), def.id, def.code, def.tip);
 	}
 	refreshSize();
 	show();

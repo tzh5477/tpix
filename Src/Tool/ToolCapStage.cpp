@@ -47,7 +47,7 @@ void ToolCapStage::onCreated()
 	body->setFlexDirection(Ling::FlexDirection::Column);
 	for (auto& def : stageBtns)
 	{
-		makeBtn(body, def.id, def.code, def.tip);
+		makeBtn(body.get(), def.id, def.code, def.tip);
 	}
 	refreshSize();
 	show();
