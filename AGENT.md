@@ -86,10 +86,17 @@ Src/
 
 - A 组：A1 ToolCap 两行容器、A2 序号增强、A3 智能擦除、A4 文字旋转、A5 输出格式与自动保存
 - B 组：B1 WinPin 多实例（地基已具备）、B2 历史截图 + 剪贴板历史（ShotHistory / WinHistory）、B3 内置 OCR（Ocr / WinOcr，Windows.Media.Ocr）
-- C 组：C1 贴图来源（PinSource：剪贴板 / 文件 / 文字 / 颜色值）、C2 贴图属性（不透明度 / 圆角 / 锁定 / 穿透 / 标题）、C4 贴图持久化与重启恢复、C6 依次贴图 + PageUp/PageDown 前后预览 + Ctrl+M 贴边细条
+- C 组：C1 贴图来源（PinSource：剪贴板 / 文件 / 文字 / 颜色值）、C2 贴图属性（不透明度 / 圆角 / 锁定 / 穿透 / 标题）、
+  C3 贴图组 / 缩略图 / 对齐跨屏 / 动图（AnimImage + WinPin 帧播放 + 播放暂停 + 重启续播）、
+  C4 贴图持久化与重启恢复、C5 悬浮球 + 拖放贴图（WinBall，WM_DROPFILES）、
+  C6 依次贴图 + PageUp/PageDown 前后预览 + Ctrl+M 贴边细条
 - H6：文字水印（ShapeWatermark，居中 / 平铺 / 透明度 / 旋转）
 
-待做：C3（贴图组 / 缩略图 / 动图）、C5（悬浮球 + 拖放贴图）、D1（OCR 多语种）、D2（表格识别）、E2–E5、G1/G2、H1/H3/H5。
+新增的快捷键（贴图窗口内）：空格 = 动图播放 / 暂停；Ctrl+T = 缩略图模式；
+Alt+方向 = 贴到屏幕边；Ctrl+Alt+左右 = 搬到相邻显示器。
+
+待做：C5 的「Win+拖拽快速贴图」（需全局键盘钩子 + 全屏拖放层，风险较高，单独评估）、
+D1（OCR 多语种）、D2（表格识别）、E2–E5、G1/G2、H1/H3/H5。
 
 ## 7. 验证
 
