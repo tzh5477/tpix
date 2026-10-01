@@ -105,7 +105,7 @@ namespace
 
 void SelectPopup::show(Ling::WinBase* owner, Ling::Node* anchor,
 	const std::vector<std::wstring>& items, int cur, std::function<void(int)> onPick,
-	const std::wstring& fontFamily)
+	const std::wstring& fontFamily, float minW)
 {
 	if (items.empty() || !owner || !anchor) return;
 	// Node 的 x/y 是窗口内坐标，弹层要的是屏幕坐标 —— 宿主的窗口位置得先加上去。
@@ -121,8 +121,9 @@ void SelectPopup::show(Ling::WinBase* owner, Ling::Node* anchor,
 	close();
 
 	auto dpi = owner->dpi > 0.f ? owner->dpi : 1.f;
-	// 列表宽度跟着按钮走，窄按钮也留个下限，不然"紧凑"两个字就把列表压成一条缝
-	auto listW = std::max(anchor->w / dpi, listMinW);
+	// 列表宽度跟着按钮走，窄按钮也留个下限，不然"紧凑"两个字就把列表压成一条缝。
+	// minW 是调用方指定的下限（字体名比按钮宽得多）
+	auto listW = std::max(std::max(anchor->w / dpi, listMinW), minW);
 	auto listH = std::min(listMaxH, itemH * (float)items.size());
 	// 默认往下弹，底下放不下就翻到按钮上方。用按钮所在显示器的工作区判断，
 	// 而不是虚拟桌面整体 —— 副屏在左上时后者会把翻转判错

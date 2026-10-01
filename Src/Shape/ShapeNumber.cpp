@@ -64,25 +64,15 @@ ShapeNumber::ShapeNumber(Canvas* win) :ShapeBase(win), draggers{
 	// 拖拽/滚轮改过之后会回写给滑块（见 ToolSub::setShapeSliderVal），所以后面新建的序号沿用同一大小，
 	// 关掉应用再打开也还是这个大小 —— 值存在 config.json 的 toolPin.number.radius 里
 	r{ win->getToolSub()->getSliderVal() },
-	val{ getNextVal(win) }
+	// 编号取自工具条上那个输入框，取完就自增并落盘 —— 所以第一笔是 1、第二笔是 2，
+	// 连删几个再画也不会重号。想从别的数起，直接改输入框（见 ToolSub::takeNumberVal）
+	val{ win->getToolSub()->takeNumberVal() }
 {
 	auto toolSub = win->getToolSub();
 	auto d2d = Ling::D2D::get();
 	d2d->deviceContext->CreateSolidColorBrush(toolSub->getSelectedColor(), brush.GetAddressOf());
 	d2d->deviceContext->CreateSolidColorBrush(D2D1::ColorF(0XFFFFFF), brushText.GetAddressOf());
 	setAttr();
-}
-
-int ShapeNumber::getNextVal(Canvas* win)
-{
-	int maxVal{ 0 };
-	for (auto& shape : win->history->shapes) {
-		auto number = dynamic_cast<ShapeNumber*>(shape.get());
-		if (number && !number->isUndo && number->val > maxVal) {
-			maxVal = number->val;
-		}
-	}
-	return maxVal + 1;
 }
 
 ShapeNumber::~ShapeNumber()
@@ -159,12 +149,61 @@ void ShapeNumber::paint(ID2D1DeviceContext* ctx)
 void ShapeNumber::paintDragger(ID2D1DeviceContext* ctx)
 {
 	if (isWheel) return;
-	for (auto& dragger : draggers)
+	// 无尾的样式没有"指向"可言，tip / mid 那两个控制点也就不该出现 —— 只剩圆心能拖
+	for (size_t i = 0; i < draggers.size(); i++)
 	{
-		// 选中的填实、悬停的留空：光标掠过一串元素时能分出改样式会作用到谁
-		ctx->DrawRectangle(dragger, brushDragger.Get(), win->getDpi());
-		if (win->selected == this) ctx->FillRectangle(dragger, brushDragger.Get());
+		if (i > 0 && !hasTail()) break;
+		// 选中的填白、悬停的留空：光标掠过一串元素时能分出改样式会作用到谁。
+		// 先填后描：描边是压在矩形边线中线上的，先描再填会把内半边盖掉，线看着只剩外半截
+		if (win->selected == this) ctx->FillRectangle(draggers[i], brushDraggerFill.Get());
+		ctx->DrawRectangle(draggers[i], brushDragger.Get(), win->getDpi());
 	}
+	// 编号的 + / − 两个小按钮。paintDragger 只会为选中或悬停的序号调用（见 WinPin::layout），
+	// 所以走到这儿就说明该显示它们
+	paintValueBtn(ctx, valuePlus, true);
+	paintValueBtn(ctx, valueMinus, false);
+}
+
+void ShapeNumber::updateValueBtns()
+{
+	// 恒在徽章左边、与圆心同高，不跟着 angle 转 —— 它们是"点这里改编号"的按钮，
+	// 不是指向图上的某个位置，转了反而不知道该点哪儿。半径取 0.45r：
+	// 再大就把旁边的标注压住了，再小又点不准
+	auto btnR{ r * 0.45f };
+	auto gap{ btnR * 0.5f };
+	// 从右往左排：+ 挨着徽章，− 再往左一个直径
+	auto plusX{ cx - r - gap - btnR };
+	auto minusX{ plusX - btnR * 2.f - gap };
+	valuePlus = D2D1::RectF(plusX - btnR, cy - btnR, plusX + btnR, cy + btnR);
+	valueMinus = D2D1::RectF(minusX - btnR, cy - btnR, minusX + btnR, cy + btnR);
+}
+
+void ShapeNumber::paintValueBtn(ID2D1DeviceContext* ctx, const D2D1_RECT_F& box, bool plus)
+{
+	auto c = D2D1::Point2F((box.left + box.right) / 2.f, (box.top + box.bottom) / 2.f);
+	auto rad{ (box.right - box.left) / 2.f };
+	// 先垫一层白圆再描边：按钮是直接压在底图上的，没有这层会和底图糊在一起
+	ctx->FillEllipse(D2D1::Ellipse(c, rad, rad), brushDraggerFill.Get());
+	ctx->DrawEllipse(D2D1::Ellipse(c, rad, rad), brushDragger.Get(), win->getDpi());
+	// 横线恒有，+ 再加一条竖线。线宽取控制点那个尺度
+	auto arm{ rad * 0.55f };
+	auto stroke{ draggerSize * 0.15f };
+	ctx->DrawLine({ c.x - arm, c.y }, { c.x + arm, c.y }, brushDragger.Get(), stroke);
+	if (plus) ctx->DrawLine({ c.x, c.y - arm }, { c.x, c.y + arm }, brushDragger.Get(), stroke);
+}
+
+void ShapeNumber::bumpVal(int delta)
+{
+	auto next = val + delta;
+	if (next < 1) return;
+	setValAndPush(next);
+	// 级联会动到别的序号的数字，它们的 layout 也得重建
+	for (auto& shape : win->history->shapes)
+	{
+		auto number = dynamic_cast<ShapeNumber*>(shape.get());
+		if (number && !number->isUndo) number->makeTextLayout();
+	}
+	win->refresh();
 }
 
 void ShapeNumber::setValAndPush(const int newVal)
@@ -195,20 +234,13 @@ void ShapeNumber::onKey(UINT key)
 	if (key == VK_OEM_PLUS || key == VK_ADD) delta = 1;
 	else if (key == VK_OEM_MINUS || key == VK_SUBTRACT) delta = -1;
 	else return;
-	auto next = val + delta;
-	if (next < 1) return;
-	setValAndPush(next);
-	// 级联会动到别的序号的数字，它们的 layout 也得重建
-	for (auto& shape : win->history->shapes)
-	{
-		auto number = dynamic_cast<ShapeNumber*>(shape.get());
-		if (number && !number->isUndo) number->makeTextLayout();
-	}
-	win->refresh();
+	bumpVal(delta);
 }
 
 void ShapeNumber::mouseDrag(const float x, const float y)
 {
+	// 加减按钮是一下就见效的动作，没有可拖的东西
+	if (hoverDraggerIndex == 3 || hoverDraggerIndex == 4) return;
 	if (hoverDraggerIndex == 0) {
 		auto spanX{ x - pressX };
 		auto spanY{ y - pressY };
@@ -237,6 +269,12 @@ void ShapeNumber::mouseDrag(const float x, const float y)
 
 void ShapeNumber::mouseDown(const float x, const float y)
 {
+	// 加减按钮按下即改编号，不进拖拽：它没有"拖大拖小"的语义，
+	// 一旦走进下面那条分支就会把 pressX/pressY 记下来，鼠标一动编号按钮跟着飘
+	if (hoverDraggerIndex == 3 || hoverDraggerIndex == 4) {
+		bumpVal(hoverDraggerIndex == 3 ? 1 : -1);
+		return;
+	}
 	if (hoverDraggerIndex == -1) { //首次创建
 		cx = x;
 		cy = y;
@@ -275,15 +313,25 @@ void ShapeNumber::mouseUp(const float x, const float y)
 void ShapeNumber::mouseMove(const float x, const float y)
 {
 	hoverDraggerIndex = -1;
-	if (isInRect(draggers[0], x, y))
+	// 加减按钮在徽章外面，先判它们；没命中再看那几个控制点。
+	// tip / mid 只有带尾的样式才有（见 hasTail），无尾时它们不参与命中
+	if (isInRect(valuePlus, x, y))
+	{
+		hoverDraggerIndex = 3;
+	}
+	else if (isInRect(valueMinus, x, y))
+	{
+		hoverDraggerIndex = 4;
+	}
+	else if (isInRect(draggers[0], x, y))
 	{
 		hoverDraggerIndex = 0;
 	}
-	else if (isInRect(draggers[1], x, y))
+	else if (hasTail() && isInRect(draggers[1], x, y))
 	{
 		hoverDraggerIndex = 1;
 	}
-	else if (isInRect(draggers[2], x, y))
+	else if (hasTail() && isInRect(draggers[2], x, y))
 	{
 		hoverDraggerIndex = 2;
 	}
@@ -312,7 +360,11 @@ void ShapeNumber::mouseWheel(const float x, const float y, const short delta)
 
 void ShapeNumber::setCursor()
 {
-	if (hoverDraggerIndex >= 0) {
+	// 加减按钮是"点一下"的，给手型；其余控制点都是"拖"的，给四向箭头
+	if (hoverDraggerIndex == 3 || hoverDraggerIndex == 4) {
+		SetCursor(LoadCursor(nullptr, IDC_HAND));
+	}
+	else if (hoverDraggerIndex >= 0) {
 		SetCursor(LoadCursor(nullptr, IDC_SIZEALL));
 	}
 }
@@ -334,15 +386,22 @@ D2D1_POINT_2F ShapeNumber::transformPoint(const D2D1_POINT_2F& point)
 	);
 }
 
+bool ShapeNumber::hasTail() const
+{
+	// 只有这两种"指向某处"的样式带尾巴；无尾的圆 / 方才是 pixpin 那种纯圈号
+	return ringStyle == RingStyle::CircleArrow || ringStyle == RingStyle::SquareArrow;
+}
+
 void ShapeNumber::makePath()
 {
 	auto d2d = Ling::D2D::get();
 	if (ringStyle == RingStyle::None) {
-		// 只要数字本身。指向箭头的那个夹点仍在老位置上悬着，但没有东西可画，
-		// 用户此刻也不需要转方向
+		// 只要数字本身。tip / mid 仍按老位置算出来：它们的 dragger 既不画也不响应（见 hasTail），
+		// 但 mouseUp 里还会照写一遍，不赋值就是读到垃圾
 		path.Reset();
 		tip = transformPoint(D2D1::Point2F(r + r / 3.f, 0.f));
 		mid = transformPoint(localPoint(180.f));
+		updateValueBtns();
 		return;
 	}
 	// ReleaseAndGetAddressOf 而不是 GetAddressOf：后者不放旧对象，拖动时每个鼠标事件漏一个几何体
@@ -350,19 +409,28 @@ void ShapeNumber::makePath()
 	ComPtr<ID2D1GeometrySink> sink;
 	path->Open(sink.GetAddressOf());
 	tip = transformPoint(D2D1::Point2F(r + r / 3.f, 0.f));
-	if (ringStyle == RingStyle::Circle) {
-		auto start = transformPoint(localPoint(10.f));
-		mid = transformPoint(localPoint(180.f));
-		auto end = transformPoint(localPoint(350.f));
+	auto tail = hasTail();
+	if (ringStyle == RingStyle::Circle || ringStyle == RingStyle::CircleArrow) {
+		// 带尾的从 10 度开口、把尾巴接出去；无尾的就是个整圆 ——
+		// 起点取正上方，两段 180 度的弧接回自己（这段弧正好半圆，LARGE 才取到对的那半）
+		auto start = transformPoint(localPoint(tail ? 10.f : 90.f));
+		auto bend = transformPoint(localPoint(tail ? 180.f : 270.f));
+		auto end = transformPoint(localPoint(tail ? 350.f : 90.f));
+		auto arcSize = tail ? D2D1_ARC_SIZE_SMALL : D2D1_ARC_SIZE_LARGE;
+		// 半径控制点就挂在弧的中点上（带尾时正好是原来那 180 度位置）
+		mid = bend;
 		sink->BeginFigure(start, D2D1_FIGURE_BEGIN_FILLED);
-		sink->AddArc(D2D1::ArcSegment(mid, D2D1::SizeF(r, r), 0.f, D2D1_SWEEP_DIRECTION_COUNTER_CLOCKWISE, D2D1_ARC_SIZE_SMALL));
-		sink->AddArc(D2D1::ArcSegment(end, D2D1::SizeF(r, r), 0.f, D2D1_SWEEP_DIRECTION_COUNTER_CLOCKWISE, D2D1_ARC_SIZE_SMALL));
-		sink->AddLine(tip);
-		sink->AddLine(start);
+		sink->AddArc(D2D1::ArcSegment(bend, D2D1::SizeF(r, r), 0.f, D2D1_SWEEP_DIRECTION_COUNTER_CLOCKWISE, arcSize));
+		sink->AddArc(D2D1::ArcSegment(end, D2D1::SizeF(r, r), 0.f, D2D1_SWEEP_DIRECTION_COUNTER_CLOCKWISE, arcSize));
+		if (tail) {
+			sink->AddLine(tip);
+			sink->AddLine(start);
+		}
 	}
 	else {
 		// 方框：半边长取 r 的 0.8，外圈与圆版的视觉面积接近。
-		// 起点是离箭头最近的那个角，把离箭头最近的那条边让出去给尾巴（与圆版对齐）
+		// 起点是离箭头最近的那个角，把离箭头最近的那条边让出去给尾巴（与圆版对齐）；
+		// 无尾时就是一个闭合的矩形，不留缺口
 		auto h = r * 0.8f;
 		auto p1 = transformPoint(D2D1::Point2F(h, -h));
 		auto p2 = transformPoint(D2D1::Point2F(-h, -h));
@@ -373,11 +441,11 @@ void ShapeNumber::makePath()
 		sink->AddLine(p2);
 		sink->AddLine(p3);
 		sink->AddLine(p4);
-		sink->AddLine(tip);
-		sink->AddLine(p1);
+		if (tail) sink->AddLine(tip);
+		sink->EndFigure(D2D1_FIGURE_END_CLOSED);
 	}
-	sink->EndFigure(D2D1_FIGURE_END_CLOSED);
 	sink->Close();
+	updateValueBtns();
 }
 
 void ShapeNumber::startEdit()

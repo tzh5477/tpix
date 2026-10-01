@@ -17,10 +17,12 @@ public:
 	// items 是全部选项；cur 是当前选中项下标（-1 表示都不选）；
 	// onPick 收用户选中的下标，由调用方自己去落盘与刷新。
 	// 同一个按钮再点一次就是收起，调用方不用自己记开关状态。
-	// fontFamily 给装了图标字体的那些按钮用（马赛克模式、开 / 关两项），不传就是普通字体
+	// fontFamily 给装了图标字体的那些按钮用（马赛克模式、开 / 关两项），不传就是普通字体。
+	// minW 是列表的最小宽度（逻辑像素），给内容比按钮宽的那种列表用 —— 字体名能长到十几个字符
 	static void show(Ling::WinBase* owner, Ling::Node* anchor,
 		const std::vector<std::wstring>& items, int cur,
-		std::function<void(int)> onPick, const std::wstring& fontFamily = {});
+		std::function<void(int)> onPick, const std::wstring& fontFamily = {},
+		float minW = 0.f);
 	// 收起。点到列表外、宿主窗口被移动或销毁都会自动走到这里，一般不用外部调
 	static void close();
 	static bool isOpen();

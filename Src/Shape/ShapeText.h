@@ -19,6 +19,8 @@ public:
 	void mouseDrag(const float x, const float y) override;
 	void mouseDown(const float x, const float y) override;
 	void mouseMove(const float x, const float y) override;
+	// 滚轮改字号（光标停在文字上时才收得到），改完回写工具条的滑块
+	void mouseWheel(const float x, const float y, const short delta) override;
 	void setCursor() override;
 	// 单击进编辑态，留不留由 finishEdit 按文本是否为空决定，这里不能提前删
 	bool isValidWithoutDrag() override { return true; };
@@ -42,6 +44,10 @@ private:
 	D2D1_POINT_2F rotatedPoint(const D2D1_POINT_2F& p);
 	// 旋转手柄的矩形（在已经转过之后的坐标里），以及顺手更新它
 	void updateRotateDragger();
+	// 画旋转手柄：一个圆弧 + 两端的箭头（pixpin 那个样式），而不是一个方块
+	void paintRotateHandle(ID2D1DeviceContext* ctx);
+	// 按文字实际尺寸把边框盒贴合上去。滚轮改完字号后文字会溢出原来的框，得跟着长
+	void fitRectToText();
 	// 画布当前的变换里可能带着 Canvas 的缩放，旋转中心得跟着它落到画布坐标上
 	D2D1_POINT_2F transformCenter(ID2D1DeviceContext* ctx) const;
 private:
@@ -52,9 +58,16 @@ private:
 	// 编辑期间把角度临时归零（见 startEdit），这个值记着退出编辑时要还原的角度
 	float editAngle{ 0.f };
 	D2D1_RECT_F rotateDragger{};
+	// 手柄静止时所在的方向（度，顺时针为正，0 = 正上方）。手柄挂在右下角，
+	// 拖拽时算出的是鼠标方向，减掉它才是"相对静止位置转了多少"
+	float restAngle{ 0.f };
+	// 旋转手柄的两段几何：圆弧（描边）与两端的箭头（填充）。每帧重建，用 Release 拿地址
+	Microsoft::WRL::ComPtr<ID2D1PathGeometry> rotateArc, rotateArrows;
 	// 物理像素。ToolSub::getSliderVal() 给的就是物理值，而 TextBox::setFontSize 收逻辑值，
 	// 传过去时要除回 dpi。
 	float fontSize{ 20.f };
+	// 字体族名（DWrite 认的名字，如 Microsoft YaHei）。空串表示不指定，走 DWrite 的默认
+	std::wstring fontFamily;
 	bool isBold{ false }, isItalic{ false };
 	UINT32 colorValue{ 0 };
 	D2D1_COLOR_F color{};

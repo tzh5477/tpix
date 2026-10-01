@@ -25,6 +25,15 @@ public:
 	// 文字水印：文字、字号、颜色、透明度、旋转、平铺
 	void showWatermarkTools();
 
+	// 文本当前的字体族名（DWrite 认的名字）。工具条还没建过字体按钮时给默认的微软雅黑 ——
+	// ShapeText 在文本工具下取它，空串会让 DWrite 退回默认字体，不如直接给个明确的
+	const std::wstring& getFontFamily() const;
+	// 给新建的序号取一个编号，并把「下一个」自增回填到输入框与配置里。
+	// 工具条没开着也照记不误 —— 编号的进度不能依赖面板是否可见
+	int takeNumberVal();
+	// 写「下一个序号」的值（输入框与配置同步）
+	void setNumberVal(int val);
+
 	void hideTools();
 	bool hasContent();
 	float getDesiredHeight();
@@ -50,9 +59,12 @@ public:
 	// 马赛克模式 0 = 矩形马赛克，1 = 涂抹马赛克，2 = 智能擦除。
 	// 三者互斥，所以用一个整数而不是三个布尔 —— 布尔组合里会出现"既涂抹又擦除"这种不存在的状态
 	int mosaicMode{ 0 };
-	// 序号的编号样式（阿拉伯 / 字母小写 / 字母大写 / 罗马 / 中文）与外圈样式（圆 / 方 / 无）。
-	// 值与 ShapeNumber 的两个枚举一一对应，转枚举行取 static_cast
+	// 序号的编号样式（阿拉伯 / 字母小写 / 字母大写 / 罗马 / 中文）与外圈样式
+	// （无尾圆 / 无尾方 / 圆+箭头 / 方+箭头 / 无）。值与 ShapeNumber 的两个枚举一一对应，
+	// 转枚举行取 static_cast
 	int numberStyle{ 0 }, numberRing{ 0 };
+	// 箭头样式：0 = 普通（首尾等粗、平口尾），1 = 尖尾渐变。同 ShapeArrow 的枚举
+	int arrowStyle{ 0 };
 	// 贴图不透明度的当前档位（下标进 .cpp 里的 pinOpacitySteps 表），值本身落盘
 	int pinOpacity{ 0 };
 	// 水印。文字 / 平铺是状态本体；档位存下标，换算成透明度与角度的表在 .cpp 里
@@ -110,6 +122,17 @@ private:
 	void makeApplyAllBtn();
 	// 样式切换按钮上示例用哪个序号：取图上最大的那个编号，没有序号时用 1
 	int getNumberSampleVal();
+	// 图上最大编号 + 1。这是「编号」输入框没存过配置时的起头值 ——
+	// 与没有这个输入框之前的行为一致
+	int getNextNumber();
+	// 「编号」输入框。它是固定宽度，宽度另算进 initSize 的 extraW
+	void initNumberBox();
+	// 字体按钮：按钮上显示当前字体名（长了截断），点开是系统字体全表
+	Ling::Button* makeFontBtn();
+	// 把当前字体写到按钮上。字体名长短不一，长了就截断加省略号
+	void syncFontBtnText(Ling::Button* btn);
+	// 字体在系统字体表里的下标，找不到（换过机器 / 字体被卸了）返回 -1
+	int fontIndexOf(const std::wstring& family) const;
 	// 每个 show*Tools 开头都要做的事：收提示、清旧内容、记下当前工具，
 	// 再把这个工具存在 config.json 里的滑块值和颜色读回来（读不到就用默认值 / 第一个颜色）。
 	// 滑块的键名与值域查 .cpp 里那张表，id 必须是表里有的（就是 ToolMain 的按钮 id）。
@@ -134,6 +157,13 @@ private:
 	static constexpr float sliderSize{ 80.f };     // 滑块宽度，initSlider 和 initSize 都用它，改这里就够
 	static constexpr float sliderMargin{ 3.f };    // 滑块左右各留的间距
 	static constexpr float marginTop{ 3.f };       // 顶部箭头区域高度
+	// 字体按钮与编号输入框都是固定宽度（内容长短不一，交给 flex 会被别的按钮挤扁），
+	// 宽度要从 initSize 的 extraW 里预留出来。字体下拉的最小宽度单独给，
+	// 按按钮宽度开会把"Microsoft YaHei UI Light"这类长名字截掉
+	static constexpr float fontBtnW{ 88.f };
+	static constexpr float fontPopupMinW{ 220.f };
+	static constexpr float fontMaxChars{ 6.f };    // 按钮上最多显示几个字符，超了截断
+	static constexpr float numberBoxW{ 46.f };
 	// 边框描边宽度。与 ToolMain 的 setBorder(1.f) 保持一致
 	static constexpr float borderW{ 1.f };
 	// 箭头尖端相对窗口左边的偏移，由 updatePosition 按屏幕坐标算出，是物理像素
@@ -152,6 +182,16 @@ private:
 	int sizeBtnCount{ 0 };
 	bool sizeWithColors{ false };
 	float sizeExtraW{ 0.f };
+	// 下一个序号的编号。默认 1（首次运行），之后由 takeNumberVal 自增并落盘
+	int numberNext{ 1 };
+	// 「编号」输入框。切工具时随 contentNode 一起销毁，beginTool 里必须置空，
+	// 否则 setNumberVal 会往一个已经删掉的控件上写
+	Ling::TextBox* numberBox{ nullptr };
+	// setText 自己也会触发 onTextChanged，回填输入框时要挡掉那一次
+	bool numberBoxSilent{ false };
+	// 文本字体族名（DWrite 认的名字）。落盘存的是族名而不是下标 ——
+	// 下标会随着机器上装的字体变化而串味
+	std::wstring fontFamily;
 	UINT selectColorIndex{ 0 };
 	// 滑块值。每次切换工具都由 beginTool 从 config.json 里换成那个工具自己的那份。
 	float sliderVal{ 2.f };

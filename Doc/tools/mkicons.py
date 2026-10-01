@@ -1,11 +1,16 @@
 # -*- coding: utf-8 -*-
-"""往 Src/Res/iconfont.ttf 里补 7 个线性图标：时钟 / 剪贴板 / 历史 / 标尺 / 十字 / 聚光 / 设置。
+"""往 Src/Res/iconfont.ttf 里补线性图标。
+
+已补进来的：时钟 / 剪贴板 / 历史 / 标尺 / 十字 / 聚光 / 设置 / 两个「依次贴」，
+以及箭头工具那两种样式的图标（首尾等粗的普通箭头、尖尾渐变箭头）。
 
 设计基准取自现有字形：em=1024，主体大致落在 x[96,928]、y[-24,880]，线宽 60~72，
-视觉中心 (512, 392)。原有的 30 个字形原样保留，只往 glyf / hmtx / cmap 里加。
+视觉中心 (512, 392)。原有的字形原样保留，只往 glyf / hmtx / cmap 里加。
 
 方向约定：外轮廓一律顺时针，孔洞一律逆时针 —— 非零环绕规则下才会真的空出来。
 所有会互相重叠的形状必须同向，否则重叠处会被挖掉。
+
+脚本可以反复跑：ICONS 里已经存在的码位 / 字形名会跳过，只补缺的那些。
 """
 import math
 import shutil
@@ -170,7 +175,36 @@ def icon_pin_clip_older(pen):
     _stack_arrow(pen)
 
 
+def icon_arrow_plain(pen):
+    """首尾等粗的普通箭头：平口尾 + 等宽箭杆 + 三角头。"""
+    x_tail, x_neck, x_tip = 96, 640, 928
+    shaft, head = 40, 200
+    pen.moveTo((x_tail, CY + shaft))
+    pen.lineTo((x_neck, CY + shaft))
+    pen.lineTo((x_neck, CY + head))
+    pen.lineTo((x_tip, CY))
+    pen.lineTo((x_neck, CY - head))
+    pen.lineTo((x_neck, CY - shaft))
+    pen.lineTo((x_tail, CY - shaft))
+    pen.closePath()
+
+
+def icon_arrow_taper(pen):
+    """尖尾箭头：尾巴收成一个点，一路加宽到箭头。与上一个的区别只在尾部。"""
+    x_tail, x_neck, x_tip = 96, 640, 928
+    shaft, head = 40, 200
+    pen.moveTo((x_tail, CY))
+    pen.lineTo((x_neck, CY + shaft))
+    pen.lineTo((x_neck, CY + head))
+    pen.lineTo((x_tip, CY))
+    pen.lineTo((x_neck, CY - head))
+    pen.lineTo((x_neck, CY - shaft))
+    pen.closePath()
+
+
 ICONS = [
+    (0xE909, 'arrowPlain', icon_arrow_plain),
+    (0xE90A, 'arrowTaper', icon_arrow_taper),
     (0xE907, 'pinOlder', icon_pin_older),
     (0xE908, 'pinClipOlder', icon_pin_clip_older),
     (0xE900, 'clock', icon_clock),
@@ -188,10 +222,11 @@ def main():
     f = TTFont(SRC)
     order = f.getGlyphOrder()
     cmap = f.getBestCmap()
-    for cp, name, _ in ICONS:
-        assert name not in order, name
-        assert cp not in cmap, hex(cp)
+    added = 0
     for cp, name, fn in ICONS:
+        # 已经补过的跳过：脚本反复跑不该把同一个码位写两遍，更不该把旧字形覆盖掉
+        if name in order or cp in cmap:
+            continue
         pen = TTGlyphPen(None)
         fn(pen)
         glyph = pen.glyph()
@@ -202,10 +237,14 @@ def main():
         for sub in f['cmap'].tables:
             if sub.isUnicode():
                 sub.cmap[cp] = name
+        added += 1
+    if added == 0:
+        print('没有要补的字形，字体未改动')
+        return
     f.setGlyphOrder(order)
     f['maxp'].numGlyphs = len(order)
     f.save(SRC)
-    print('字形总数', len(order))
+    print('新增', added, '个字形，总数', len(order))
 
 
 main()

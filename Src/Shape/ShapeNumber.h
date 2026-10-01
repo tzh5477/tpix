@@ -5,8 +5,9 @@ class ShapeNumber : public ShapeBase
 {
 public:
 	enum class NumStyle { Arabic = 0, AlphaLower, AlphaUpper, Roman, Chinese };
-	// Circle 是原来的圆气泡（带指向尾巴），Square 是方框，None 只有数字本身
-	enum class RingStyle { Circle = 0, Square, None };
+	// 外圈样式。Circle / Square 是 pixpin 那种纯粹的圈号（没有尾巴），是默认的两项；
+	// 带尾巴的"指向某处"版本单独留成带 Arrow 的两个
+	enum class RingStyle { Circle = 0, Square, CircleArrow, SquareArrow, None };
 	ShapeNumber(Canvas* win);
 	~ShapeNumber();
 	void paint(ID2D1DeviceContext* ctx) override;
@@ -35,7 +36,6 @@ public:
 	int val{ 1 };
 	bool isEditing{ false };
 private:
-	static int getNextVal(Canvas* win);
 	// 把本序号调成 newVal，与它撞号的那一个顶到 newVal+1，再撞就继续往下顶（级联）
 	void setValAndPush(const int newVal);
 	D2D1_POINT_2F localPoint(const float degrees);
@@ -43,6 +43,14 @@ private:
 	void makePath();
 	// 半径变化后要重排文字，两处调用点合到一起
 	void makeTextLayout();
+	// 外圈带不带指向尾巴。不带尾巴时那个"指向"控制点没有意义，不画也不响应
+	bool hasTail() const;
+	// 徽章左侧那两个 + / − 小按钮的位置（它们不跟尾巴转，恒在左边）
+	void updateValueBtns();
+	// 画其中一个按钮。box 是它的外接方框，plus 决定画 + 还是 −
+	void paintValueBtn(ID2D1DeviceContext* ctx, const D2D1_RECT_F& box, bool plus);
+	// 编号加减一：级联顶号、重排所有序号的文字、刷新
+	void bumpVal(int delta);
 	// 从 ToolSub 拉一份当前样式
 	void setAttr();
 	// 序号里写的文字。空串表示只显示编号本身
@@ -50,6 +58,9 @@ private:
 	void startEdit();
 private:
 	std::vector<D2D1_RECT_F> draggers;
+	// 编号的 + / − 两个小按钮。它们不是"图上某个位置"的控制点，所以不进 draggers ——
+	// draggers 里的点都要跟着 angle 转，这两个恒在徽章左边
+	D2D1_RECT_F valuePlus{}, valueMinus{};
 	Microsoft::WRL::ComPtr<ID2D1PathGeometry> path;
 	Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brush;
 	Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brushText;

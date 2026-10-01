@@ -37,6 +37,9 @@ public:
 	std::wstring toolId;
 protected:
 	float draggerSize;
+	// 控制点的浅蓝描边 + 选中时的白色填充（样式参考 pixpin：浅蓝空心框压在标注线上，
+	// 不填白的话线从框中间穿过去，一排点看着全是花的）
 	Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brushDragger;
+	Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brushDraggerFill;
 private:
 };

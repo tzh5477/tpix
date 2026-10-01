@@ -15,6 +15,7 @@ ShapeArrow::ShapeArrow(Canvas* win) :ShapeBase(win), draggers{
 	d2d->deviceContext->CreateSolidColorBrush(toolSub->getSelectedColor(), brush.GetAddressOf());
 	// 滑块值当箭头尺寸用。太小的话箭头画出来只有几个像素，看不出形状
 	arrowSize = toolSub->getSliderVal() * 4.f;
+	arrowStyle = toolSub->arrowStyle;
 	isFill = toolSub->isArrowFill;
 }
 
@@ -29,6 +30,7 @@ void ShapeArrow::applyStyle()
 	auto toolSub = win->getToolSub();
 	brush->SetColor(toolSub->getSelectedColor());
 	arrowSize = toolSub->getSliderVal() * 4.f;
+	arrowStyle = toolSub->arrowStyle;
 	isFill = toolSub->isArrowFill;
 	if (path) makeArrow();
 }
@@ -49,9 +51,10 @@ void ShapeArrow::paintDragger(ID2D1DeviceContext* ctx)
 {
 	for (auto& dragger : draggers)
 	{
-		// 选中的填实、悬停的留空：光标掠过一串元素时能分出改样式会作用到谁
+		// 选中的填白、悬停的留空：光标掠过一串元素时能分出改样式会作用到谁。
+		// 先填后描：描边是压在矩形边线中线上的，先描再填会把内半边盖掉，线看着只剩外半截
+		if (win->selected == this) ctx->FillRectangle(dragger, brushDraggerFill.Get());
 		ctx->DrawRectangle(dragger, brushDragger.Get(), win->getDpi());
-		if (win->selected == this) ctx->FillRectangle(dragger, brushDragger.Get());
 	}
 }
 
@@ -186,12 +189,28 @@ void ShapeArrow::makeArrow()
 	float vy = ux;
 	float v1 = arrowSize / 4.0f;        // 箭杆半宽
 	float v2 = arrowSize * 2.0f / 3.0f; // 箭头半宽
-	sink->BeginFigure( { startX, startY }, D2D1_FIGURE_BEGIN_FILLED);
-	sink->AddLine({ endX - arrowSize * ux - v1 * vx, endY - arrowSize * uy - v1 * vy });
-	sink->AddLine({ endX - (arrowSize + v1) * ux - v2 * vx, endY - (arrowSize + v1) * uy - v2 * vy });
-	sink->AddLine({ endX, endY });
-	sink->AddLine({ endX - (arrowSize + v1) * ux + v2 * vx, endY - (arrowSize + v1) * uy + v2 * vy });
-	sink->AddLine({ endX - arrowSize * ux + v1 * vx, endY - arrowSize * uy + v1 * vy });
+	if (arrowStyle == 0) {
+		// 普通箭头：平口尾、箭杆从头到尾一样粗，头上再接一个三角（pixpin 默认那种）。
+		// 与尖尾那版的差别只在尾部 —— 那边是从 startX/startY 一个尖点展开，箭杆是楔形的
+		float baseX = endX - (arrowSize + v1) * ux;
+		float baseY = endY - (arrowSize + v1) * uy;
+		sink->BeginFigure({ startX + v1 * vx, startY + v1 * vy }, D2D1_FIGURE_BEGIN_FILLED);
+		sink->AddLine({ baseX + v1 * vx, baseY + v1 * vy });
+		sink->AddLine({ baseX + v2 * vx, baseY + v2 * vy });
+		sink->AddLine({ endX, endY });
+		sink->AddLine({ baseX - v2 * vx, baseY - v2 * vy });
+		sink->AddLine({ baseX - v1 * vx, baseY - v1 * vy });
+		sink->AddLine({ startX - v1 * vx, startY - v1 * vy });
+	}
+	else {
+		// 尖尾箭头：尾部收成一个点，箭杆由细到粗
+		sink->BeginFigure({ startX, startY }, D2D1_FIGURE_BEGIN_FILLED);
+		sink->AddLine({ endX - arrowSize * ux - v1 * vx, endY - arrowSize * uy - v1 * vy });
+		sink->AddLine({ endX - (arrowSize + v1) * ux - v2 * vx, endY - (arrowSize + v1) * uy - v2 * vy });
+		sink->AddLine({ endX, endY });
+		sink->AddLine({ endX - (arrowSize + v1) * ux + v2 * vx, endY - (arrowSize + v1) * uy + v2 * vy });
+		sink->AddLine({ endX - arrowSize * ux + v1 * vx, endY - arrowSize * uy + v1 * vy });
+	}
 	sink->EndFigure(D2D1_FIGURE_END_CLOSED);
 	sink->Close();
 }

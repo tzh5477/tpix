@@ -23,9 +23,10 @@ void ShapeRectBase::paintDragger(ID2D1DeviceContext* ctx)
 {
 	for (auto& dragger : draggers)
 	{
-		// 选中的填实、悬停的留空：光标掠过一串元素时能分出改样式会作用到谁
+		// 选中的填白、悬停的留空：光标掠过一串元素时能分出改样式会作用到谁。
+		// 先填后描：描边是压在矩形边线中线上的，先描再填会把内半边盖掉，线看着只剩外半截
+		if (win->selected == this) ctx->FillRectangle(dragger, brushDraggerFill.Get());
 		ctx->DrawRectangle(dragger, brushDragger.Get(), win->getDpi());
-		if (win->selected == this) ctx->FillRectangle(dragger, brushDragger.Get());
 	}
 }
 

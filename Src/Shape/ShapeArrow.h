@@ -24,6 +24,8 @@ private:
 	Microsoft::WRL::ComPtr<ID2D1PathGeometry> path;
 	Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brush;
 	float arrowSize{ 0 }, pressX{ 0 }, pressY{ 0 }, startX{ 0 }, startY{ 0 }, endX{ 0 }, endY{ 0 };
+	// 箭头样式：0 = 普通（平口尾、箭杆等粗），1 = 尖尾渐变。与 ToolSub::arrowStyle 同一套值
+	int arrowStyle{ 0 };
 	bool isFill{ false };
 };
 

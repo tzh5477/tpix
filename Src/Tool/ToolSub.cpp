@@ -41,9 +41,69 @@ namespace {
 		}
 		return nullptr;
 	}
-	// 外圈样式循环按钮上显示的三样东西：实心圆 / 实心方 / 一条横线（表示"没有外圈"）。
-	// 这三个字符在任何语言的字体里都在，不必跟着语言包走
-	const wchar_t* RingSample[]{ L"\u25cf", L"\u25a0", L"\u2014" };
+	// 外圈样式按钮上显示的五样东西：无尾圆 / 无尾方 / 带箭头的圆 / 带箭头的方 /
+	// 一条横线（表示"没有外圈"）。这几个符号在任何语言的字体里都在，不必跟着语言包走；
+	// 箭头用 → 而不是 ➤ 那批符号，后者的字形不一定装得到
+	const wchar_t* RingSample[]{ L"\u25cf", L"\u25a0", L"\u25cf\u2192", L"\u25a0\u2192", L"\u2014" };
+	// 箭头样式的两个图标：普通（首尾等粗）/ 尖尾，码位见 Src/Res/iconfont.ttf
+	const std::vector<std::wstring>& arrowStyleItems()
+	{
+		static const std::vector<std::wstring> items{ L"\ue909", L"\ue90a" };
+		return items;
+	}
+	// 系统字体表的每一项：family 是喂给 DWrite 的族名，show 是界面上显示的名字
+	struct FontItem {
+		std::wstring family;
+		std::wstring show;
+	};
+	// 从一组本地化名字里取第 idx 个。GetString 的 size 参数含结尾的 0，缓冲区要多留一个字符
+	std::wstring readFontName(IDWriteLocalizedStrings* names, UINT32 idx)
+	{
+		UINT32 len{ 0 };
+		if (FAILED(names->GetStringLength(idx, &len)) || len == 0) return {};
+		std::wstring buf(len + 1, L'\0');
+		if (FAILED(names->GetString(idx, buf.data(), len + 1))) return {};
+		buf.resize(len);
+		return buf;
+	}
+	std::wstring readFontLocaleName(IDWriteLocalizedStrings* names, const wchar_t* locale)
+	{
+		UINT32 idx{ 0 };
+		BOOL exists{ FALSE };
+		if (FAILED(names->FindLocaleName(locale, &idx, &exists)) || !exists) return {};
+		return readFontName(names, idx);
+	}
+	// 系统字体全表。枚举一次就存成静态表 —— 几百个族，每切一次文本工具都重建纯属浪费。
+	// 表的内容取决于机器上装了什么，同一台机器上不会变
+	const std::vector<FontItem>& systemFonts()
+	{
+		static std::vector<FontItem> list;
+		if (!list.empty()) return list;
+		auto factory = Ling::D2D::get()->dwriteFactory;
+		ComPtr<IDWriteFontCollection> collection;
+		if (!factory || FAILED(factory->GetSystemFontCollection(collection.GetAddressOf(), FALSE))) return list;
+		auto count = collection->GetFontFamilyCount();
+		list.reserve(count);
+		for (UINT32 i = 0; i < count; i++) {
+			ComPtr<IDWriteFontFamily> family;
+			if (FAILED(collection->GetFontFamily(i, family.GetAddressOf()))) continue;
+			ComPtr<IDWriteLocalizedStrings> names;
+			if (FAILED(family->GetFamilyNames(names.GetAddressOf()))) continue;
+			// 族名取 en-US 那份：SetFontFamilyName 认任意本地化名，但西文名在日志和配置里更好读。
+			// 显示名反过来，优先中文（"微软雅黑"比"Microsoft YaHei"好认），没有就用第一个
+			auto familyName = readFontLocaleName(names.Get(), L"en-us");
+			if (familyName.empty()) familyName = readFontName(names.Get(), 0);
+			auto showName = readFontLocaleName(names.Get(), L"zh-CN");
+			if (showName.empty()) showName = familyName;
+			// "@宋体" 那种竖排族名是同一个字体的另一份，收进来只会让列表多出一倍
+			if (familyName.empty() || familyName[0] == L'@' || showName.empty() || showName[0] == L'@') continue;
+			list.push_back({ familyName, showName });
+		}
+		// 按显示名排一遍：中文按码位（常见字体刚好落在前面），西文按字母
+		std::sort(list.begin(), list.end(),
+			[](const FontItem& a, const FontItem& b) { return a.show < b.show; });
+		return list;
+	}
 	// 贴图不透明度的四档。index 落盘的是下标，百分比文本由 showPinTools 按这张表生成
 	const float pinOpacitySteps[]{ 1.f, 0.75f, 0.5f, 0.25f };
 	// 水印的透明度档位与旋转档位。透明度与 pin 那组共用一套档位
@@ -140,8 +200,10 @@ void ToolSub::beginTool(const std::wstring& id)
 	tip->hide();
 	SelectPopup::close();
 	contentNode->removeAllChildren();
-	// 滑块也一起作废：pin 面板不建滑块，留着的话 onMouseMove 里就是悬垂指针
+	// 滑块与编号输入框一并作废：不是每个面板都建它们，留着就是悬垂指针
 	slider = nullptr;
+	numberBox = nullptr;
+	numberBoxSilent = false;
 	curToolId = id;
 	auto cfg = findSliderCfg(id);
 	if (!cfg) return;
@@ -180,8 +242,12 @@ void ToolSub::showEllipseTools()
 void ToolSub::showArrowTools()
 {
 	beginTool(L"arrow");
-	initSize(1, true);
+	initSize(2, true);
 	makeToggleBtn(L"\ue604", &isArrowFill, L"tool.arrowFill", L"fill");
+	// 两种箭头样式：普通（首尾等粗、平口尾）与尖尾渐变。默认普通那一个。
+	// 切完让当前选中的箭头立刻换形状 —— 下一个新建的本来就会用新档位
+	makeSelectBtn(L"tool.arrowStyle", L"style", &arrowStyle, arrowStyleItems(),
+		[this]() { win->onToolStyleChanged(); }, true, false);
 	initSlider();
 	initColorBtns();
 	makeApplyAllBtn();
@@ -203,7 +269,9 @@ void ToolSub::showNumberTools()
 {
 	// 序号的滑块调的是圆半径（ShapeNumber 直接拿 getSliderVal 当 r），不是线宽
 	beginTool(L"number");
-	initSize(3, true);
+	// 编号输入框是固定宽度，宽度从 extraW 里预留
+	initSize(3, true, false, numberBoxW);
+	initNumberBox();
 	makeToggleBtn(L"\ue605", &isNumberFill, L"tool.numberFill", L"fill");
 	// 两个样式按钮上显示的是"当前编号在这个样式下长什么样"，比写死的图标好认：
 	// 图上已经有 3 个序号时，这里就显示 3 / c / C / III / 三
@@ -235,12 +303,139 @@ void ToolSub::showLineTools()
 void ToolSub::showTextTools()
 {
 	beginTool(L"text");
-	initSize(2, true);
+	// 字体按钮是固定宽度，宽度从 extraW 里预留（粗体 / 斜体两枚跟着 flex 走）
+	initSize(2, true, false, fontBtnW);
+	makeFontBtn();
+	// 粗体默认关（isTextBold 的初值），新建出来的文字就是不粗的
 	makeToggleBtn(L"\ue634", &isTextBold, L"tool.bold", L"bold");
 	makeToggleBtn(L"\ue682", &isTextItalic, L"tool.italic", L"italic");
 	initSlider();
 	initColorBtns();
 	makeApplyAllBtn();
+}
+
+const std::wstring& ToolSub::getFontFamily() const
+{
+	// 工具条还没建过字体按钮时（比如刚启动就贴图、文本工具还没选过）也要给个明确的字体，
+	// 空串会让 DWrite 退回它自己的默认值
+	static const std::wstring defaultFamily{ L"Microsoft YaHei" };
+	return fontFamily.empty() ? defaultFamily : fontFamily;
+}
+
+int ToolSub::fontIndexOf(const std::wstring& family) const
+{
+	auto& list = systemFonts();
+	for (size_t i = 0; i < list.size(); i++) {
+		if (list[i].family == family) return (int)i;
+	}
+	return -1;
+}
+
+void ToolSub::syncFontBtnText(Ling::Button* btn)
+{
+	auto& list = systemFonts();
+	auto idx = fontIndexOf(getFontFamily());
+	// 找不到就在列表里现查一遍显示名；机器上确实没这款字体（配置从别处搬来的）才退回族名本身
+	std::wstring show = idx >= 0 && idx < (int)list.size() ? list[idx].show : getFontFamily();
+	// 按钮只有一格宽，长名字截断 —— 下拉里显示的是全名
+	if (show.size() > (size_t)fontMaxChars) {
+		show = show.substr(0, (size_t)fontMaxChars - 1) + L"\u2026";
+	}
+	btn->setText(show);
+}
+
+Ling::Button* ToolSub::makeFontBtn()
+{
+	// 上次用的字体存在配置里。存族名而不是下标：下标会随机器上装的字体变化而串味
+	fontFamily = Setting::get()->getToolStr(L"text", L"fontFamily", L"Microsoft YaHei");
+	auto btn = contentNode->makeChild<Ling::Button>();
+	btn->setHeight(btnSize - 2.5);
+	btn->setWidth(fontBtnW);
+	btn->setFontSize(12.f);
+	btn->setBg(0);
+	btn->setHoverBg(0xF2F2F2ff);
+	syncFontBtnText(btn);
+	tip->bind(btn, Lang::get(L"tool.font"));
+	btn->onClick.add([this, btn](Ling::Button*) {
+		// 列表会盖住按钮，悬停提示先收掉（与其他下拉一致）
+		tip->hide();
+		auto& list = systemFonts();
+		std::vector<std::wstring> items;
+		items.reserve(list.size());
+		for (auto& font : list) items.push_back(font.show);
+		SelectPopup::show(this, btn, items, fontIndexOf(getFontFamily()),
+			[this, btn](int picked) {
+				auto& fonts = systemFonts();
+				if (picked < 0 || picked >= (int)fonts.size()) return;
+				fontFamily = fonts[picked].family;
+				Setting::get()->setToolStr(L"text", L"fontFamily", fontFamily);
+				syncFontBtnText(btn);
+				// 正在编辑的文本要立刻换字体，选中的文本也跟着换（同改颜色那条链路）
+				win->onToolStyleChanged();
+			}, {}, fontPopupMinW);
+	});
+	return btn;
+}
+
+int ToolSub::getNextNumber()
+{
+	int maxVal{ 0 };
+	for (auto& shape : win->getHistory()->shapes) {
+		auto number = dynamic_cast<ShapeNumber*>(shape.get());
+		if (number && !number->isUndo && number->val > maxVal) {
+			maxVal = number->val;
+		}
+	}
+	return maxVal + 1;
+}
+
+void ToolSub::initNumberBox()
+{
+	// 没存过配置就从「图上最大编号 + 1」起头，与没有这个输入框之前的行为一致。
+	// 存过就一直用存的那个往下数（用户手工改过开始值的情形）
+	numberNext = std::clamp((int)Setting::get()->getToolNum(L"number", L"next", (float)getNextNumber()), 1, 9999);
+	auto box = contentNode->makeChild<Ling::TextBox>();
+	box->setHeight(btnSize - 2.5);
+	box->setWidth(numberBoxW);
+	box->setVerticalCenter(true);
+	box->setFontSize(12.f);
+	box->setMarginLeft(sliderMargin);
+	box->setMarginRight(sliderMargin);
+	box->setText(std::to_wstring(numberNext));
+	numberBox = box;
+	box->onTextChanged.add([this, box](Ling::TextBox*, const std::wstring& val) {
+		if (numberBoxSilent) return;
+		// 只认 1~9999 的整数：其余输入（空、字母、超长）一律回填上一个有效值
+		auto valid = !val.empty() && val.size() <= 4
+			&& std::all_of(val.begin(), val.end(), [](wchar_t c) { return c >= L'0' && c <= L'9'; });
+		auto parsed = valid ? std::stoi(val) : 0;
+		if (parsed < 1) {
+			numberBoxSilent = true;
+			box->setText(std::to_wstring(numberNext));
+			numberBoxSilent = false;
+			return;
+		}
+		setNumberVal(parsed);
+	});
+}
+
+int ToolSub::takeNumberVal()
+{
+	auto val = numberNext > 0 ? numberNext : 1;
+	setNumberVal(val + 1);
+	return val;
+}
+
+void ToolSub::setNumberVal(int val)
+{
+	numberNext = std::clamp(val, 1, 9999);
+	Setting::get()->setToolNum(L"number", L"next", (float)numberNext);
+	// 输入框可能没建（当前不是序号工具），此时只更新成员与配置
+	if (!numberBox) return;
+	// setText 也会触发 onTextChanged，回填时要挡掉，否则会被当成用户改的再解析一遍
+	numberBoxSilent = true;
+	numberBox->setText(std::to_wstring(numberNext));
+	numberBoxSilent = false;
 }
 
 void ToolSub::showMosaicTools()

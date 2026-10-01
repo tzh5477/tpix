@@ -62,10 +62,87 @@ D2D1_POINT_2F ShapeText::transformCenter(ID2D1DeviceContext* ctx) const
 void ShapeText::updateRotateDragger()
 {
 	auto half{ draggerSize / 2 };
-	// 手柄摆在框正上方，比框顶再退一个手柄高度，转起来才不和框本身挤在一起
-	auto offset = draggerSize * 2.f;
-	auto p = rotatedPoint({ (rect.left + rect.right) / 2.f, rect.top - offset });
+	// 手柄挂在框的右下角、再沿对角线往外挪一点（pixpin 的旋转提示就在这个位置），
+	// 既不压在框线上，转起来也不会和框本身挤在一起
+	auto dx{ (rect.right - rect.left) / 2.f };
+	auto dy{ (rect.bottom - rect.top) / 2.f };
+	auto len = sqrtf(dx * dx + dy * dy);
+	// 空文本时 rect 很小但不为零；真出现零尺寸就退回"右下方向"，div 会算出 NaN
+	auto ux{ len > 0.f ? dx / len : 0.7071f };
+	auto uy{ len > 0.f ? dy / len : 0.7071f };
+	// 静止方向：由中心指向右下角。顺时针为正、0 度朝上（与 mouseDrag 里的算法同一套）
+	restAngle = atan2f(dx, -dy) * 180.f / 3.14159265358979323846f;
+	auto offset = draggerSize * 0.8f;
+	auto p = rotatedPoint({ rect.right + ux * offset, rect.bottom + uy * offset });
 	rotateDragger = D2D1::RectF(p.x - half, p.y - half, p.x + half, p.y + half);
+}
+
+void ShapeText::paintRotateHandle(ID2D1DeviceContext* ctx)
+{
+	auto d2d = Ling::D2D::get();
+	auto dpi = win->getDpi();
+	auto c = D2D1::Point2F((rotateDragger.left + rotateDragger.right) / 2.f,
+		(rotateDragger.top + rotateDragger.bottom) / 2.f);
+	auto r{ draggerSize * 0.5f };
+	// 底下一个白圆：手柄要压在图上，不垫一层会和底图糊在一起
+	ctx->FillEllipse(D2D1::Ellipse(c, r, r), brushDraggerFill.Get());
+	ctx->DrawEllipse(D2D1::Ellipse(c, r, r), brushDragger.Get(), dpi);
+	// 圆弧：留一段缺口对着框（右下方向），看着就是个"转"的符号
+	auto arcR{ draggerSize * 0.3f };
+	auto arrowSize{ draggerSize * 0.26f };
+	const float start = 20.f, sweep = 280.f;
+	const int steps = 24;
+	d2d->d2dFactory->CreatePathGeometry(rotateArc.ReleaseAndGetAddressOf());
+	ComPtr<ID2D1GeometrySink> arcSink;
+	rotateArc->Open(arcSink.GetAddressOf());
+	// 屏幕角度 -> 点：0 度朝右、逆时针为正（屏幕 y 向下，所以纵坐标取负）
+	auto pointAt = [&](float deg) {
+		auto rad = deg * 3.14159265358979323846f / 180.f;
+		return D2D1::Point2F(c.x + arcR * cosf(rad), c.y - arcR * sinf(rad));
+	};
+	arcSink->BeginFigure(pointAt(start), D2D1_FIGURE_BEGIN_HOLLOW);
+	for (int i = 1; i <= steps; i++) {
+		arcSink->AddLine(pointAt(start + sweep * i / steps));
+	}
+	arcSink->EndFigure(D2D1_FIGURE_END_OPEN);
+	arcSink->Close();
+	ctx->DrawGeometry(rotateArc.Get(), brushDragger.Get(), dpi);
+	// 两端的箭头：指向圆弧的走向（起点朝回、终点朝前），拼成一个几何体一次填掉
+	d2d->d2dFactory->CreatePathGeometry(rotateArrows.ReleaseAndGetAddressOf());
+	ComPtr<ID2D1GeometrySink> headSink;
+	rotateArrows->Open(headSink.GetAddressOf());
+	auto addHead = [&](float deg, bool forward) {
+		auto rad = deg * 3.14159265358979323846f / 180.f;
+		// 圆弧在该点的切向（对 deg 求导），forward=false 时取反向
+		auto sign = forward ? 1.f : -1.f;
+		auto tx{ -sinf(rad) * sign }, ty{ -cosf(rad) * sign };
+		// 法向：切向转 90 度
+		auto nx{ -ty }, ny{ tx };
+		auto tip = D2D1::Point2F(c.x + arcR * cosf(rad) + tx * arrowSize, c.y - arcR * sinf(rad) + ty * arrowSize);
+		auto p1 = D2D1::Point2F(c.x + arcR * cosf(rad) + nx * arrowSize * 0.6f, c.y - arcR * sinf(rad) + ny * arrowSize * 0.6f);
+		auto p2 = D2D1::Point2F(c.x + arcR * cosf(rad) - nx * arrowSize * 0.6f, c.y - arcR * sinf(rad) - ny * arrowSize * 0.6f);
+		headSink->BeginFigure(p1, D2D1_FIGURE_BEGIN_FILLED);
+		headSink->AddLine(tip);
+		headSink->AddLine(p2);
+		headSink->EndFigure(D2D1_FIGURE_END_CLOSED);
+	};
+	addHead(start, false);
+	addHead(start + sweep, true);
+	headSink->Close();
+	ctx->FillGeometry(rotateArrows.Get(), brushDragger.Get());
+}
+
+void ShapeText::fitRectToText()
+{
+	if (!textLayout) return;
+	DWRITE_TEXT_METRICS metrics{};
+	if (FAILED(textLayout->GetMetrics(&metrics))) return;
+	auto w = metrics.width + borderPadding * 2.f;
+	auto h = metrics.height + borderPadding * 2.f;
+	// 空文本时度量是 0，框会缩成一个点；留一个手柄大小的最小尺寸
+	auto minSize = borderPadding * 2.f;
+	rect.right = rect.left + (w > minSize ? w : minSize);
+	rect.bottom = rect.top + (h > minSize ? h : minSize);
 }
 
 void ShapeText::paint(ID2D1DeviceContext* ctx)
@@ -105,16 +182,16 @@ void ShapeText::paintDragger(ID2D1DeviceContext* ctx)
 	ctx->DrawRectangle(rect, textBrush.Get(), win->getDpi(), dashedStrokeStyle.Get());
 	ctx->SetTransform(prev);
 	// 手柄的坐标已经是转好之后的，不能再跟着上面的变换转一遍
-	ctx->DrawRectangle(rotateDragger, textBrush.Get(), win->getDpi());
-	ctx->FillRectangle(rotateDragger, textBrush.Get());
+	paintRotateHandle(ctx);
 }
 
 void ShapeText::mouseDrag(const float x, const float y)
 {
 	if (hoverDraggerIndex == 9) {
 		auto c = center();
-		// 手柄静止时就在框的正上方，所以 dx=0、dy<0 对应 0 度，顺着屏幕顺时针为正
-		angle = atan2f(x - c.x, -(y - c.y)) * 180.f / 3.14159265358979323846f;
+		// 手柄静止时挂在右下角（方向见 updateRotateDragger 里的 restAngle），
+		// 鼠标方向减掉静止方向才是这次转过的角度。顺时针为正
+		angle = atan2f(x - c.x, -(y - c.y)) * 180.f / 3.14159265358979323846f - restAngle;
 		return;
 	}
 	if (hoverDraggerIndex != 8) return;
@@ -196,6 +273,28 @@ void ShapeText::mouseMove(const float x, const float y)
 		hoverDraggerIndex = 0;
 	}
 }
+// 滚轮调字号。只在光标停在文字上时收得到（WinPin 把滚轮转给 shapeHover），
+// 与矩形/序号那几个"滚轮调尺寸"是同一套用法
+void ShapeText::mouseWheel(const float x, const float y, const short delta)
+{
+	// 一格走两个逻辑像素：字号值域是 10~60，一格的步子太小得滚很多下
+	auto step{ 2.f * win->getDpi() };
+	auto next = fontSize + (delta < 0 ? -step : step);
+	// 夹到滑块的値域里，返回的就是最终生效的字号（物理像素）；顶到头了直接返回
+	auto applied = win->getToolSub()->setShapeSliderVal(L"text", next);
+	if (applied == fontSize) return;
+	fontSize = applied;
+	if (isEditing) {
+		// 编辑中文字由 TextBox 画，它收逻辑像素，中间隔着缩放与 dpi 两个换算
+		win->getTextBox()->setFontSize(fontSize * win->getScale() / win->getDpi());
+	}
+	else {
+		makeTextLayout();
+		fitRectToText();
+	}
+	win->refresh();
+}
+
 void ShapeText::setCursor()
 {
 	if (hoverDraggerIndex == 9) {
@@ -246,6 +345,7 @@ void ShapeText::startEdit()
 	tb->setFontSize(fontSize * s / d);
 	tb->setBold(isBold);
 	tb->setItalic(isItalic);
+	tb->setFontFamily(fontFamily);
 	tb->setText(text);
 	tb->show();
 	// 订阅放在 setText 之后：setText 自己也会触发 onTextChanged，不用理那一次
@@ -299,6 +399,7 @@ void ShapeText::applyStyle()
 	tb->setFontSize(fontSize * win->getScale() / win->getDpi());
 	tb->setBold(isBold);
 	tb->setItalic(isItalic);
+	tb->setFontFamily(fontFamily);
 	win->refresh();
 }
 
@@ -309,6 +410,9 @@ void ShapeText::makeTextLayout()
 	if (!textLayout) return;
 	textLayout->SetFontWeight(isBold ? DWRITE_FONT_WEIGHT_BOLD : DWRITE_FONT_WEIGHT_NORMAL, { 0, INT_MAX });
 	textLayout->SetFontStyle(isItalic ? DWRITE_FONT_STYLE_ITALIC : DWRITE_FONT_STYLE_NORMAL, { 0, INT_MAX });
+	// 字体名要在建完 layout 之后单独设：Ling 的 makeTextLayout 用的是系统字体集合，
+	// 系统字体换族名在同一集合内就能换（自定义字体才需要换 format，见 D2D::getTextFormat）
+	if (!fontFamily.empty()) textLayout->SetFontFamilyName(fontFamily.c_str(), { 0, INT_MAX });
 }
 
 void ShapeText::setAttr()
@@ -320,5 +424,6 @@ void ShapeText::setAttr()
 	fontSize = toolSub->getSliderVal();
 	isBold = toolSub->isTextBold;
 	isItalic = toolSub->isTextItalic;
+	fontFamily = toolSub->getFontFamily();
 	Ling::D2D::get()->deviceContext->CreateSolidColorBrush(color, textBrush.ReleaseAndGetAddressOf());
 }
