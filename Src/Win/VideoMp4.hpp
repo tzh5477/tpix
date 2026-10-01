@@ -633,8 +633,9 @@ public:
     // 是否成功要到了"系统帮我转成 8 位"的桌面复制，见 Prepare
     bool SDRForced = false;
     // 点击可视化的那一圈涟漪是跨帧状态（按一下要连着画几帧），不能每帧新建，
-    // 所以挂在采集器上
+    // 所以挂在采集器上。鼠标移动高亮同理，它要记住上一帧光标在哪儿
     ClickFx::Ripples ripples;
+    ClickFx::Halo halo;
     HRESULT CreateDirect3DDevice(IDXGIAdapter1* g)
     {
         HRESULT hr = S_OK;
@@ -791,11 +792,13 @@ public:
                             DI_NORMAL | DI_DEFAULTSIZE);
                     }
                 }
-                // 点击可视化，叠在光标那个位置上
+                // 点击可视化与鼠标移动高亮，都叠在光标那个位置上
                 if (Clicks)
                 {
                     ripples.pull();
                     ripples.draw(lHDC, offX, offY, clickScale);
+                    halo.track();
+                    halo.draw(lHDC, offX, offY, clickScale);
                 }
                 // 按键显示摆在录制区底部居中。没有裁剪框时退到整块输出的底部
                 if (keys)

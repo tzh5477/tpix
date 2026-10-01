@@ -75,8 +75,10 @@ namespace VideoGif {
         BITMAPINFO bmi = { sizeof(BITMAPINFOHEADER), param->w, 0-param->h, 1, 32, BI_RGB, 0, 0, 0, 0, 0 };
         auto index{ 0 };
         const int frameIntervalMs = 1000 / param->fps;
-        // 点击可视化那一圈涟漪的状态挂在循环外面：它是跨帧的（按下之后要连着画几帧）
+        // 点击可视化那一圈涟漪的状态挂在循环外面：它是跨帧的（按下之后要连着画几帧）。
+        // 鼠标移动高亮同理，它要记住上一帧光标在哪儿
         ClickFx::Ripples ripples;
+        ClickFx::Halo halo;
         while (!param->isFinish) {
             auto tickStart = GetTickCount64();
             if (param->pause) {
@@ -91,6 +93,8 @@ namespace VideoGif {
                 ripples.pull();
                 // 这块画布的原点在屏幕上的 (param->x, param->y)，所以传它们的负值
                 ripples.draw(hMemDC, -param->x, -param->y, param->clickFxScale);
+                halo.track();
+                halo.draw(hMemDC, -param->x, -param->y, param->clickFxScale);
             }
             if (param->keyFx) {
                 std::wstring txt;
