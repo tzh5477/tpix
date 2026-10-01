@@ -246,8 +246,8 @@ void ToolSub::showEraserTools()
 void ToolSub::showPinTools()
 {
 	beginTool(L"pin");
-	// 动图贴图多一个播放 / 暂停按钮，静态贴图不占位
-	initSize(win->hasAnim() ? 5 : 4, false, true);
+	// 比原来多一枚按钮：成组 / 解组（同一枚，文案随状态切换）；动图另有播放 / 暂停
+	initSize(win->hasAnim() ? 6 : 5, false, true);
 	// 四档不透明度循环。按钮上直接写百分比，比一个滑杆直观、也比滑杆少占一截宽度
 	auto opacityBtn = makeCycleBtn(L"tool.pinOpacity", L"opacity", &pinOpacity, 4, [](int i) {
 		return std::format(L"{}%", (int)std::lround(pinOpacitySteps[i] * 100));
@@ -263,6 +263,23 @@ void ToolSub::showPinTools()
 		[this](bool on) { win->setLocked(on); });
 	makeTextToggle(Lang::get(L"tool.pinThrough"), L"tool.pinThrough", L"through", false,
 		[this](bool on) { win->setMouseThrough(on); });
+	// 成组：把当前所有贴图并为一组，之后拖一张 / Ctrl+滚轮缩放一张，整组跟着动；
+	// 已经成组时点一下就是解散。按钮上写的是"点了会变成什么"
+	auto groupBtn = contentNode->makeChild<Ling::Button>();
+	groupBtn->setHeight(btnSize - 2.5);
+	groupBtn->setFlexGrow(1.f);
+	groupBtn->setFontSize(12.f);
+	groupBtn->setBg(0);
+	groupBtn->setHoverBg(0xF2F2F2ff);
+	auto syncGroupText = [this, groupBtn]() {
+		groupBtn->setText(win->getGroupId() != 0 ? Lang::get(L"tool.pinUngroup") : Lang::get(L"tool.pinGroup"));
+		};
+	syncGroupText();
+	tip->bind(groupBtn, Lang::get(L"tool.pinGroupTip"));
+	groupBtn->onClick.add([this, syncGroupText](Ling::Button*) {
+		WinPin::toggleGroupAll();
+		syncGroupText();
+		});
 	// 动图才有的播放 / 暂停。按钮上写的是"点了会变成什么"，与录音机那类按钮一个习惯
 	if (win->hasAnim()) {
 		auto playBtn = contentNode->makeChild<Ling::Button>();

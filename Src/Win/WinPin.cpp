@@ -18,6 +18,8 @@ using namespace Microsoft::WRL;
 using namespace winrt::Windows::Data::Json;
 namespace {
 	std::vector<std::unique_ptr<WinPin>> winPins;
+	// 下一个可用的贴图组号。0 留给"不成组"，所以从 1 起
+	int nextGroupId{ 1 };
 
 	int clampPos(float val, float size, int min, int max)
 	{
@@ -27,6 +29,14 @@ namespace {
 		if (result < min) result = min;
 		if (result > upper) result = upper;
 		return result;
+	}
+
+	// 枚举显示器的回调。写成静态函数而不是无捕获 lambda：MONITORENUMPROC 是 CALLBACK
+	//（__stdcall），lambda 转出来的函数指针是 __cdecl，只有 x64 下两者才碰巧一致
+	BOOL CALLBACK collectMonitor(HMONITOR, HDC, LPRECT rect, LPARAM data)
+	{
+		reinterpret_cast<std::vector<RECT>*>(data)->push_back(*rect);
+		return TRUE;
 	}
 
 	// 贴图属性回写。四个 setter 都是公开接口，所以这个帮忙的可以待在匿名 namespace 里
@@ -86,6 +96,8 @@ WinPin::WinPin(int x, int y, int w, int h, const std::vector<BYTE>* data, const 
 	// Ling 传进来的是已经换算成滚动距离的 space（一格 = 60 逻辑像素 × dpi），
 	// shape 只关心方向，这里按符号还原成 ±WHEEL_DELTA
 	onMouseWheel.add([this](POINT pos, float space) {
+		// 缩略图上滚一下先还原：这时候缩放没有画面反馈，看着像没反应
+		if (isThumb) setThumbMode(false);
 		// Ling 的滚轮事件不带修饰键状态，自己查：按住 Ctrl 是缩放窗口，不是调 shape
 		if (GetKeyState(VK_CONTROL) & 0x8000) {
 			// 一格 10%，按当前倍数等比走，放大和缩小的手感才对称
@@ -202,6 +214,7 @@ void WinPin::saveAll()
 			obj.SetNamedValue(L"round", JsonValue::CreateBooleanValue(pin->isRounded));
 			obj.SetNamedValue(L"lock", JsonValue::CreateBooleanValue(pin->isLocked));
 			obj.SetNamedValue(L"title", JsonValue::CreateStringValue(pin->pinTitle));
+			obj.SetNamedValue(L"group", JsonValue::CreateNumberValue((double)pin->groupId));
 			arr.Append(obj);
 		}
 		// 上一次留下的文件与这次的编号对不上，留着只会越积越多，所以本轮没写到的都删掉。
@@ -222,6 +235,14 @@ void WinPin::saveAll()
 	Setting::get()->setPins(arr);
 }
 
+void WinPin::finishRestore(JsonObject obj)
+{
+	auto pin = winPins.back().get();
+	restoreProps(pin, obj);
+	pin->groupId = (int)obj.GetNamedNumber(L"group", 0.0);
+	if (pin->groupId >= nextGroupId) nextGroupId = pin->groupId + 1;
+}
+
 void WinPin::restoreAll()
 {
 	if (!Setting::get()->getRestorePins()) return;
@@ -238,7 +259,7 @@ void WinPin::restoreAll()
 			std::vector<AnimFrame> frames;
 			if (AnimImage::load(animPath, frames)) {
 				initFromAnim(x, y, animPath, frames);
-				restoreProps(winPins.back().get(), obj);
+				finishRestore(obj);
 			}
 			continue;
 		}
@@ -248,8 +269,7 @@ void WinPin::restoreAll()
 		DWORD w{ 0 }, h{ 0 };
 		if (!Util::loadImageBytes((dir / name).wstring(), data, w, h)) continue;
 		initFromData(x, y, (int)w, (int)h, data);
-		// initFromData 刚把新窗口压进 winPins，back() 就是它
-		restoreProps(winPins.back().get(), obj);
+		finishRestore(obj);
 	}
 }
 
@@ -264,8 +284,9 @@ void WinPin::applyWinSize()
 {
 	auto sz = getImgSize();
 	if (!hwnd || sz.width == 0 || sz.height == 0) return;
-	auto newW = std::max(1, static_cast<int>(std::lround(sz.width * scale)));
-	auto newH = std::max(1, static_cast<int>(std::lround(sz.height * scale)));
+	auto vs = viewScale();
+	auto newW = std::max(1, static_cast<int>(std::lround(sz.width * vs)));
+	auto newH = std::max(1, static_cast<int>(std::lround(sz.height * vs)));
 	w = static_cast<float>(newW);
 	h = static_cast<float>(newH);
 	// 不走 setSize：它收的是逻辑像素、内部还要乘一遍 dpi，而这里的宽高本来就是物理像素
@@ -274,18 +295,165 @@ void WinPin::applyWinSize()
 
 POINT WinPin::toImgPos(const POINT& pos) const
 {
-	if (scale == 1.f) return pos;
-	return POINT{ static_cast<LONG>(std::lround(pos.x / scale)), static_cast<LONG>(std::lround(pos.y / scale)) };
+	auto vs = viewScale();
+	if (vs == 1.f) return pos;
+	return POINT{ static_cast<LONG>(std::lround(pos.x / vs)), static_cast<LONG>(std::lround(pos.y / vs)) };
+}
+
+float WinPin::clampScale(float v) const
+{
+	auto sz = getImgSize();
+	if (sz.width == 0 || sz.height == 0) return v;
+	// 上限跟着底图大小走：窗口边长再大，swap chain 那块显存也吃不消，人也看不过来；
+	// 但至少要能回到 1 倍，所以外面再 max 一下
+	auto maxScale = std::max(1.f, std::min(8.f, 16000.f / std::max(sz.width, sz.height)));
+	return std::clamp(v, 0.1f, maxScale);
+}
+
+void WinPin::syncScale(float newScale)
+{
+	auto clamped = clampScale(newScale);
+	if (std::abs(clamped - scale) < 0.0001f) return;
+	scale = clamped;
+	// 收成缩略图的成员只记倍数：窗口尺寸此刻由 thumbScale 说了算，
+	// 等它退出缩略图时 applyWinSize 会按这个新倍数重算
+	if (isThumb) return;
+	applyWinSize();
+	scaleTip = Ling::D2D::get()->makeTextLayout(std::format(L"{}%", static_cast<int>(std::lround(scale * 100.f))), 11.f * dpi);
+	setTimer(800, 101);
+	layoutTools();
+	refresh();
+}
+
+// 组内其他成员跟着 src 挪 dx/dy。贴图组要的就是"拖一张等于拖整组"
+void WinPin::syncGroupPos(WinPin* src, int dx, int dy)
+{
+	if (!src || src->groupId == 0) return;
+	for (auto& pin : winPins)
+	{
+		if (pin.get() == src || pin->groupId != src->groupId) continue;
+		pin->setPosition(pin->x + dx, pin->y + dy);
+	}
+}
+
+void WinPin::toggleGroupAll()
+{
+	// 有任何一个成组就整体解散，否则把当前所有贴图并为一组。
+	// 不做"部分成组"：组的语义是"这几张一起动"，半组半不组解释不清
+	auto grouped = std::any_of(winPins.begin(), winPins.end(),
+		[](const std::unique_ptr<WinPin>& p) { return p->groupId != 0; });
+	if (grouped) {
+		for (auto& pin : winPins) pin->groupId = 0;
+		return;
+	}
+	auto id = nextGroupId++;
+	for (auto& pin : winPins) pin->groupId = id;
+}
+
+// 缩略图模式：窗口缩成一枚小图，位置不变。与 Ctrl+M 那条贴边细条是两种收法，
+// 细条只剩一条边看不见内容，缩略图还能看清贴的是什么
+void WinPin::setThumbMode(bool on)
+{
+	if (on == isThumb) return;
+	auto sz = getImgSize();
+	if (!hwnd || sz.width == 0 || sz.height == 0) return;
+	if (on && isMinimized) setMinimized(false);   // 两种收法互斥，先退出细条再缩
+	isThumb = on;
+	if (on) {
+		// 窗口尺寸要变，编辑中的文字先收尾 —— 它的位置是按当前倍率算死的
+		if (editingShape) editingShape->finishEditing();
+		// hover 的夹点也是按当前倍率画的，留着会画到缩略图框外面去
+		shapeHover = nullptr;
+		savedX = x;
+		savedY = y;
+		savedW = static_cast<int>(w);
+		savedH = static_cast<int>(h);
+		// 按长边塞进一个固定大小的框里，短边等比；图本来就比框小就不放大
+		constexpr float boxW{ 160.f }, boxH{ 120.f };
+		thumbScale = std::min(1.f, std::min(boxW * dpi / sz.width, boxH * dpi / sz.height));
+		applyWinSize();
+		// 工具条比缩略图本身还大，收起来；还原时再请回来
+		if (IsWindowVisible(toolMain->hwnd)) {
+			toolsHiddenByThumb = true;
+			toolMain->hide();
+			toolSub->hideTools();
+		}
+	}
+	else {
+		thumbScale = 0.f;
+		// 按当前 scale 重算窗口尺寸：成组的贴图被同步缩放过的话，scale 在这期间变过
+		applyWinSize();
+		SetWindowPos(hwnd, nullptr, savedX, savedY, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+		if (toolsHiddenByThumb) {
+			toolsHiddenByThumb = false;
+			// hideTools 只是置了标志，ToolSub 得重建内容才出得来。
+			// 只在当时正显示 pin 面板时重建 —— showPinTools 会把当前工具切到 pin
+			if (toolMain->curId == L"pin") toolSub->showPinTools();
+			toolMain->show();
+		}
+		layoutTools();
+	}
+	refresh();
+}
+
+void WinPin::alignToEdge(UINT key)
+{
+	// 收起来的话先还原：细条 / 缩略图的 w/h 不是图的尺寸，贴边贴的是那条边
+	if (isMinimized) setMinimized(false);
+	if (isThumb) setThumbMode(false);
+	MONITORINFO mi{ .cbSize = sizeof(MONITORINFO) };
+	if (!GetMonitorInfo(MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST), &mi)) return;
+	auto& wa = mi.rcWork;
+	auto newX{ x }, newY{ y };
+	// 一律走 clampPos：贴图放大后可能比屏幕还宽，直接减出来会是负数（把窗口甩到屏幕外）
+	switch (key) {
+	case VK_LEFT:   newX = clampPos((float)wa.left, w, wa.left, wa.right); break;
+	case VK_RIGHT:  newX = clampPos((float)wa.right, w, wa.left, wa.right); break;
+	case VK_UP:     newY = clampPos((float)wa.top, h, wa.top, wa.bottom); break;
+	case VK_DOWN:   newY = clampPos((float)wa.bottom, h, wa.top, wa.bottom); break;
+	default: return;
+	}
+	auto dx = newX - x, dy = newY - y;
+	setPosition(newX, newY);
+	syncGroupPos(this, dx, dy);
+}
+
+// 搬到相邻显示器（dir = -1 往左、+1 往右），保持在本显示器内的相对位置
+void WinPin::moveToMonitor(int dir)
+{
+	if (isMinimized) setMinimized(false);
+	if (isThumb) setThumbMode(false);
+	std::vector<RECT> monitors;
+	EnumDisplayMonitors(nullptr, nullptr, collectMonitor, reinterpret_cast<LPARAM>(&monitors));
+	if (monitors.size() < 2) return;
+	std::sort(monitors.begin(), monitors.end(), [](const RECT& a, const RECT& b) { return a.left < b.left; });
+	MONITORINFO cur{ .cbSize = sizeof(MONITORINFO) };
+	auto monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+	if (!monitor || !GetMonitorInfo(monitor, &cur)) return;
+	int index{ 0 };
+	for (size_t i = 0; i < monitors.size(); ++i) {
+		if (monitors[i].left == cur.rcMonitor.left && monitors[i].top == cur.rcMonitor.top) {
+			index = (int)i;
+			break;
+		}
+	}
+	auto next = std::clamp(index + dir, 0, (int)monitors.size() - 1);
+	if (next == index) return;
+	// 用整屏矩形而不是工作区：贴图本来就可以压在任务栏上，没必要替用户躲
+	auto& from = cur.rcMonitor;
+	auto& to = monitors[next];
+	auto newX = clampPos((float)(to.left + (x - from.left)), w, to.left, to.right);
+	auto newY = clampPos((float)(to.top + (y - from.top)), h, to.top, to.bottom);
+	auto dx = newX - x, dy = newY - y;
+	setPosition(newX, newY);
+	syncGroupPos(this, dx, dy);
 }
 
 void WinPin::applyScale(float newScale, POINT anchor)
 {
 	auto sz = getImgSize();
 	if (sz.width == 0 || sz.height == 0) return;
-	// 上限跟着底图大小走：窗口边长再大，swap chain 那块显存也吃不消，人也看不过来；
-	// 但至少要能回到 1 倍，所以下面用 max 兜一下
-	auto maxScale = std::max(1.f, std::min(8.f, 16000.f / std::max(sz.width, sz.height)));
-	newScale = std::clamp(newScale, 0.1f, maxScale);
+	newScale = clampScale(newScale);
 	if (std::abs(newScale - scale) < 0.0001f) return;
 	// 编辑中的文字是 TextBox（真控件）画的，缩放期间它的位置、字号都得跟着重算，
 	// 与其在缩放过程里一路同步，不如先收尾把文字交回 ShapeText 自己画 —— 之后它就跟着一起缩了
@@ -304,6 +472,13 @@ void WinPin::applyScale(float newScale, POINT anchor)
 	setTimer(800, 101);
 	layoutTools();
 	refresh();
+	// 成组的贴图跟着一起缩放：一组图钉在屏幕上，放大一张而另外几张不动就对不齐了
+	for (auto& pin : winPins)
+	{
+		if (pin.get() != this && pin->groupId != 0 && pin->groupId == groupId) {
+			pin->syncScale(newScale);
+		}
+	}
 }
 
 // 画在窗口右上角，半透明底 + 白字，与 CutMask 上那个坐标标签一个路子。
@@ -512,8 +687,10 @@ void WinPin::layout()
     auto sz = screenImg->GetSize();
     D2D1_RECT_F destRect = D2D1::RectF(0, 0, sz.width, sz.height);
     // 底图和 shape 都是按底图像素画的，放大缩小整个交给这个变换，
-    // 笔宽、夹点跟着一起缩 —— 鼠标坐标进来时也除掉了倍数，所以命中判定天然对得上
-    ctx->SetTransform(D2D1::Matrix3x2F::Scale(scale, scale));
+    // 笔宽、夹点跟着一起缩 —— 鼠标坐标进来时也除掉了倍数，所以命中判定天然对得上。
+    // 倍数取 viewScale：缩略图模式下窗口被缩成小图，画的时候也得跟着缩，否则只剩左上角一块
+    auto vs = viewScale();
+    ctx->SetTransform(D2D1::Matrix3x2F::Scale(vs, vs));
     ctx->DrawBitmap(screenImg.Get(), destRect);
 	for (auto& shape : history->shapes)
 	{
@@ -553,6 +730,13 @@ void WinPin::onDown(POINT pos, BOOL isRight)
 	// 锁定后图上什么都不许动。右键单独放开：收/放工具条是解锁的入口，
 	// 全拦了的话锁死的贴图就只能靠任务栏找回工具条
 	if (isLocked && !isRight) return;
+	// 缩略图上点一下就还原。放在所有分支之前：这一下是"把图放回来"，
+	// 不是画画也不是拖窗。lastDownTime 清零是免得紧接着的第二下被认成双击（双击 = 复制关窗）
+	if (isThumb) {
+		setThumbMode(false);   // 工具条由 setThumbMode 自己按"是不是它收的"请回来
+		lastDownTime = 0;
+		return;
+	}
 	// 编辑文本时，落在文本框里的点击整个交给 TextBox（它自己订阅了窗口的鼠标事件）。
 	// 这里不能抢先 SetCapture / 置 isMouseDown，否则拖选文本会被当成拖 shape。
 	if (editingShape && textBox && textBox->isPosIn(pos)) return;
@@ -622,6 +806,8 @@ void WinPin::onDown(POINT pos, BOOL isRight)
 
 void WinPin::onMove(POINT pos)
 {
+	// 缩略图上不做 hover / 命中：点一下是"还原"，夹点也没有地方摆
+	if (isThumb) return;
 	// 收成细条时鼠标一碰就展开 —— 这是细条唯一的展开方式
 	if (isMinimized) {
 		setMinimized(false);
@@ -634,7 +820,12 @@ void WinPin::onMove(POINT pos)
 	auto imgPos = toImgPos(pos);
 	if (isMouseDown) {
 		if (toolMain->curId == L"") {
-			setPosition(x + pos.x - pressPos.x, y + pos.y - pressPos.y);
+			auto newX = x + pos.x - pressPos.x;
+			auto newY = y + pos.y - pressPos.y;
+			auto dx = newX - x, dy = newY - y;
+			setPosition(newX, newY);
+			// 成组的贴图跟着一起挪，整组的相对位置不变
+			syncGroupPos(this, dx, dy);
 			return;
 		}
 		else if(shapeHover) {
@@ -772,7 +963,19 @@ void WinPin::onKey(UINT key)
 	if (shapeHover) shapeHover->onKey(key);
 	if (editingShape) return;
 	bool ctrl = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
-	if (ctrl && key == 'Z') {
+	bool alt = (GetKeyState(VK_MENU) & 0x8000) != 0;
+	// Ctrl+Alt+左右：搬到相邻显示器；Alt+方向：贴到当前显示器的那条边。
+	// 两者都带方向键，所以先判组合更多的那个
+	if (ctrl && alt && (key == VK_LEFT || key == VK_RIGHT)) {
+		moveToMonitor(key == VK_LEFT ? -1 : 1);
+	}
+	else if (alt && (key == VK_LEFT || key == VK_RIGHT || key == VK_UP || key == VK_DOWN)) {
+		alignToEdge(key);
+	}
+	else if (ctrl && key == 'T') {      // Ctrl+T：缩略图模式 / 还原
+		setThumbMode(!isThumb);
+	}
+	else if (ctrl && key == 'Z') {
 		history->undo();
 	}
 	else if (ctrl && key == 'Y') {
@@ -863,6 +1066,7 @@ bool WinPin::swapImage(const std::vector<BYTE>& data, const int w, const int h)
 void WinPin::setMinimized(bool on)
 {
 	if (on == isMinimized) return;
+	if (on && isThumb) setThumbMode(false);   // 两种收法互斥，先把缩略图还原成整图再收细条
 	isMinimized = on;
 	if (on) {
 		savedX = x;

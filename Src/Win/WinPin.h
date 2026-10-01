@@ -1,5 +1,6 @@
 #pragma once
 #include <include/Ling.h>
+#include <winrt/Windows.Data.Json.h>
 #include "../AnimImage.h"
 
 class ToolMain;
@@ -22,6 +23,11 @@ public:
 	bool hasAnim() const { return frames.size() > 1; }
 	bool isAnimPlaying() const { return animPlaying; }
 	void toggleAnim();
+	// 把所有贴图并为一组 / 全部解组。成组后拖动与 Ctrl+滚轮缩放会带着整组一起动
+	static void toggleGroupAll();
+	int getGroupId() const { return groupId; }
+	// 缩略图模式：窗口缩成一枚小图摆在原位，点一下或 Ctrl+T 还原（缩的是窗口，不是底图）
+	void setThumbMode(bool on);
 	// 当前屏幕上还有没有贴图窗口。用完即走模式靠它判断"活干完了没"：
 	// 截图窗口关掉时贴图窗口可能才刚建起来，那时候不能退进程
 	static bool hasWindow();
@@ -97,6 +103,9 @@ private:
 	// （贴图窗口的尺寸钉死在第一帧上，中途换尺寸的帧画出来是歪的）
 	void showFrame(int index);
 	void setAnimPlaying(bool on);
+	// restoreAll 的收尾：init*Data 刚把新窗口压进 winPins，back() 就是它。
+	// 除了属性，还要把组号顶到 nextGroupId 之上 —— 否则新建的组会撞上恢复出来的老组号
+	static void finishRestore(winrt::Windows::Data::Json::JsonObject obj);
 	std::vector<AnimFrame> frames;
 	int frameIndex{ 0 };
 	bool animPlaying{ false };
@@ -104,9 +113,27 @@ private:
 	std::wstring animSrc;
 	// 历史翻页当前指到哪一张（0 = 最新一张）。-1 表示还没翻过页
 	int previewIndex{ -1 };
-	// 收成细条前的位置与尺寸，展开时恢复
+	// 收成细条 / 缩略图前的位置与尺寸，还原时恢复。两个模式互斥，共用这一组字段
 	bool isMinimized{ false };
+	bool isThumb{ false };
 	int savedX{ 0 }, savedY{ 0 }, savedW{ 0 }, savedH{ 0 };
+	// 缩略图模式下画底图用的倍数。0 表示不在缩略图模式，此时用 scale
+	float thumbScale{ 0.f };
+	// 缩略图收起来的那两条工具条，还原时要原样请回来。用户自己右键收的则不该替他打开
+	bool toolsHiddenByThumb{ false };
+	// 底图画到窗口上用的倍数：缩略图模式下是 thumbScale，否则是 Ctrl+滚轮那个 scale。
+	// 底图与 shape 存的都还是原始像素，缩放全靠这一个变换，所以改它一处就够
+	float viewScale() const { return isThumb ? thumbScale : scale; }
+	// 把倍数夹进这张图能接受的范围（见 applyScale 里那两条上下限的来由）
+	float clampScale(float v) const;
+	// 组内同步缩放用：只改倍数重排窗口，不带 anchor 逻辑（锚点只对被滚轮指着的那张有意义）
+	void syncScale(float newScale);
+	static void syncGroupPos(WinPin* src, int dx, int dy);
+	// 贴到当前显示器的某条边 / 搬到相邻显示器（dir = -1 左，+1 右），组内成员同步位移
+	void alignToEdge(UINT key);
+	void moveToMonitor(int dir);
+	// 贴图组号。0 = 不成组
+	int groupId{ 0 };
 	// 另存为对话框会抢走前台并把 WinPin 激活，取消保存后用它把窗口层级和前台窗口恢复原样
 	void restoreWindowState(HWND foregroundBeforeDialog);
 	// 把窗口尺寸掰成"底图像素 × scale"。系统在 DPI 变化时会按新旧缩放比擅自缩放窗口
