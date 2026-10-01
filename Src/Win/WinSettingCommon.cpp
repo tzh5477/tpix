@@ -318,6 +318,23 @@ void WinSettingCommon::initCapCtrls()
         Setting::get()->setAutoShotMin(minOpts[(idx + 1) % 5]);
         applyMin(btn);
     });
+
+    // 滚动截图方向。只是个默认值：真滚起来发现这个方向滚不动，CapLong 会自己换一次向
+    auto dirRow = makeRow(L"setting.longDir");
+    auto dirBtn = dirRow->makeChild<Ling::Button>();
+    dirBtn->setHeight(28.f);
+    dirBtn->setWidth(80.f);
+    dirBtn->setBorder(1.f, 0xE0E0E0FF);
+    dirBtn->setHoverBg(0xFFFFFFFF);
+    auto applyDir = [](Ling::Button* btn) {
+        btn->setText(Lang::get(Setting::get()->getLongHorizontal()
+            ? L"long.horizontal" : L"long.vertical"));
+    };
+    applyDir(dirBtn);
+    dirBtn->onClick.add([applyDir](Ling::Button* btn) {
+        Setting::get()->setLongHorizontal(!Setting::get()->getLongHorizontal());
+        applyDir(btn);
+    });
 }
 
 void WinSettingCommon::initSaveCtrls()

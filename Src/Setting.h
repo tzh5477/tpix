@@ -61,6 +61,9 @@ public:
 	void setAutoShotMin(int val);
 	bool getIncludeCursor();
 	void setIncludeCursor(bool val);
+	// 滚动截图的方向：true = 横向（拼出来的图往右长），false = 竖向（默认）
+	bool getLongHorizontal();
+	void setLongHorizontal(bool val);
 	// 上次检查更新是哪一天（std::chrono::days 的计数，即 1970-01-01 以来的天数），
 	// 从来没查过返回 0。一天最多查一次服务端，靠它记账 —— 每次空闲都去请求纯属浪费人家的流量
 	long long getUpdateCheckDay();

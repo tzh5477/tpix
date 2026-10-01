@@ -8,12 +8,16 @@
 #include "../App.h"
 #include "../Util.h"
 #include "../Lang.h"
+#include "../Setting.h"
 using namespace Microsoft::WRL;
 
 namespace {
     constexpr UINT scrollMsgId = 18;
     constexpr UINT scrollEndMsgId = 19;
-    constexpr int comparisonH = 100;  // 匹配比较用的条带高度
+    constexpr int stripSize = 100;  // 匹配比较用的条带长度（沿滚动轴取）
+    // 按这个次数还滚不动，就换另一个方向再试。比"判定触底"用的 maxDismissTime 小得多：
+    // 换方向要趁早，晚了用户已经盯着不动的界面等了好几秒
+    constexpr int dirFlipAt = 3;
     // 连续这么多次滚不动才认为到底了。以前是 2 次，反馈里有明明还能滚就提示触底的：
     // 滚轮发出去之后目标窗口不一定跟着动 —— 惯性滚动还没停、页面在加载、
     // 或者鼠标底下那一层刚好不接收滚轮，多试几次就过去了。
@@ -74,6 +78,21 @@ namespace {
         return bestY;
     }
 
+    // 横向滚动用：取 [x0, x0+bandW) 这一竖带，转成"一行是原图一列"的灰度图。
+    // 转置之后竖向那套按行匹配的函数可以原样复用，行号就是原图的列号
+    std::vector<BYTE> toGrayscaleColumn(const BYTE* bgra, int imgH, int x0, int bandW, int rowPix)
+    {
+        std::vector<BYTE> gray((size_t)imgH * bandW);
+        for (int k = 0; k < bandW; ++k) {
+            BYTE* dst = gray.data() + (size_t)k * imgH;
+            for (int y = 0; y < imgH; ++y) {
+                const BYTE* src = bgra + (size_t)y * rowPix + (size_t)(x0 + k) * 4;
+                dst[y] = (BYTE)((src[0] * 114 + src[1] * 587 + src[2] * 299) / 1000);
+            }
+        }
+        return gray;
+    }
+
     // 判断两帧是否完全相同（内存比较，快）
     bool framesDiffer(const std::vector<BYTE>& a, const std::vector<BYTE>& b)
     {
@@ -119,6 +138,7 @@ namespace {
 
 CapLong::CapLong(WinCap* win) : win(win)
 {
+    horizontal = Setting::get()->getLongHorizontal();
     startCircleR *= win->dpi;
     auto d2d = Ling::D2D::get();
     d2d->deviceContext->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::White), textBrush.GetAddressOf());
@@ -216,8 +236,9 @@ void CapLong::onTimerCB(UINT timerId)
         win->killTimer(scrollMsgId);
         INPUT input = { 0 };
         input.type = INPUT_MOUSE;
-        input.mi.dwFlags = MOUSEEVENTF_WHEEL;
-        input.mi.mouseData = -WHEEL_DELTA;
+        // 横向滚是另一条消息（滚轮左右倾斜），正值是往右 —— 内容左移，新内容从右边进来
+        input.mi.dwFlags = horizontal ? MOUSEEVENTF_HWHEEL : MOUSEEVENTF_WHEEL;
+        input.mi.mouseData = horizontal ? WHEEL_DELTA : -WHEEL_DELTA;
         SendInput(1, &input, sizeof(INPUT));
         win->setTimer(scrollSettleMs, scrollEndMsgId); //滚动开始
     }
@@ -232,6 +253,7 @@ void CapLong::firstStep()
     auto& maskRect = win->cutMask->maskRect;
     imgW = int(maskRect.right - maskRect.left);
     imgH = int(maskRect.bottom - maskRect.top);
+    resultW = imgW;
     resultH = imgH;
     capStartPos.x = (int)maskRect.left;
     capStartPos.y = (int)maskRect.top;
@@ -246,8 +268,12 @@ void CapLong::firstStep()
 void CapLong::makeImgPreview()
 {
     imgPreview.Reset();
-    float previewScaleW = tool ? (float)tool->w / (float)imgW : 1.0f;
-    int previewW = (int)((float)imgW * previewScaleW);
+    // 按成图尺寸算，而不是按单帧：横向的长图是往右长的，拿 imgW 当宽度会越缩越不对
+    float previewScaleW = tool ? (float)tool->w / (float)resultW : 1.0f;
+    // 横向长图按工具条宽缩放会得到一条几像素高的细带，什么都看不出来：
+    // 高度缩到看不清时改成按高度定缩放，宁可预览比工具条宽
+    if (previewScaleW * resultH < 24.f) previewScaleW = 24.f / (float)resultH;
+    int previewW = (int)((float)resultW * previewScaleW);
     int previewH = (int)((float)resultH * previewScaleW);
     if (previewW > 0 && previewH > 0) {
         std::vector<BYTE> scaledData((size_t)previewW * 4 * previewH);
@@ -256,8 +282,9 @@ void CapLong::makeImgPreview()
             if (srcY >= resultH) srcY = resultH - 1;
             for (int x = 0; x < previewW; x++) {
                 int srcX = (int)((float)x / previewScaleW);
-                if (srcX >= imgW) srcX = imgW - 1;
-                int srcIdx = (srcY * imgW + srcX) * 4;
+                if (srcX >= resultW) srcX = resultW - 1;
+                // 行距是 resultW（横向拼过之后就不再等于单帧的 imgW 了）
+                int srcIdx = (srcY * resultW + srcX) * 4;
                 int dstIdx = (y * previewW + x) * 4;
                 scaledData[dstIdx] = imgData[srcIdx];
                 scaledData[dstIdx + 1] = imgData[srcIdx + 1];
@@ -273,47 +300,139 @@ void CapLong::makeImgPreview()
     }
 }
 
+int CapLong::findChangeStart(const std::vector<BYTE>& data)
+{
+    // 沿滚动轴从"新内容进来的那一头"开始扫：竖向往下滚，变化先出现在上面，
+    // 横向往右滚，变化先出现在左边 —— 两边都是从 0 开始找第一个不一样的
+    if (horizontal) {
+        for (int x = 0; x < imgW; x++) {
+            for (int y = 0; y < imgH; y++) {
+                auto idx = (size_t)(y * imgW + x) * 4;
+                if (img1[idx] != data[idx] || img1[idx + 1] != data[idx + 1] || img1[idx + 2] != data[idx + 2]) return x;
+            }
+        }
+    }
+    else {
+        for (int y = 0; y < imgH; y++) {
+            for (int x = 0; x < imgW; x++) {
+                auto idx = (size_t)(y * imgW + x) * 4;
+                if (img1[idx] != data[idx] || img1[idx + 1] != data[idx + 1] || img1[idx + 2] != data[idx + 2]) return y;
+            }
+        }
+    }
+    return -1;
+}
+
+int CapLong::matchShift(const std::vector<BYTE>& data)
+{
+    const int rowPix{ imgW * 4 };
+    // strip 沿滚动轴取：竖向是行数，横向是列数
+    const int axisSize = horizontal ? imgW : imgH;
+    int strip = std::min(stripSize, axisSize - changeStart);
+    if (strip <= 0) return 0;
+    int shift{ 0 };
+    if (horizontal) {
+        // 竖带转置之后，匹配函数里的"行"就是原图的列，宽参数换成长度 imgH
+        int bandW = imgW - changeStart;
+        auto gray1 = toGrayscaleColumn(img1.data(), imgH, changeStart, bandW, rowPix);
+        auto gray2 = toGrayscaleColumn(data.data(), imgH, changeStart, strip, rowPix);
+        shift = findMostSimilarY(gray1.data(), bandW, gray2.data(), strip, imgH);
+        if (shift == 0) {
+            // 左端对不上（滚动区域左边是纯色 / 空白时常见），换成右端那条竖带反推
+            auto gray1End = toGrayscaleColumn(img1.data(), imgH, imgW - strip, strip, rowPix);
+            auto gray2End = toGrayscaleColumn(data.data(), imgH, imgW - strip, strip, rowPix);
+            shift = findScrollByBottomStrip(gray1End.data(), gray2End.data(), imgH, strip);
+        }
+    }
+    else {
+        int img1StripH = imgH - changeStart;
+        auto gray1 = toGrayscale(img1.data() + changeStart * rowPix, imgW, img1StripH, rowPix);
+        auto gray2 = toGrayscale(data.data() + changeStart * rowPix, imgW, strip, rowPix);
+        shift = findMostSimilarY(gray1.data(), img1StripH, gray2.data(), strip, imgW);
+        if (shift == 0) {
+            // 顶部条带没对上：可能滚动区域顶部是纯色/空白（比如页面底部的留白），
+            // 换用新帧底部的条带再反推一次滚动量
+            auto gray1Bottom = toGrayscale(img1.data() + (imgH - strip) * rowPix, imgW, strip, rowPix);
+            auto gray2Bottom = toGrayscale(data.data() + (imgH - strip) * rowPix, imgW, strip, rowPix);
+            shift = findScrollByBottomStrip(gray1Bottom.data(), gray2Bottom.data(), imgW, strip);
+        }
+    }
+    return shift;
+}
+
+void CapLong::stitch(const std::vector<BYTE>& data, const int shift)
+{
+    const int rowPix{ imgW * 4 };
+    // 新帧里从 changeStart 到末端的这一段是"还没接上去的"，接到结果的这一头：
+    // 竖向接在底部（按行搬），横向接在右侧（按行的尾巴搬）
+    if (horizontal) {
+        int paintStart = resultW - (imgW - shift - changeStart);
+        int newResultW = paintStart + (imgW - changeStart);
+        int newRowPix = newResultW * 4;
+        // 旧结果的行距是 resultW*4，第二次拼接起就不再等于单帧的 rowPix 了
+        int oldRowPix = resultW * 4;
+        std::vector<BYTE> newResult((size_t)newRowPix * imgH);
+        for (int y = 0; y < imgH; y++) {
+            CopyMemory(newResult.data() + (size_t)y * newRowPix, imgData.data() + (size_t)y * oldRowPix, oldRowPix);
+            CopyMemory(newResult.data() + (size_t)y * newRowPix + paintStart * 4,
+                data.data() + (size_t)y * rowPix + changeStart * 4, (size_t)(imgW - changeStart) * 4);
+        }
+        imgData = std::move(newResult);
+        resultW = newResultW;
+    }
+    else {
+        int paintStart = resultH - (imgH - shift - changeStart);
+        int newResultH = paintStart + (imgH - changeStart);
+        std::vector<BYTE> newResult((size_t)rowPix * newResultH);
+        // 拷贝旧结果
+        CopyMemory(newResult.data(), imgData.data(), imgData.size());
+        // 拷贝新截图从 changeStart 到底部的内容
+        for (int row = 0; row < imgH - changeStart; row++) {
+            CopyMemory(newResult.data() + (size_t)(paintStart + row) * rowPix,
+                data.data() + (size_t)(changeStart + row) * rowPix, rowPix);
+        }
+        imgData = std::move(newResult);
+        resultH = newResultH;
+    }
+}
+
+void CapLong::flipDir()
+{
+    horizontal = !horizontal;
+    dirFlipped = true;
+    // 变化起点的含义跟着轴变了，得重新找
+    firstCheck = true;
+    changeStart = -1;
+    dismissTime = 0;
+    settleRecheckCount = 0;
+    // 已经拼出来的那一截是沿另一个轴排的：resultW / resultH 的含义和 imgData 的行距全变了，
+    // 几何对不上，只能丢掉、拿当前这一帧重新起头（换向都发生在"滚不动"那一步，此时 img1 就是最新一帧）
+    imgData = img1;
+    resultW = imgW;
+    resultH = imgH;
+    makeImgPreview();
+    win->refresh();
+    win->setTimer(500, scrollMsgId);
+}
+
 void CapLong::capStep()
 {
     auto data = Util::captureScreen(capStartPos.x, capStartPos.y, imgW, imgH);
     // 检测滚动区域：首次时找出前后两帧的像素差异边界
     if (firstCheck) {
-        changeStartY = -1;
-        for (int y = 0; y < imgH; y++) {
-            for (int x = 0; x < imgW; x++) {
-                int idx = (y * imgW + x) * 4;
-                if (img1[idx] != data[idx] || img1[idx + 1] != data[idx + 1] || img1[idx + 2] != data[idx + 2]) {
-                    if (changeStartY == -1) changeStartY = y;
-                    break;
-                }
-            }
-            if (changeStartY != -1) break;
-        }
-        if (changeStartY == -1) {
+        changeStart = findChangeStart(data);
+        if (changeStart == -1) {
             // 没有检测到变化，可能滚动未生效
             dismissTime++;
+            if (dismissTime > dirFlipAt && !dirFlipped) { flipDir(); return; }
             if (dismissTime > maxDismissTime) { stopCap(); return; }
             win->setTimer(500, scrollMsgId);
             return;
         }
         firstCheck = false;
     }
-    int rowPix{ imgW * 4 };
-    // 从 changeStartY 开始，裁剪用于匹配的条带
-    int stripH = std::min(comparisonH, imgH - changeStartY);
-    if (stripH <= 0) { win->setTimer(500, scrollMsgId); return; }
-    int img1StripH = imgH - changeStartY;
-    auto gray1 = toGrayscale(img1.data() + changeStartY * rowPix, imgW, img1StripH, rowPix);
-    auto gray2 = toGrayscale(data.data() + changeStartY * rowPix, imgW, stripH, rowPix);
-    int y = findMostSimilarY(gray1.data(), img1StripH, gray2.data(), stripH, imgW);
-    if (y == 0) {
-        // 顶部条带没对上：可能滚动区域顶部是纯色/空白（比如页面底部的留白），
-        // 换用新帧底部的条带再反推一次滚动量
-        auto gray1Bottom = toGrayscale(img1.data() + (imgH - stripH) * rowPix, imgW, stripH, rowPix);
-        auto gray2Bottom = toGrayscale(data.data() + (imgH - stripH) * rowPix, imgW, stripH, rowPix);
-        y = findScrollByBottomStrip(gray1Bottom.data(), gray2Bottom.data(), imgW, stripH);
-    }
-    if (y == 0) { // 未检测到滚动
+    int shift = matchShift(data);
+    if (shift == 0) { // 未检测到滚动
         if (framesDiffer(data, img1)) {
             // 帧在变但匹配不出滚动量：多半是滚动动画还没停、或页面还在加载。
             // 这时不急着判"滚不动"，隔一会儿重抓一帧等它停稳，最多等几次再放弃
@@ -325,27 +444,17 @@ void CapLong::capStep()
         }
         settleRecheckCount = 0;
         dismissTime++;
+        // 换方向要趁早：等满 maxDismissTime 再换，用户已经干等好几秒了
+        if (dismissTime > dirFlipAt && !dirFlipped) { flipDir(); return; }
         if (dismissTime > maxDismissTime) { stopCap(); return; }
         win->setTimer(500, scrollMsgId);
         return;
     }
     dismissTime = 0;
     settleRecheckCount = 0;
-    // 计算拼接位置
-    int paintStart = resultH - (imgH - y - changeStartY);
-    int newResultH = paintStart + (imgH - changeStartY);
-    // 创建新的结果图像
-    std::vector<BYTE> newResult((size_t)rowPix * newResultH);
-    // 拷贝旧结果
-    CopyMemory(newResult.data(), imgData.data(), imgData.size());
-    // 拷贝新截图从 changeStartY 到底部的内容
-    for (int row = 0; row < imgH - changeStartY; row++) {
-        CopyMemory(newResult.data() + (size_t)(paintStart + row) * rowPix, data.data() + (size_t)(changeStartY + row) * rowPix, rowPix);
-    }
-    imgData = std::move(newResult);
+    stitch(data, shift);
     img1 = data;
-    resultH = newResultH;
-    if (resultH > 36000) { stopCap(); return; }
+    if (resultW > 36000 || resultH > 36000) { stopCap(); return; }
     makeImgPreview();
     win->refresh();
     win->setTimer(500, scrollMsgId); //准备下次滚动
@@ -402,11 +511,13 @@ void CapLong::stopCap()
 
 void CapLong::makeStopText()
 {
-    if (resultH > 36000) {
-        layoutTextEnd = Ling::D2D::get()->makeTextLayout(Lang::get(L"long.tooLong"), 13 * win->dpi);
+    if (resultW > 36000 || resultH > 36000) {
+        layoutTextEnd = Ling::D2D::get()->makeTextLayout(
+            Lang::get(horizontal ? L"long.tooWide" : L"long.tooLong"), 13 * win->dpi);
     }
     else {
-        layoutTextEnd = Ling::D2D::get()->makeTextLayout(Lang::get(L"long.reachedBottom"), 13 * win->dpi);
+        layoutTextEnd = Ling::D2D::get()->makeTextLayout(
+            Lang::get(horizontal ? L"long.reachedEnd" : L"long.reachedBottom"), 13 * win->dpi);
     }
     if (!layoutTextEnd) return;
     DWRITE_TEXT_METRICS tm = {};
@@ -428,7 +539,7 @@ void CapLong::makeStopText()
 void CapLong::copyToClipboard()
 {
     if (imgData.empty()) return;
-    Util::saveToClipboard(imgW, resultH, imgData.data());
+    Util::saveToClipboard(resultW, resultH, imgData.data());
 }
 
 bool CapLong::saveToFile()
@@ -437,7 +548,7 @@ bool CapLong::saveToFile()
     auto path = Util::resolveSavePath(win->hwnd);
     if (path.empty()) return false;
     auto fmt = (Util::ImgFormat)Util::getSaveFormat();
-    return Util::saveToFile(path, imgW, resultH, imgData.data(), fmt);
+    return Util::saveToFile(path, resultW, resultH, imgData.data(), fmt);
 }
 
 void CapLong::pin()
@@ -450,7 +561,7 @@ void CapLong::pin()
     auto& workArea = mi.rcWork;
     int screenW = workArea.right - workArea.left;
     int screenH = workArea.bottom - workArea.top;
-    int posX = workArea.left + (screenW - imgW) / 2;
+    int posX = workArea.left + (screenW - std::min(resultW, screenW)) / 2;
     int posY = workArea.top + (screenH - std::min(resultH, screenH)) / 2;
-    WinPin::initFromData(posX, posY, imgW, resultH, imgData);
+    WinPin::initFromData(posX, posY, resultW, resultH, imgData);
 }

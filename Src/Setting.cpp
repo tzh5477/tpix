@@ -419,6 +419,17 @@ void Setting::setIncludeCursor(bool val)
 	save();
 }
 
+bool Setting::getLongHorizontal()
+{
+	return getCapObj().GetNamedBoolean(L"longHorizontal", false);
+}
+
+void Setting::setLongHorizontal(bool val)
+{
+	getCapObj().SetNamedValue(L"longHorizontal", JsonValue::CreateBooleanValue(val));
+	save();
+}
+
 long long Setting::getUpdateCheckDay()
 {
     auto common = configObj.GetNamedObject(L"common", nullptr);

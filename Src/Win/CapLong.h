@@ -35,14 +35,26 @@ private:
 	void paintImgPreview(ID2D1DeviceContext* ctx);
 	void stopCap();
 	void makeStopText();
+	// 沿滚动轴找出两帧开始不一样的位置：竖向是行号，横向是列号。全同返回 -1
+	int findChangeStart(const std::vector<BYTE>& data);
+	// 匹配出这一帧相对上一帧滚了多少像素。0 表示没对上
+	int matchShift(const std::vector<BYTE>& data);
+	// 把新帧里 changeStart 之后的内容接到结果图上
+	void stitch(const std::vector<BYTE>& data, const int shift);
+	// 配置的那个方向滚不动：换另一个方向再来一次，一次截图里只换一次
+	void flipDir();
 private:
 	WinCap* win;
 	bool isShowStartBtn{ false }, isScrolling{ false }, isFinish{ false };
 	bool firstCheck{ true };
+	// true = 横向滚动（拼出来的图往右长），false = 竖向
+	bool horizontal{ false };
+	bool dirFlipped{ false };
 	int dismissTime{ 0 };
 	// 抓到"帧在变但匹配不出滚动量"的帧时连续等待的次数，防止一直卡住
 	int settleRecheckCount{ 0 };
-	int changeStartY{ -1 };
+	// 两帧开始不一样的位置，沿滚动轴计：竖向是行号，横向是列号
+	int changeStart{ -1 };
 	D2D1_RECT_F stopTextRect{};
 	// 两处文字的绘制起点。IDWriteTextLayout 默认左上对齐，DrawTextLayout 给的又是
 	// layout 框的左上角，所以得先测出文本实际宽高，才能算出居中要的那个起点
@@ -60,6 +72,7 @@ private:
 	std::vector<BYTE> imgData;
 	std::vector<BYTE> img1;
 	int imgW{ 0 }, imgH{ 0 };
-	int resultH{ 0 };
+	// 成图尺寸：竖向时宽 = imgW、高在长；横向时高 = imgH、宽在长
+	int resultW{ 0 }, resultH{ 0 };
 	POINT capStartPos{};
 };
