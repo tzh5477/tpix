@@ -82,7 +82,7 @@ Src/
 见 `Doc/竞品能力差距分析.md` 第七章（A–H 分组）。**本轮范围以 7.4「本轮范围裁剪」为唯一依据**：
 已裁剪 D3 公式识别、D4 AI 翻译、macOS、E1 UI 元素级检测、F 组（FSCapture 方向编辑器）、G3/G4、H2/H4；H6 只做水印；**内置 OCR（G5）必做**。
 
-当前进行：**C 组后半 + D 组**。已完成并提交（dev 分支，按里程碑分次提交）：
+当前进行：**D 组 → E 组**。已完成并提交（dev 分支，按里程碑分次提交）：
 
 - A 组：A1 ToolCap 两行容器、A2 序号增强、A3 智能擦除、A4 文字旋转、A5 输出格式与自动保存
 - B 组：B1 WinPin 多实例（地基已具备）、B2 历史截图 + 剪贴板历史（ShotHistory / WinHistory）、B3 内置 OCR（Ocr / WinOcr，Windows.Media.Ocr）
@@ -91,12 +91,21 @@ Src/
   C4 贴图持久化与重启恢复、C5 悬浮球 + 拖放贴图（WinBall，WM_DROPFILES）、
   C6 依次贴图 + PageUp/PageDown 前后预览 + Ctrl+M 贴边细条
 - H6：文字水印（ShapeWatermark，居中 / 平铺 / 透明度 / 旋转）
+- D1：OCR 多语种（Ocr::languages + 结果窗口语言按钮 + 设置页默认语言）
+- E3：延时截图（WinDelay 倒计时窗口）、定时自动截图（App 里一条计时线程）
+- E4：包含鼠标指针（Util::snapshotCursor + captureScreen 的 withCursor）
+- refactor(shape)（作者主导）：Canvas / CanvasHost 抽出画布宿主，ShapeRectBase / ShapeLineBase
+  两个中间基类，马赛克与擦除拆成四变体；**Shape 层此后只认 Canvas，不认 WinPin**
 
 新增的快捷键（贴图窗口内）：空格 = 动图播放 / 暂停；Ctrl+T = 缩略图模式；
 Alt+方向 = 贴到屏幕边；Ctrl+Alt+左右 = 搬到相邻显示器。
 
 待做：C5 的「Win+拖拽快速贴图」（需全局键盘钩子 + 全屏拖放层，风险较高，单独评估）、
-D1（OCR 多语种）、D2（表格识别）、E2–E5、G1/G2、H1/H3/H5。
+D2（表格识别，需 ONNX Runtime）、E2（手绘 / 固定尺寸区域 / 多窗口）、E5（横向滚动截图）、
+G1/G2（画中画 / 点击可视化 / 录制暂停 / 动作录制）、H1/H3/H5。
+
+> 记一笔 E4 的坑：`App::takeScreenShot` 与 `Util::captureScreen` 曾经是两份 GDI 抓屏代码，
+> 现在统一走后者。以后新增"改抓屏行为"的能力，只改 `Util::captureScreen` 一处。
 
 ## 7. 验证
 
