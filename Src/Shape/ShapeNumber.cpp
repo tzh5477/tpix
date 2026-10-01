@@ -410,21 +410,30 @@ void ShapeNumber::makePath()
 	path->Open(sink.GetAddressOf());
 	tip = transformPoint(D2D1::Point2F(r + r / 3.f, 0.f));
 	auto tail = hasTail();
+	// 半径控制点就挂在"离尾巴最远的那一点"上（带尾时是 180 度位置）。
+	// 无尾时没有半径控制点（见 hasTail），这里仍然算出来：mouseUp 会照写一遍 dragger
+	mid = transformPoint(localPoint(180.f));
 	if (ringStyle == RingStyle::Circle || ringStyle == RingStyle::CircleArrow) {
-		// 带尾的从 10 度开口、把尾巴接出去；无尾的就是个整圆 ——
-		// 起点取正上方，两段 180 度的弧接回自己（这段弧正好半圆，LARGE 才取到对的那半）
-		auto start = transformPoint(localPoint(tail ? 10.f : 90.f));
-		auto bend = transformPoint(localPoint(tail ? 180.f : 270.f));
-		auto end = transformPoint(localPoint(tail ? 350.f : 90.f));
-		auto arcSize = tail ? D2D1_ARC_SIZE_SMALL : D2D1_ARC_SIZE_LARGE;
-		// 半径控制点就挂在弧的中点上（带尾时正好是原来那 180 度位置）
-		mid = bend;
-		sink->BeginFigure(start, D2D1_FIGURE_BEGIN_FILLED);
-		sink->AddArc(D2D1::ArcSegment(bend, D2D1::SizeF(r, r), 0.f, D2D1_SWEEP_DIRECTION_COUNTER_CLOCKWISE, arcSize));
-		sink->AddArc(D2D1::ArcSegment(end, D2D1::SizeF(r, r), 0.f, D2D1_SWEEP_DIRECTION_COUNTER_CLOCKWISE, arcSize));
 		if (tail) {
+			// 带尾的：从 10 度开口，两段小弧绕过上方，再把尾巴接出去
+			auto start = transformPoint(localPoint(10.f));
+			auto bend = transformPoint(localPoint(180.f));
+			auto end = transformPoint(localPoint(350.f));
+			sink->BeginFigure(start, D2D1_FIGURE_BEGIN_FILLED);
+			sink->AddArc(D2D1::ArcSegment(bend, D2D1::SizeF(r, r), 0.f, D2D1_SWEEP_DIRECTION_COUNTER_CLOCKWISE, D2D1_ARC_SIZE_SMALL));
+			sink->AddArc(D2D1::ArcSegment(end, D2D1::SizeF(r, r), 0.f, D2D1_SWEEP_DIRECTION_COUNTER_CLOCKWISE, D2D1_ARC_SIZE_SMALL));
 			sink->AddLine(tip);
-			sink->AddLine(start);
+		}
+		else {
+			// 整圆：三段各 120 度的弧。不用两段 180 度拼 —— 半圆那两个候选弧一样大，
+			// SMALL / LARGE 正好落在分界上，画成哪半边全看实现怎么挑
+			auto start = transformPoint(localPoint(90.f));
+			auto p2 = transformPoint(localPoint(210.f));
+			auto p3 = transformPoint(localPoint(330.f));
+			sink->BeginFigure(start, D2D1_FIGURE_BEGIN_FILLED);
+			for (auto& to : { p2, p3, start }) {
+				sink->AddArc(D2D1::ArcSegment(to, D2D1::SizeF(r, r), 0.f, D2D1_SWEEP_DIRECTION_COUNTER_CLOCKWISE, D2D1_ARC_SIZE_SMALL));
+			}
 		}
 	}
 	else {
@@ -442,8 +451,10 @@ void ShapeNumber::makePath()
 		sink->AddLine(p3);
 		sink->AddLine(p4);
 		if (tail) sink->AddLine(tip);
-		sink->EndFigure(D2D1_FIGURE_END_CLOSED);
 	}
+	// 收尾必须在分支外面：图没 EndFigure 就 Close()，D2D 会直接报错，
+	// 整个几何体作废 —— 圆画不出来，数字又按"有底色"画成白的，序号就整个不见了
+	sink->EndFigure(D2D1_FIGURE_END_CLOSED);
 	sink->Close();
 	updateValueBtns();
 }

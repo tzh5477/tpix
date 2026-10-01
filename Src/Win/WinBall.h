@@ -32,6 +32,10 @@ private:
 	enum class Edge { Left = 0, Right = 1, Top = 2 };
 	WinBall();
 	void onCreated() override;
+	// 折叠态只有 100×5，比 Ling 默认的 800×600 最小跟踪尺寸小两个数量级。
+	// 不放开的话 applyGeometry 里的 SetWindowPos 会被系统按回 800×600：窗口左边缘
+	// 还贴在"屏幕右边减 5 像素"处，红线按 justify 排在窗口右端，整条线跑到屏幕外去了
+	void onMinMaxInfo(MINMAXINFO* mmi) override;
 	void onDown(POINT pos, bool isRight);
 	void onMove(POINT pos);
 	void onUp();

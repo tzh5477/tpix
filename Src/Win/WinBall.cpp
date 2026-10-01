@@ -120,6 +120,14 @@ void WinBall::reload()
 	ballIns->rebuildBody();
 }
 
+void WinBall::onMinMaxInfo(MINMAXINFO* mmi)
+{
+	// 同 ToolMain / ToolSub / WinPin：小窗口都得把最小跟踪尺寸放到 1，
+	// 否则 Ling 默认的 800×600 会把 SetWindowPos 撑回去
+	mmi->ptMinTrackSize.x = 1;
+	mmi->ptMinTrackSize.y = 1;
+}
+
 void WinBall::onCreated()
 {
 	// 悬浮球不能出现在自己的截图里。excludeFromCapture 是静态的 —— 本函数跑在 App 构造

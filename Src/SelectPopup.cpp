@@ -51,6 +51,15 @@ namespace
 			return pt.x >= x && pt.x < x + w && pt.y >= y && pt.y < y + h;
 		}
 	private:
+		// 列表按内容算宽高，最小的那一档（开 / 关两项）只有 120×60，
+		// 比 Ling 默认的 800×600 最小跟踪尺寸小得多。不放开的话 setSize 里的
+		// SetWindowPos 会被系统按回 800×600（WinPin 那条注释里踩的是同一处），
+		// 列表就变成屏幕上好大一块白板
+		void onMinMaxInfo(MINMAXINFO* mmi) override
+		{
+			mmi->ptMinTrackSize.x = 1;
+			mmi->ptMinTrackSize.y = 1;
+		}
 		void onCreated() override
 		{
 			body->setBg(0xFFFFFFFF);
@@ -139,11 +148,11 @@ void SelectPopup::show(Ling::WinBase* owner, Ling::Node* anchor,
 	anchorRect = RECT{ (int)(ox + anchor->x), (int)(oy + anchor->y),
 		(int)(ox + anchor->x + anchor->w), (int)(oy + anchor->y + anchor->h) };
 	popup = std::make_unique<Popup>(items, cur, std::move(onPick), fontFamily);
-	// WinBase 的 x/y 是物理像素，直接赋值；setter 收的是逻辑像素
-	popup->x = left;
-	popup->y = top;
-	popup->w = listW * dpi;
-	popup->h = listH * dpi;
+	// 必须走 setter，不能直接给 x/y/w/h 赋值：createNativeWindow 在构造里就已经按
+	// 当时还是 0 的 w/h 把 hwnd 建好了，事后改成员不会动窗口 —— ShowWindow 出来的
+	// 是个 0×0 的窗口，看着就是"点了没反应"
+	popup->setSize(listW, listH);    // setter 收逻辑像素，内部乘 dpi
+	popup->setPosition(left, top);   // 屏幕物理像素
 	popup->show();
 	ownerWin = owner;
 	movedTok = owner->onMoved.add([]() { SelectPopup::close(); });
