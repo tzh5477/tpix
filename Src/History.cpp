@@ -101,6 +101,12 @@ void History::undo()
             if (cur == canvas->shapeHover) {
                 canvas->shapeHover = nullptr;
             }
+            // 设计表里"删除 / undo 命中"这一行：selected 若指着它就清。
+            // 不清的话下一笔 createShape 会 removeUndoShape 把它真正删掉，
+            // 那之后 selected 就悬空了，再按 Delete 直接奔着野指针去
+            if (cur == canvas->selected) {
+                canvas->selected = nullptr;
+            }
             canvas->refresh();
             break;
         }
