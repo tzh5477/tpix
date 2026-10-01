@@ -108,9 +108,13 @@ void SelectPopup::show(Ling::WinBase* owner, Ling::Node* anchor,
 	const std::wstring& fontFamily)
 {
 	if (items.empty() || !owner || !anchor) return;
+	// Node 的 x/y 是窗口内坐标，弹层要的是屏幕坐标 —— 宿主的窗口位置得先加上去。
+	// 宿主贴着屏幕边时这一步是必须的（悬浮球就贴在边上）
+	const auto ox = (float)owner->x;
+	const auto oy = (float)owner->y;
 	// 同一个按钮再点一次就是收起。比对矩形而不是指针：宿主重建按钮后指针就野了
-	if (popup && anchorRect.left == (int)anchor->x && anchorRect.top == (int)anchor->y
-		&& anchorRect.right == (int)(anchor->x + anchor->w)) {
+	if (popup && anchorRect.left == (int)(ox + anchor->x) && anchorRect.top == (int)(oy + anchor->y)
+		&& anchorRect.right == (int)(ox + anchor->x + anchor->w)) {
 		close();
 		return;
 	}
@@ -122,16 +126,17 @@ void SelectPopup::show(Ling::WinBase* owner, Ling::Node* anchor,
 	auto listH = std::min(listMaxH, itemH * (float)items.size());
 	// 默认往下弹，底下放不下就翻到按钮上方。用按钮所在显示器的工作区判断，
 	// 而不是虚拟桌面整体 —— 副屏在左上时后者会把翻转判错
-	POINT anchorPt{ (int)(anchor->x + anchor->w / 2.f), (int)(anchor->y + anchor->h / 2.f) };
+	POINT anchorPt{ (int)(ox + anchor->x + anchor->w / 2.f), (int)(oy + anchor->y + anchor->h / 2.f) };
 	MONITORINFO mi{ sizeof(mi) };
 	GetMonitorInfo(MonitorFromPoint(anchorPt, MONITOR_DEFAULTTONEAREST), &mi);
-	auto top = (int)(anchor->y + anchor->h);
-	if (top + (int)(listH * dpi) > mi.rcWork.bottom) top = (int)(anchor->y - listH * dpi);
-	auto left = (int)anchor->x;
+	auto top = (int)(oy + anchor->y + anchor->h);
+	if (top + (int)(listH * dpi) > mi.rcWork.bottom) top = (int)(oy + anchor->y - listH * dpi);
+	auto left = (int)(ox + anchor->x);
 	if (left + (int)(listW * dpi) > mi.rcWork.right) left = mi.rcWork.right - (int)(listW * dpi);
+	if (left < mi.rcWork.left) left = mi.rcWork.left;
 
-	anchorRect = RECT{ (int)anchor->x, (int)anchor->y,
-		(int)(anchor->x + anchor->w), (int)(anchor->y + anchor->h) };
+	anchorRect = RECT{ (int)(ox + anchor->x), (int)(oy + anchor->y),
+		(int)(ox + anchor->x + anchor->w), (int)(oy + anchor->y + anchor->h) };
 	popup = std::make_unique<Popup>(items, cur, std::move(onPick), fontFamily);
 	// WinBase 的 x/y 是物理像素，直接赋值；setter 收的是逻辑像素
 	popup->x = left;

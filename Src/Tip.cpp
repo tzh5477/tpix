@@ -7,6 +7,30 @@ namespace {
 	// 气泡窗口尺寸减去文字尺寸剩下的那圈（边框 + 内边距）。
 	// 它只跟主题、边框有关，跟文字无关，整个进程量一次就够。-1 表示还没量过
 	SIZE tipPadding{ -1, -1 };
+
+	// 把气泡摆到锚点旁边。锚点在气泡的哪条边（中点）上由 side 决定
+	void placeBySide(const Tip::Side side, const float ax, const float ay,
+		const int cw, const int ch, int& px, int& py)
+	{
+		switch (side) {
+		case Tip::Side::Below:
+			px = static_cast<int>(ax) - cw / 2;
+			py = static_cast<int>(ay);
+			break;
+		case Tip::Side::Left:
+			px = static_cast<int>(ax) - cw;
+			py = static_cast<int>(ay) - ch / 2;
+			break;
+		case Tip::Side::Right:
+			px = static_cast<int>(ax);
+			py = static_cast<int>(ay) - ch / 2;
+			break;
+		default:   // Above
+			px = static_cast<int>(ax) - cw / 2;
+			py = static_cast<int>(ay) - ch;
+			break;
+		}
+	}
 }
 
 Tip::Tip(Ling::WinBase* win) :win(win)
@@ -67,12 +91,14 @@ void Tip::showAbove(Ling::Node* owner, const std::wstring& text)
 	showAt(owner, sx, sy, text);
 }
 
-void Tip::showAt(Ling::Node* owner, float screenX, float screenY, const std::wstring& text)
+void Tip::showAt(Ling::Node* owner, float screenX, float screenY, const std::wstring& text,
+	Tip::Side side)
 {
 	if (this->owner == owner) {
 		// 同一个归属：只更新内容与位置。已经显示出来的就立刻跟上（滑块提示跟着鼠标走靠这条），
 		// 还在等那 1 秒的则保持计时不重置，到点后按最新位置显示。
 		this->text = text;
+		this->side = side;
 		anchorX = screenX;
 		anchorY = screenY;
 		if (visible) showNow();
@@ -82,6 +108,7 @@ void Tip::showAt(Ling::Node* owner, float screenX, float screenY, const std::wst
 	hide();
 	this->owner = owner;
 	this->text = text;
+	this->side = side;
 	anchorX = screenX;
 	anchorY = screenY;
 	win->setTimer(delayMs, timerId);
@@ -181,8 +208,8 @@ void Tip::showNow()
 	SendMessage(tipHwnd, TTM_UPDATETIPTEXTW, 0, (LPARAM)&ti);
 	// 先按自己量的尺寸摆到位，再激活，省掉“先显示再挠”那一下拖动
 	auto size = measure();
-	auto px = static_cast<int>(anchorX) - size.cx / 2;
-	auto py = static_cast<int>(anchorY) - size.cy;
+	int px{ 0 }, py{ 0 };
+	placeBySide(side, anchorX, anchorY, size.cx, size.cy, px, py);
 	SendMessage(tipHwnd, TTM_TRACKPOSITION, 0, MAKELPARAM(px, py));
 	if (!visible) {
 		SendMessage(tipHwnd, TTM_ACTIVATE, TRUE, 0);
@@ -194,8 +221,8 @@ void Tip::showNow()
 	// 自己量的和控件实际用的尺寸可能差一两像素，显示出来后按真实尺寸校正一次
 	RECT rc{};
 	GetWindowRect(tipHwnd, &rc);
-	auto realX = static_cast<int>(anchorX) - (rc.right - rc.left) / 2;
-	auto realY = static_cast<int>(anchorY) - (rc.bottom - rc.top);
+	int realX{ 0 }, realY{ 0 };
+	placeBySide(side, anchorX, anchorY, rc.right - rc.left, rc.bottom - rc.top, realX, realY);
 	if (realX != px || realY != py) {
 		SendMessage(tipHwnd, TTM_TRACKPOSITION, 0, MAKELPARAM(realX, realY));
 	}

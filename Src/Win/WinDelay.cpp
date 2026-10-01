@@ -10,8 +10,8 @@ namespace {
 	constexpr UINT tickId{ 100 };
 }
 
-WinDelay::WinDelay(int seconds)
-	: Ling::WinBase(), left(seconds)
+WinDelay::WinDelay(int seconds, const std::wstring& enter)
+	: Ling::WinBase(), left(seconds), enter(enter)
 {
 	// 关窗按钮的点击栈上不能同步 reset（use-after-free），推迟到下一轮消息循环
 	onDestroy.add([]() {
@@ -30,10 +30,10 @@ WinDelay::~WinDelay()
 {
 }
 
-void WinDelay::start(int seconds)
+void WinDelay::start(int seconds, const std::wstring& enter)
 {
 	if (winDelay) return;
-	winDelay.reset(new WinDelay(seconds));
+	winDelay.reset(new WinDelay(seconds, enter));
 }
 
 void WinDelay::dispose()
@@ -96,5 +96,5 @@ void WinDelay::finish(bool startCap)
 	// 先藏后关：截图紧跟着就取屏，DestroyWindow 是同步的，但合成器那一帧可能还在屏上
 	hide();
 	close();
-	if (startCap) WinCap::initNow();
+	if (startCap) WinCap::initNow(enter);
 }

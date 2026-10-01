@@ -59,20 +59,20 @@ WinCap::~WinCap()
 {
 }
 
-void WinCap::init()
+void WinCap::init(const std::wstring& enter)
 {
     // 双击托盘图标会连着来两下，已经开着就不再建第二个
     if (winCap) return;
     // 延时截图：倒计时那几秒里屏幕还得是活的（摆菜单、等悬停态），
     // 建窗就取屏，所以只能让倒计时先顶着，数完再回来
     if (Setting::get()->getCapDelay() > 0) {
-        WinDelay::start(Setting::get()->getCapDelay());
+        WinDelay::start(Setting::get()->getCapDelay(), enter);
         return;
     }
-    initNow();
+    initNow(enter);
 }
 
-void WinCap::initNow()
+void WinCap::initNow(const std::wstring& enter)
 {
     if (winCap) return;
     // 指针快照必须在建窗之前取：窗口一出来指针就换成 tpix 自己的了，
@@ -82,6 +82,7 @@ void WinCap::initNow()
     auto prev = Util::snapshotForeground();
     auto ptr = new WinCap();
     ptr->prevForeground = prev;
+    ptr->enterArg = enter;
     winCap.reset(ptr);
 	ptr->cutMask = std::make_unique<CutMask>(ptr);
     ptr->createNativeWindow(WS_EX_TOOLWINDOW | WS_EX_TOPMOST, WS_POPUP);//WS_EX_TOPMOST
@@ -587,10 +588,14 @@ void WinCap::relayoutToolCap()
 
 bool WinCap::enterByArg()
 {
-    auto& args = Ling::App::get()->args;
-    auto it = args.find(L"--enter");
-    if (it == args.end()) return false;
-    auto& val = it->second;
+    // 悬浮球上点的一键图标走这里，命令行 --enter=xxx 也走这里；前者优先
+    auto val = enterArg;
+    if (val.empty()) {
+        auto& args = Ling::App::get()->args;
+        auto it = args.find(L"--enter");
+        if (it == args.end()) return false;
+        val = it->second;
+    }
     // 下面这几条路本来都是从 ToolCap 的按钮进的，start* 会检查选区是不是已经定下来了
     stage = CapStage::Adjust;
     refresh();      //收掉放大镜：这几条路都是马上要换阶段或者弹窗，屏幕上不能留着它

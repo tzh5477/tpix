@@ -6,6 +6,7 @@
 #include "WinSetting.h"
 #include "WinSettingCommon.h"
 #include "WinSettingShortcut.h"
+#include "WinSettingBall.h"
 #include "WinSettingAbout.h"
 
 std::unique_ptr<WinSetting> winSetting;
@@ -70,6 +71,9 @@ void WinSetting::makeContent(int index)
 	else if (index == 1) {
 		content = scroller->makeChild<WinSettingShortcut>();
 	}
+	else if (index == 2) {
+		content = scroller->makeChild<WinSettingBall>();
+	}
 	else {
 		content = scroller->makeChild<WinSettingAbout>();
 	}
@@ -108,7 +112,7 @@ void WinSetting::onCreated()
 }
 void WinSetting::initMenuItems(Ling::Node* menuBox)
 {
-	for (size_t i = 0; i < 3; i++)
+	for (size_t i = 0; i < 4; i++)
 	{
 		auto menuItem = menuBox->makeChild<Ling::Button>();
 		menuItem->setFontSize(14.f);
@@ -127,6 +131,9 @@ void WinSetting::initMenuItems(Ling::Node* menuBox)
 				menuItem->setText(Lang::get(L"setting.shortcut"));
 			}
 			else if (i == 2) {
+				menuItem->setText(Lang::get(L"setting.ball.title"));
+			}
+			else if (i == 3) {
 				menuItem->setText(Lang::get(L"setting.about"));
 			}
 		}
@@ -168,7 +175,9 @@ LRESULT WinSetting::onHitTest(const POINT pos)
 	if (pt.x > 0 && pt.y > 0 && pt.x < w - 32 * dpi && pt.y < 40 * dpi) {
 		return HTCAPTION;
 	}
-	if (pt.x > 0 && pt.y > 40*4*dpi && pt.x < 120 * dpi && pt.y < h) {
+	// 菜单区：从顶部标题栏下沿（40）起，每项 40 高。这里也当拖拽区用。
+	// 菜单加到 4 项之后这个上界要跟着走，不然第 4 项会被当成标题栏
+	if (pt.x > 0 && pt.y > 40*5*dpi && pt.x < 120 * dpi && pt.y < h) {
 		return HTCAPTION;
 	}
 	return HTCLIENT;

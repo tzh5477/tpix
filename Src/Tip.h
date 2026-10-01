@@ -11,15 +11,19 @@
 class Tip
 {
 public:
+	// 气泡挂在锚点的哪一侧。默认 Above —— 往上弹是桌面软件的常规做法，
+	// 但锚点贴着屏幕上边时弹出去就看不见了（悬浮球贴顶边就是这种），所以得能改
+	enum class Side { Above, Below, Left, Right };
 	Tip(Ling::WinBase* win);
 	~Tip();
 	// 最省事的接法：鼠标进按钮就排上提示，离开就收。文字固定不变。
 	void bind(Ling::Button* btn, const std::wstring& text);
 	// 提示的底边中点贴在 owner 上边缘处，位置由 owner 的布局结果算，调用方不用管坐标。
 	void showAbove(Ling::Node* owner, const std::wstring& text);
-	// 自己指定锚点（屏幕坐标，物理像素）：提示的底边中点对齐到 (screenX, screenY)。
+	// 自己指定锚点（屏幕坐标，物理像素）：气泡按 side 摆在锚点的哪一侧。
 	// 同一个 owner 反复调用可以让提示跟着鼠标走（滑块的数值提示就是这么做的）。
-	void showAt(Ling::Node* owner, float screenX, float screenY, const std::wstring& text);
+	void showAt(Ling::Node* owner, float screenX, float screenY, const std::wstring& text,
+		Side side = Side::Above);
 	// 只有当前提示确实属于 owner 时才隐藏。
 	// 必须带上 owner：多个控件的 hover 回调触发顺序不固定，
 	// 无条件 hide() 会把别人刚显示出来的提示误关掉。
@@ -48,6 +52,7 @@ private:
 	Ling::Node* owner{ nullptr };
 	std::wstring text;
 	float anchorX{ 0.f }, anchorY{ 0.f };
+	Side side{ Side::Above };
 	// visible: 提示已经在屏上；否则要么没提示，要么正在等那 1 秒
 	bool visible{ false };
 	winrt::event_token timerTok{};

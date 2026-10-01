@@ -206,11 +206,36 @@ void PinSource::fromColor(const std::wstring& color)
 }
 
 namespace {
-	// 依次贴历史截图的记账：连按到第几张、上次按是什么时候、上一张贴在了哪
-	int pinCursor{ 0 };
-	long long lastPinAt{ 0 };
-	int lastPinX{ 0 }, lastPinY{ 0 };
-	bool hasLastPin{ false };
+	// 「依次贴」的记账：连着贴到第几张、上次是什么时候、上一张贴在了哪。
+	// 截图历史与剪贴板历史各一份，两条线互不干扰
+	struct PinRun
+	{
+		// 下一条取第几张（1 起数）。停手超过 2 秒就当是新的一轮，从第二新那张开始
+		int nextIndex(const int count)
+		{
+			auto now = GetTickCount64();
+			cursor = (now - lastAt > 2000) ? 1 : cursor + 1;
+			lastAt = (long long)now;
+			if (cursor > count) cursor = count;
+			return cursor;
+		}
+		// 连着贴的那几张往右下错开一点，不偏移的话会严丝合缝叠在一起，看不出贴了几张
+		void settle(int& x, int& y)
+		{
+			if (hasLast) {
+				x = lastX + 24;
+				y = lastY + 24;
+			}
+			hasLast = true;
+			lastX = x;
+			lastY = y;
+		}
+		int cursor{ 0 };
+		long long lastAt{ 0 };
+		int lastX{ 0 }, lastY{ 0 };
+		bool hasLast{ false };
+	};
+	PinRun shotRun, clipRun;
 }
 
 void PinSource::pinNextOlder()
@@ -219,23 +244,31 @@ void PinSource::pinNextOlder()
 	if (!shots) return;
 	auto list = shots->list(ShotHistory::Source::Shot);
 	if (list.empty()) return;
-	auto now = GetTickCount64();
-	// 停手超过 2 秒就当是新的一轮：从第二新那张开始
-	pinCursor = (now - lastPinAt > 2000) ? 1 : pinCursor + 1;
-	lastPinAt = (long long)now;
-	if (pinCursor > (int)list.size()) pinCursor = (int)list.size();
 	std::vector<BYTE> data;
 	int w{ 0 }, h{ 0 };
-	if (!shots->loadImage(list[pinCursor - 1], data, w, h)) return;
+	if (!shots->loadImage(list[shotRun.nextIndex((int)list.size()) - 1], data, w, h)) return;
 	int x{ 0 }, y{ 0 };
 	placeCenter(w, h, x, y);
-	// 连着贴的那几张往右下错开一点，不偏移的话会严丝合缝叠在一起，看不出贴了几张
-	if (hasLastPin) {
-		x = lastPinX + 24;
-		y = lastPinY + 24;
+	shotRun.settle(x, y);
+	WinPin::initFromData(x, y, w, h, data);
+}
+
+void PinSource::pinNextOlderClip()
+{
+	auto shots = ShotHistory::get();
+	if (!shots) return;
+	auto list = shots->list(ShotHistory::Source::Clipboard);
+	if (list.empty()) return;
+	auto& item = list[clipRun.nextIndex((int)list.size()) - 1];
+	int x{ 0 }, y{ 0 };
+	std::vector<BYTE> data;
+	int w{ 0 }, h{ 0 };
+	if (item.isText) {
+		// 历史里的文本条目存的是字不是像素，跟"从剪贴板贴图"贴文本时一样现渲染一张
+		if (!renderText(item.text, data, w, h)) return;
 	}
-	hasLastPin = true;
-	lastPinX = x;
-	lastPinY = y;
+	else if (!shots->loadImage(item, data, w, h)) return;
+	placeCenter(w, h, x, y);
+	clipRun.settle(x, y);
 	WinPin::initFromData(x, y, w, h, data);
 }

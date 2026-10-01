@@ -12,11 +12,14 @@ private:
 	WinSetting();
 	void initMenuItems(Ling::Node* menuBox);
 	void onCreated() override;
+	void makeContent(int index);
 	void onMenuItemClick(Ling::Button* menu);
 	LRESULT onHitTest(const POINT pos) override;
 private:
 	std::vector<Ling::Button*> menus;
 	int menuIndex{ 0 };
+	// 内容区外面那层滚动容器。窗口高度被夹进工作区后放不下的行靠它滚出来
+	Ling::ScrollerBox* scroller{ nullptr };
 	Ling::Node* content{nullptr};
 };
 

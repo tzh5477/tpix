@@ -20,4 +20,6 @@ public:
 	static void fromColor(const std::wstring& color);
 	// 从截图历史里贴图：连着按 = 依次把第 2、第 3… 新的那张贴出来，停手两秒重新从第 2 张数
 	static void pinNextOlder();
+	// 同上，换成剪贴板历史。文本条目现渲染成一张图贴出来（历史里存的是字，不是像素）
+	static void pinNextOlderClip();
 };

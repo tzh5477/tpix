@@ -12,9 +12,11 @@ class WinCap:public Ling::WinBase
 {
 public:
 	~WinCap();
-	// 进截图。配了延时就先走倒计时，数完由 WinDelay 回调下面这个
-	static void init();
-	static void initNow();
+	// 进截图。配了延时就先走倒计时，数完由 WinDelay 回调下面这个。
+	// enter 是"框完选区直接走哪条路"（long / video / ocr / qr / pin），空串表示照常出工具条 ——
+	// 悬浮球上那些一键图标点的就是它，命令行 --enter=xxx 走的是同一条路
+	static void init(const std::wstring& enter = L"");
+	static void initNow(const std::wstring& enter = L"");
 	static WinCap* get();
 	// 退出流程里调：窗口对象是文件级静态变量，交给静态析构就在 CoUninitialize 之后了
 	static void dispose();
@@ -106,6 +108,9 @@ private:
 	std::unique_ptr<CapVideo> capVideo;
 	Microsoft::WRL::ComPtr<ID2D1Bitmap1> screenImg,pixImg;
 	D2D1_RECT_F pixSrcRect{};
+	// 本次进截图要直接走的阶段（悬浮球的一键图标 / 命令行 --enter）。
+	// 空串表示照常拖框然后出工具条。框选在 onUp 里才结束，所以得先存下来
+	std::wstring enterArg;
 	// 铺满窗口的画布，走 swap chain 双缓冲：底图、蒙版、放大镜每帧都重画，
 	// 单缓冲会让合成器采到"擦干净还没画完"的中间态
 	Ling::Canvas* canvas{ nullptr };
