@@ -20,7 +20,10 @@ WinDelay::WinDelay(int seconds)
 	setTitle(Lang::get(L"delay.title"));
 	setSize(200.f, 140.f);
 	setCenter();
-	createNativeWindow(WS_EX_TOPMOST | WS_EX_TOOLWINDOW, WS_POPUP);
+	// WS_EX_NOACTIVATE：这个窗口不能抢焦点。延时截图要的就是"挡它几秒钟让我去摆画面" ——
+	// 这期间用户多半正摊着一个右键菜单或下拉菜单，一旦激活过来，焦点转移的那一刻菜单就收起了，
+	// 摆好的画面跟着没了，延时也就白等了。代价是本窗口收不到键盘（见 onCreated 里的 Esc 兜底）
+	createNativeWindow(WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, WS_POPUP);
 }
 
 WinDelay::~WinDelay()
@@ -57,22 +60,28 @@ void WinDelay::onCreated()
 	tip->setFontSize(12.f);
 	tip->setText(Lang::get(L"delay.cancel"));
 
-	onKeyDown.add([this](UINT key) {
-		if (key == VK_ESCAPE) finish(false);
-	});
-	// 点一下也算取消：热键触发时前台还在别的进程，键盘未必落得到这个窗口上
+	// 拿了 NOACTIVATE 就等于永远没有焦点，按键事件收不到，Esc 只能靠 tick() 定时去问。
+	// 顺带的好消息也正在这里：焦点不转移，用户摊开的菜单才不会被引走。
+	// 另外点一下也算取消 —— 热键触发时前台还在别的进程，键盘未必落得到这个窗口上
 	onMouseDown.add([this](POINT, bool) { finish(false); });
 	onTimer.add([this](UINT id) {
 		if (id == tickId) tick();
 	});
+	// "上次查询之后按过"这个位是按线程记的：按热键之前用户可能刚用 Esc 关掉一层菜单，
+	// 不清掉的话第一次 tick 就会把它误判成取消。这里先空读一次
+	GetAsyncKeyState(VK_ESCAPE);
 	setTimer(1000, tickId);
 	show();
-	// 上面 show 只做了 ShowWindow，不抢焦点的话 Esc 会被别的窗口吃掉
-	SetFocus(hwnd);
 }
 
 void WinDelay::tick()
 {
+	// 取 & 1（上次查询之后按过）而不是 & 0x8000（此刻按住）：倒计时一秒才走一次，
+	// 只看按住的话，一次寻常的短按几乎必然落在两次 tick 之间，取消键就形同虚设了
+	if (GetAsyncKeyState(VK_ESCAPE) & 1) {
+		finish(false);
+		return;
+	}
 	--left;
 	if (left <= 0) {
 		finish(true);
