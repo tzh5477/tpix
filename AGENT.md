@@ -102,19 +102,39 @@ Src/
   悬浮球、剪贴板贴图、三个屏幕辅助层）
 - refactor(shape)（作者主导）：Canvas / CanvasHost 抽出画布宿主，ShapeRectBase / ShapeLineBase
   两个中间基类，马赛克与擦除拆成四变体；**Shape 层此后只认 Canvas，不认 WinPin**
+- E2-1：手绘（自由多边形）区域 —— `CutMask` 上加一条 poly 通路（`startPoly/addPolyPoint/endPoly`），
+  `maskRect` 仍是多边形的外接矩形（工具条布局 / 长截图 / 录屏 / 贴图一概不用改），
+  形状只在导出时生效：`getCutImg` 用 `PushLayer` + 偶奇填充路径做遮罩，
+  `getCutPixels` 走 `getCutImg()`，所以复制 / 存盘 / OCR / 扫码一并跟着生效
+- E2-2：固定尺寸区域 —— `Setting::fixedSizePresets()`，按下即成框（单击也出图），
+  越界时推原点而不是缩尺寸
+- E2-3：多窗口与多级菜单 —— 根因是延时窗口 `SetFocus` 抢焦点把菜单点没了；
+  改成 `WS_EX_NOACTIVATE`（代价是没有键盘，Esc 改成轮询 `GetAsyncKeyState(VK_ESCAPE) & 1`，
+  取 `& 1` 而非 `& 0x8000`：倒计时一秒才走一次 tick，只看按住的话一次短按必然落在两次 tick 之间）
+- G1（部分）：**录制暂停 + 鼠标点击可视化**。摄像头画中画未做 ——
+  它要另起一条 MediaFoundation 摄像头采集管线，与桌面复制是两回事，单独评估
+- G2：按键与鼠标操作录制 —— 新增 `KeyFx.hpp`（组合键用 `chord` 定格，取"此刻还按着的"会被
+  最后松开的修饰键冲掉）、`ClickFx::Halo`（鼠标移动高亮）；
+  MP4 与 GIF 两条管线共用这两份 inline 头，避免同一套逻辑在两处各自长歪
 
 新增的快捷键（贴图窗口内）：空格 = 动图播放 / 暂停；Ctrl+T = 缩略图模式；
 Alt+方向 = 贴到屏幕边；Ctrl+Alt+左右 = 搬到相邻显示器。
 
 ### 待做（按此顺序推进，D2 放最后）
 
-1. **E2** 手绘（自由多边形）区域 / 固定尺寸区域 / 多窗口与多级菜单
-2. **G1** 摄像头画中画 / 鼠标点击可视化 / 录制暂停
-3. **G2** 按键与鼠标操作录制（PixPin「动作录制」）
-4. **H1 后半** 配置导入导出
-5. **H3 后半** 自动粘贴到输入焦点（剪贴板历史已有）
-6. **C5 余项** Win+拖拽快速贴图（需全局键盘钩子 + 全屏拖放层，风险较高，单独评估）
-7. **D2** 表格识别 —— **最后做**。理由见下。
+1. ✅ ~~**E2** 手绘区域 / 固定尺寸区域 / 多窗口与多级菜单~~（已完成）
+2. ✅ ~~**G1** 录制暂停 + 鼠标点击可视化~~（已完成；**摄像头画中画未做**）
+3. ✅ ~~**G2** 按键与鼠标操作录制~~（已完成）
+4. **G1 余项** 摄像头画中画（需另起 MediaFoundation 摄像头采集管线，单独评估）
+5. **H1 后半** 配置导入导出
+6. **H3 后半** 自动粘贴到输入焦点（剪贴板历史已有）
+7. **C5 余项** Win+拖拽快速贴图（需全局键盘钩子 + 全屏拖放层，风险较高，单独评估）
+8. **D2** 表格识别 —— **最后做**。理由见下。
+
+> **D2 的技术选型（作者裁决）**：用 **RapidTable + ONNX Runtime**，不是上面那条
+> 「基于 `OcrLine::Words()` 的 BoundingRect 切表」的轻量路子。这意味着要引入 ORT
+> 运行时与 10–15MB 量级的模型文件，打包体积会明显变大（1MB 小巧定位本轮已明确忽略）。
+> 落地时再定模型获取方式（随包 / 首次启动下载）。
 
 > **D2 为什么排最后**：当前内置 OCR 走的是 `Windows.Media.Ocr`（系统自带、零依赖），
 > 而不是文档 7.3 里建议的 RapidOCR/ONNX Runtime。若沿用这条路，表格识别可以基于
@@ -143,5 +163,27 @@ cmd /c "call \"D:\ProgramFiles\Microsoft Visual Studio\2022\BuildTools\VC\Auxili
 - 产出在 `Src\x64\Release\`。
 
 > 注：AI 会话这一侧的工具策略仍会把 `MSBuild.exe` / `cmd.exe` 判为 LOLBin 拦截，
-> 因此上面的命令由**作者执行**；会话内只能做静态审查。
-> 静态审查撑不住的地方（链接期、运行期）务必在真机上跑一遍再收工。
+> 所以完整构建只能由**作者执行**。链接期与运行期的问题务必在真机上跑一遍再收工。
+
+### 7.1 会话内自证：cl.exe /Zs 语法检查
+
+`cl.exe` 本身不在拦截名单里，可以绕开 `cmd.exe` 直接调，做**只过前端**的语法 / 语义检查
+（`/Zs` 不生成 obj，不留任何产物）。这一层能挡掉绝大多数低级错误（拼错的成员名、
+参数类型不匹配、模板实例化失败），比纯静态审查可靠得多。
+
+```bash
+export MSYS_NO_PATHCONV=1   # 关键：否则 Git Bash 会把 /nologo 这类开关当成路径改写
+MSVC="D:/ProgramFiles/Microsoft Visual Studio/2022/BuildTools/VC/Tools/MSVC/14.44.35207"
+SDK="C:/Program Files (x86)/Windows Kits/10/Include/10.0.26100.0"
+INCLUDE="$MSVC/include;$MSVC/atlmfc/include;$SDK/ucrt;$SDK/um;$SDK/shared;$SDK/winrt;$SDK/cppwinrt;D:/sdk/gifski;D:/project/Ling;<仓库>/Src" \
+"$MSVC/bin/Hostx64/x64/cl.exe" /nologo /Zs /std:c++20 /EHsc /utf-8 \
+  /DNOMINMAX /DWIN32_LEAN_AND_MEAN /DWIN32 /DNDEBUG /D_CONSOLE /D_UNICODE /DUNICODE /D_WIN64 \
+  /Tp"Src/Win/CapVideo.cpp"
+```
+
+- `/Tp` 是必须的：直接给 `.hpp` 会被当成头文件跳过。
+- `NOMINMAX` / `WIN32_LEAN_AND_MEAN` 缺了会报一堆 `C2589 "(":"::"右边的非法标记`
+  （`std::max` 撞上 minwindef 的宏），那是命令行没对齐工程的 `PreprocessorDefinitions`，不是代码问题。
+- `atlmfc/include` 要给，否则 `atlbase.h` 找不到。
+- 期末版本号（14.44.35207）与 SDK 版本号会随机器变，跑之前先 `ls` 确认。
+- 头文件单独查：`/Tp"Src/Win/KeyFx.hpp"`（不依赖 pch 的那些可以直接过）。
