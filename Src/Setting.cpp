@@ -4,13 +4,46 @@
 #include "Util.h"
 #include "Lang.h"
 #include "Win/WinCap.h"
+#include "Win/WinHistory.h"
+#include "Win/WinBall.h"
+#include "Win/WinOverlay.h"
 #include "PinSource.h"
 #include "App.h"
 
 namespace {
     std::unique_ptr<Setting> setting;
+    // 热键 id 挂在 Ling 的消息窗口上，是全局的；与托盘菜单 id（163 起）、
+    // 各窗口自己的定时器 id 不是一套命名空间，互不干扰
     constexpr int capShortcutMsgId{ 100 };
     constexpr int pinLastMsgId{ 101 };
+    constexpr int historyShortcutMsgId{ 102 };
+    constexpr int ballShortcutMsgId{ 103 };
+    constexpr int pinClipShortcutMsgId{ 104 };
+    constexpr int rulerShortcutMsgId{ 105 };
+    constexpr int crosshairShortcutMsgId{ 106 };
+    constexpr int focusShortcutMsgId{ 107 };
+
+    struct ShortcutDef { std::wstring_view type; int msgId; std::wstring_view def; };
+    // 一张表管住"配置键名 → 消息 id → 默认组合"，加一个可配快捷键的动作只改这里一行。
+    // def 留空表示"默认不占用"：这类动作不是人人都用，占掉一个组合反而碍事，用户想要自己设
+    const ShortcutDef shortcutDefs[]{
+        { L"cap",       capShortcutMsgId,       L"Ctrl+Alt+A" },
+        { L"pinLast",   pinLastMsgId,           L"Ctrl+Alt+Z" },
+        { L"history",   historyShortcutMsgId,   L"Ctrl+Alt+H" },
+        { L"ball",      ballShortcutMsgId,      L"" },
+        { L"pinClip",   pinClipShortcutMsgId,   L"" },
+        { L"ruler",     rulerShortcutMsgId,     L"" },
+        { L"crosshair", crosshairShortcutMsgId, L"" },
+        { L"focus",     focusShortcutMsgId,     L"" },
+    };
+
+    const ShortcutDef* findShortcutDef(const std::wstring& type)
+    {
+        for (auto& def : shortcutDefs) {
+            if (def.type == type) return &def;
+        }
+        return nullptr;
+    }
     // 配置文件的默认内容。空文件、坏 JSON、缺键都拿它兜底，所以这里列出的每一项
     // 都是代码里会直接按名字取的（见 getLang / getAutoStart / initShortcutKeys）
     constexpr std::wstring_view defaultConfig{ LR"""({"common":{"autoStart":false,"language":"zh-CN"},"shortcutKey":{"cap":"Ctrl+Alt+A","pinLast":"Ctrl+Alt+Z"}})""" };
@@ -80,10 +113,11 @@ void Setting::setShortcutKey(const std::wstring& type, const std::vector<std::ws
     auto shortcutKey = configObj.GetNamedObject(L"shortcutKey");
     shortcutKey.SetNamedValue(type, JsonValue::CreateStringValue(str));
     auto app = Ling::App::get();
-    // 老配置里可能还没有 pinLast 这一项，getShortcutKey 返回空串时不能把 cap 的注册顶掉
-    auto msgId = (type == L"pinLast") ? pinLastMsgId : capShortcutMsgId;
-    app->unRegHotKey(msgId);
-    app->regHotKey(str, msgId);
+    auto def = findShortcutDef(type);
+    if (!def) return;
+    // 清空就是不占这个组合了：只撤注册，不注册空的
+    app->unRegHotKey(def->msgId);
+    if (!str.empty()) app->regHotKey(str, def->msgId);
     save();
 }
 
@@ -449,21 +483,41 @@ void Setting::setUpdateCheckDay(long long day)
 void Setting::initShortcutKeys()
 {
     auto lingApp = Ling::App::get();
-    // 取不到就用默认的那个组合：热键注册不上顶多是快捷键不好用，不该让程序起不来
-    std::wstring capStr{ getShortcutKey(L"cap") };
-    if (capStr.empty()) capStr = L"Ctrl+Alt+A";
-    lingApp->regHotKey(capStr, capShortcutMsgId);
-    // 依次贴历史截图：连按一次多贴一张更早的，见 PinSource::pinNextOlder
-    std::wstring pinStr{ getShortcutKey(L"pinLast") };
-    if (pinStr.empty()) pinStr = L"Ctrl+Alt+Z";
-    lingApp->regHotKey(pinStr, pinLastMsgId);
+    for (auto& def : shortcutDefs) {
+        // 取不到就用默认的那个组合：热键注册不上顶多是快捷键不好用，不该让程序起不来
+        std::wstring str{ getShortcutKey(std::wstring{ def.type }) };
+        if (str.empty()) str = std::wstring{ def.def };
+        if (str.empty()) continue;   // 这一项既没配也没有默认，等于关着
+        lingApp->regHotKey(str, def.msgId);
+    }
 
     lingApp->onHotKey.add([this](UINT msg) {
-        if (msg == capShortcutMsgId) {
+        switch (msg) {
+        case capShortcutMsgId:
             WinCap::init();
-        }
-        else if (msg == pinLastMsgId) {
+            break;
+        case pinLastMsgId:
+            // 依次贴历史截图：连按一次多贴一张更早的，见 PinSource::pinNextOlder
             PinSource::pinNextOlder();
+            break;
+        case historyShortcutMsgId:
+            WinHistory::init();
+            break;
+        case ballShortcutMsgId:
+            WinBall::toggle();
+            break;
+        case pinClipShortcutMsgId:
+            PinSource::fromClipboard();
+            break;
+        case rulerShortcutMsgId:
+            WinOverlay::toggle(OverlayMode::Ruler);
+            break;
+        case crosshairShortcutMsgId:
+            WinOverlay::toggle(OverlayMode::Crosshair);
+            break;
+        case focusShortcutMsgId:
+            WinOverlay::toggle(OverlayMode::Focus);
+            break;
         }
     });
     lingApp->onSecondInstance.add([this]() {

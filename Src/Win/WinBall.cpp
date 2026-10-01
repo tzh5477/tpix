@@ -86,6 +86,18 @@ bool WinBall::hasBall()
 	return ballIns != nullptr;
 }
 
+void WinBall::toggle()
+{
+	if (hasBall()) {
+		Setting::get()->setToolFlag(L"ball", L"show", false);
+		dispose();
+	}
+	else {
+		Setting::get()->setToolFlag(L"ball", L"show", true);
+		init();
+	}
+}
+
 void WinBall::onCreated()
 {
 	canvas = body->makeChild<Ling::Canvas>();

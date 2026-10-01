@@ -13,6 +13,9 @@ public:
 	static void init();
 	static void dispose();
 	static bool hasBall();
+	// 开关：开着就收掉并记住"关"，关着就建出来。托盘菜单与全局快捷键共用这一份，
+	// 免得两处各自写一遍、将来改了一边忘了另一边
+	static void toggle();
 	// 拖到球上的文件，由 .cpp 里接管的那个窗口过程转进来
 	void onDropFiles(HDROP drop);
 private:

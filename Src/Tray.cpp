@@ -90,14 +90,7 @@ void Tray::onTrayRightClick()
 	}
 	else if (menuId == ballMsg)
 	{
-		if (WinBall::hasBall()) {
-			Setting::get()->setToolFlag(L"ball", L"show", false);
-			WinBall::dispose();
-		}
-		else {
-			Setting::get()->setToolFlag(L"ball", L"show", true);
-			WinBall::init();
-		}
+		WinBall::toggle();
 	}
 	else if (menuId == rulerMsg)
 	{
