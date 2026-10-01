@@ -78,7 +78,10 @@ void WinCap::initNow()
     // 指针快照必须在建窗之前取：窗口一出来指针就换成 tpix 自己的了，
     // 那时再取，截到的是我们的箭头而不是用户当时指着的那个
     Util::snapshotCursor();
+    // 前台窗口同理：建窗之后前台就是 tpix，"截图之前用户在用谁"再也问不出来了
+    auto prev = Util::snapshotForeground();
     auto ptr = new WinCap();
+    ptr->prevForeground = prev;
     winCap.reset(ptr);
 	ptr->cutMask = std::make_unique<CutMask>(ptr);
     ptr->createNativeWindow(WS_EX_TOOLWINDOW | WS_EX_TOPMOST, WS_POPUP);//WS_EX_TOPMOST
@@ -774,7 +777,9 @@ bool WinCap::longSaveToFile()
 
 void WinCap::longCopyToClipboard()
 {
-    if (capLong) capLong->copyToClipboard();
+    if (!capLong) return;
+    capLong->copyToClipboard();
+    if (Setting::get()->getAutoPaste()) Util::pasteToWindow(prevForeground);
 }
 
 void WinCap::hollowWin()
@@ -905,6 +910,8 @@ void WinCap::copyToClipboard()
     ShotHistory::get()->skipNextClipboard();
     recordHistory(cw, ch, pixels.data());
     close();
+    // H3 后半：把焦点还给截图前那个窗口，再把刚放上剪贴板的这张图粘进去
+    if (Setting::get()->getAutoPaste()) Util::pasteToWindow(prevForeground);
 }
 
 // 存盘 / 复制这两个"真正产出了一张图"的出口才入库。

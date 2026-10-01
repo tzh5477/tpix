@@ -46,6 +46,12 @@ public:
 	static void snapshotCursor();
 	// 把文件路径以 CF_HDROP 写进剪切板，粘贴到资源管理器/聊天窗口就是一个文件
 	static void addFileToClipboard(const std::wstring& filePath);
+	// 记下"此刻"前台那个窗口，自动粘贴要把焦点还给它。自己的窗口、桌面、任务栏都不算 ——
+	// 焦点还到这些地方等于什么都没做，这类一律记成 nullptr
+	static HWND snapshotForeground();
+	// 把焦点还给 hwnd，再发一次 Ctrl+V（把剪贴板上的东西粘进去）。
+	// 换焦点之后要等那边真的激活才发键，所以这里最多会堵上 0.2 秒左右
+	static void pasteToWindow(HWND hwnd);
 	// 把图存成缓存文件，再交给外部插件 ImageReader.exe 做文字识别。插件先在本 exe
 	// 同目录找，再找 %appdata%\ScreenCapture\plugin，都找不到就用默认浏览器打开它的
 	// release 页面让用户自己下。缓存图由插件读完后自己删。

@@ -47,6 +47,10 @@ public:
 	void setSaveDir(const std::wstring& dir);
 	std::wstring getSaveNameTpl();
 	void setSaveNameTpl(const std::wstring& tpl);
+	// 复制到剪贴板之后，自动把焦点还给截图前那个窗口并粘进去（H3 后半）。
+	// 默认关：它会把焦点从 tpix 挪走，还会往别人的窗口里塞东西，不该静默生效
+	bool getAutoPaste();
+	void setAutoPaste(bool val);
 	// 历史（截图 + 剪贴板）最多留多少条。超了从最旧那条开始删，连文件一起删
 	int getHistoryLimit();
 	void setHistoryLimit(int val);

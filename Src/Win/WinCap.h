@@ -123,6 +123,9 @@ private:
 	// 进长图 / 录屏后不再画底图：底图是拖框那一刻的静态截图，
 	// 留着的话录屏和滚动截图拿到的都是这张死图
 	bool hideScreenImg{ false };
+	// 截图前用户正在用的那个窗口。开了自动粘贴就在复制之后把焦点还给它。
+	// 必须和指针快照一样在建窗之前记：窗口一出来前台就是我们了
+	HWND prevForeground{ nullptr };
 	Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brushBg;
 	Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brushText;
 	Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> crossBrush;

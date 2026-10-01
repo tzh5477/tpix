@@ -557,6 +557,54 @@ void drawCursor(HDC hdc, const int x, const int y)
 	if (ii.hbmMask) DeleteObject(ii.hbmMask);
 	if (ii.hbmColor) DeleteObject(ii.hbmColor);
 }
+
+// 这种窗口不值得把焦点还给它：还过去也是落在壳上，用户看不出任何变化
+bool isPasteTarget(HWND hwnd)
+{
+	if (!hwnd || !IsWindow(hwnd) || !IsWindowVisible(hwnd)) return false;
+	DWORD pid{ 0 };
+	GetWindowThreadProcessId(hwnd, &pid);
+	if (pid == GetCurrentProcessId()) return false; //tpix 自己的窗口
+	wchar_t cls[256]{};
+	if (!GetClassName(hwnd, cls, 256)) return false;
+	const std::wstring name{ cls };
+	if (name == L"Shell_TrayWnd" || name == L"Shell_SecondaryTrayWnd") return false;
+	if (name == L"Progman" || name == L"WorkerW") return false; //桌面
+	return true;
+}
+}
+
+HWND Util::snapshotForeground()
+{
+	auto hwnd = GetForegroundWindow();
+	if (!isPasteTarget(hwnd)) return nullptr;
+	// 焦点常常落在某个顶层窗口下面的子窗口上，还焦点要还到最外面那一层
+	auto root = GetAncestor(hwnd, GA_ROOT);
+	return isPasteTarget(root) ? root : hwnd;
+}
+
+void Util::pasteToWindow(HWND hwnd)
+{
+	if (!isPasteTarget(hwnd)) return;
+	// 这会儿 tpix 自己是前台进程，还焦点是允许的；不是前台进程时 SetForegroundWindow
+	// 只会闪一下任务栏图标，那属于系统防抢焦点的规矩，绕不过去也不该绕
+	SetForegroundWindow(hwnd);
+	// 焦点没真换过去就发键，Ctrl+V 会落在原来那个窗口里。这段等待一般一两次就过，
+	// 但必须在调用方这条线程上等完 —— 用完即走（--auto-quit）那条路关完窗口就要退进程，
+	// 甩到别的线程上去发键，很可能人还没发出去进程已经没了
+	for (int i = 0; i < 12 && GetForegroundWindow() != hwnd; ++i) {
+		Sleep(20);
+	}
+	// 走 SendInput 而不发 WM_PASTE：后者只有标准编辑控件认，
+	// 聊天窗口、Office、浏览器这些各有各的粘贴实现，只认真键盘事件
+	INPUT inputs[4]{};
+	inputs[0].type = INPUT_KEYBOARD; inputs[0].ki.wVk = VK_CONTROL;
+	inputs[1].type = INPUT_KEYBOARD; inputs[1].ki.wVk = 'V';
+	inputs[2].type = INPUT_KEYBOARD; inputs[2].ki.wVk = 'V';
+	inputs[2].ki.dwFlags = KEYEVENTF_KEYUP;
+	inputs[3].type = INPUT_KEYBOARD; inputs[3].ki.wVk = VK_CONTROL;
+	inputs[3].ki.dwFlags = KEYEVENTF_KEYUP;
+	SendInput(4, inputs, sizeof(INPUT));
 }
 
 void Util::snapshotCursor()

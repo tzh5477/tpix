@@ -327,6 +327,18 @@ void Setting::setSaveNameTpl(const std::wstring& tpl)
 	save();
 }
 
+bool Setting::getAutoPaste()
+{
+	// 默认关：它会把焦点从 tpix 挪走，还往别人的窗口里塞东西，不该静默生效
+	return getSaveObj().GetNamedBoolean(L"autoPaste", false);
+}
+
+void Setting::setAutoPaste(bool val)
+{
+	getSaveObj().SetNamedValue(L"autoPaste", JsonValue::CreateBooleanValue(val));
+	save();
+}
+
 int Setting::getHistoryLimit()
 {
 	// 夹到 [10, 2000]：太小了历史没意义，太大了数据目录会堆出几个 G 的图片

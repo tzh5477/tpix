@@ -481,6 +481,25 @@ void WinSettingCommon::initSaveCtrls()
     tplBox->onTextChanged.add([](Ling::TextBox*, const std::wstring& val) {
         Setting::get()->setSaveNameTpl(val);
     });
+
+    // 复制后自动粘贴到截图前那个窗口
+    auto pasteRow = makeRow(L"setting.autoPaste");
+    auto pasteBtn = pasteRow->makeChild<Ling::Button>();
+    pasteBtn->setFontFamily(L"icon");
+    pasteBtn->setHeightPercent(100.f);
+    pasteBtn->setFontSize(18.f);
+    pasteBtn->setWidth(60.f);
+    auto applyPaste = [](Ling::Button* btn, bool on) {
+        btn->setText(on ? L"\ue688" : L"\ue687");
+        btn->setColor(on ? 0x597ef7ff : 0x666666FF);
+        btn->setHoverColor(on ? 0x597ef7ff : 0x666666FF);
+    };
+    applyPaste(pasteBtn, Setting::get()->getAutoPaste());
+    pasteBtn->onClick.add([applyPaste](Ling::Button* b) {
+        auto next = !Setting::get()->getAutoPaste();
+        Setting::get()->setAutoPaste(next);
+        applyPaste(b, next);
+    });
 }
 
 void WinSettingCommon::initHistoryCtrls()
