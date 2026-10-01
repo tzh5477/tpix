@@ -351,6 +351,9 @@
     <ClInclude Include="Win\ClickFx.hpp">
       <Filter>头文件</Filter>
     </ClInclude>
+    <ClInclude Include="Win\KeyFx.hpp">
+      <Filter>头文件</Filter>
+    </ClInclude>
     <ClInclude Include="Win\CutMask.h">
       <Filter>头文件</Filter>
     </ClInclude>

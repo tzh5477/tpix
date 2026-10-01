@@ -7,6 +7,7 @@
 #include "Util.h"
 #include "cgif/cgif.h"
 #include "ClickFx.hpp"
+#include "KeyFx.hpp"
 //D:\sdk\gifski\target\release\gifski.lib
 //D:\sdk\gifski
 
@@ -20,6 +21,8 @@ namespace VideoGif {
         // 鼠标点击可视化
         bool clickFx{ false };
         float clickFxScale{ 1.f };
+        // 按键显示。状态由 CapVideo 那边装在 UI 线程上的钩子喂，这里只负责画
+        KeyFx::Tracker* keyFx{ nullptr };
         std::wstring path;
         int w;
         int h;
@@ -88,6 +91,13 @@ namespace VideoGif {
                 ripples.pull();
                 // 这块画布的原点在屏幕上的 (param->x, param->y)，所以传它们的负值
                 ripples.draw(hMemDC, -param->x, -param->y, param->clickFxScale);
+            }
+            if (param->keyFx) {
+                std::wstring txt;
+                if (param->keyFx->current(txt, GetTickCount64())) {
+                    // 画布就是录制区，所以位置直接取它自己的底部居中
+                    KeyFx::draw(hMemDC, txt, param->w / 2, param->h, param->clickFxScale);
+                }
             }
             GetDIBits(hMemDC, hBitmap, 0, param->h, (void*)bgra_buffer.data(), &bmi, DIB_RGB_COLORS);
             // BGRA → RGB，逐行转换到紧密排列的缓冲区

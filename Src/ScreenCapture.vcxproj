@@ -300,6 +300,7 @@
     <ClInclude Include="Win\cgif\cgif.h" />
     <ClInclude Include="Win\cgif\cgif_raw.h" />
     <ClInclude Include="Win\ClickFx.hpp" />
+    <ClInclude Include="Win\KeyFx.hpp" />
     <ClInclude Include="Win\CutMask.h" />
     <ClInclude Include="Win\CapLong.h" />
     <ClInclude Include="Win\WinPin.h" />

@@ -12,8 +12,49 @@
 using namespace Microsoft::WRL;
 #include "VideoMp4.hpp"
 #include "VideoGif.hpp"
+#include "KeyFx.hpp"
 
 namespace {
+    // 按键显示。钩子必须挂在有消息循环的线程上 —— 录制线程只跑编码循环，
+    // 低级钩子的回调发不进去，所以装/卸都在 UI 线程这边（start* / stop 正是从
+    // 工具条按钮的点击栈上进来的）。录制线程只从 tracker 读当前该显示什么。
+    // 这两个是文件级全局：同一时刻只会有一段录制在跑（WinCap 里 CapVideo 只有一个），
+    // 所以不需要按实例存
+    KeyFx::Tracker keyTracker;
+    HHOOK keyHook{ nullptr };
+
+    LRESULT CALLBACK keyHookProc(int code, WPARAM wParam, LPARAM lParam)
+    {
+        // SYSKEY 一起收：Alt + Tab / Alt + F4 这类系统组合用户是看得见的，
+        // 录屏里却不留痕，反而更让人纳闷。这里只是旁听，不拦（下面一律 CallNext），
+        // 所以不会改变系统对它们的处理
+        // HC_ACTION 之外一律只做转发：钩子链上还有别人，把它们吞了会连累整个系统
+        if (code == HC_ACTION && (wParam == WM_KEYDOWN || wParam == WM_KEYUP || wParam == WM_SYSKEYDOWN || wParam == WM_SYSKEYUP)) {
+            auto* kb = reinterpret_cast<KBDLLHOOKSTRUCT*>(lParam);
+            const bool down = (wParam == WM_KEYDOWN || wParam == WM_SYSKEYDOWN);
+            keyTracker.onKey(kb->vkCode, down);
+        }
+        return CallNextHookEx(keyHook, code, wParam, lParam);
+    }
+
+    void startKeyHook()
+    {
+        if (keyHook) return;
+        keyTracker.clear();
+        // WH_KEYBOARD_LL 不需要 DLL：回调回到安装它的线程（本线程有消息循环）。
+        // 代价是这条线程一旦不能及时处理消息，系统会按 LowLevelHooksTimeout
+        // 悄悄把钩子摘掉 —— 那时只是按键显示不再出现，录制本身不受影响
+        keyHook = SetWindowsHookEx(WH_KEYBOARD_LL, keyHookProc, nullptr, 0);
+    }
+
+    void stopKeyHook()
+    {
+        if (!keyHook) return;
+        UnhookWindowsHookEx(keyHook);
+        keyHook = nullptr;
+        keyTracker.clear();
+    }
+
     // MP4 录制失败以前是静默 return，用户那边就是"录完什么都没有"，连缓存文件都不生成。
     // 失败原因基本都在对方机器上（混合显卡笔记本把进程放在独显上跑，桌面复制就不成立），
     // 实测让用户在系统图形设置里给本程序选"节能"（把进程放回核显）能解决，
@@ -81,6 +122,8 @@ CapVideo::CapVideo(WinCap* win) : win(win)
 
 CapVideo::~CapVideo()
 {
+    // 全局钩子不卸会一直挂在系统里，宿主窗口意外关闭时（dispose 没走完）这里是最后一道
+    stopKeyHook();
 }
 
 void CapVideo::makeTool()
@@ -116,6 +159,12 @@ void CapVideo::startMp4(bool useSpeaker, bool useMic)
     mp4Param = std::make_unique<VideoMp4::DESKTOPCAPTUREPARAMS>();
     mp4Param->ClickFx = Setting::get()->getClickFx();
     mp4Param->ClickFxScale = win->dpi;
+    // 按键显示走同一个开关：它和点击可视化同属"把操作画进画面"这一类。
+    // 开关没开就别装钩子 —— 那等于无谓地旁听用户在别处敲的每一个键
+    if (mp4Param->ClickFx) {
+        mp4Param->KeyFx = &keyTracker;
+        startKeyHook();
+    }
     // 编码格式不在这里定，交给下面采集线程里那个"HEVC 不行就退 H.264"的循环
     // 录制区域先夹回桌面范围，再做对齐 —— 只会往里缩，不会越出桌面。
     // HEVC 编码器要求宽高是偶数，链路中间的 RGB32->NV12 转换还会按对齐后的 stride
@@ -203,6 +252,11 @@ void CapVideo::startGif()
     gifParam->h = (int)(cutMask->maskRect.bottom - cutMask->maskRect.top);
     gifParam->clickFx = Setting::get()->getClickFx();
     gifParam->clickFxScale = win->dpi;
+    // 与 startMp4 同：开关没开就不装钩子，别无谓地旁听用户在别处敲的每一个键
+    if (gifParam->clickFx) {
+        gifParam->keyFx = &keyTracker;
+        startKeyHook();
+    }
     gifParam->path = videoTempPath.append(L"temp.gif").wstring();
     captureThread = std::jthread([this](std::stop_token st) {
         VideoGif::createGif(gifParam.get());
@@ -224,6 +278,8 @@ void CapVideo::setPaused(bool on)
 std::wstring CapVideo::stop()
 {
     if (!mp4Param && !gifParam) return L"";
+    // 钩子在 UI 线程上卸：录制线程这会儿正等着收尾，卸载必须留在有消息循环的一侧
+    stopKeyHook();
     // 遮罩也别留在屏幕上，录完这一帧就该收工了
     win->hide();
     std::wstring filePath;

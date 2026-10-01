@@ -19,6 +19,7 @@
 #include <mfreadwrite.h>
 #include <dshow.h>
 #include "ClickFx.hpp"
+#include "KeyFx.hpp"
 #include <effects.h>
 #include <Wmcodecdsp.h>
 #include <setjmp.h>
@@ -698,6 +699,10 @@ public:
     CComPtr<ID3D11Texture2D> lGDIImage;
     CComPtr<ID3D11Texture2D> lDestImage;
     DXGI_OUTDUPL_DESC lOutputDuplDesc = {};
+    // 被复制那块屏在虚拟桌面里的原点。桌面复制出来的纹理以它的左上角为 (0,0)，
+    // 而光标位置和鼠标点击拿到的都是桌面坐标，副屏上要把这个减掉才对得上。
+    // Prepare 每次都会重设：换候选适配器就是换了另一块屏
+    POINT monOrigin{};
 
     static void GetAdapters(std::vector<CComPtr<IDXGIAdapter1>>& a)
     {
@@ -719,7 +724,8 @@ public:
         return;
     }
 
-    bool Get(IDXGIResource* lDesktopResource,bool Curs,RECT* rcx = 0, bool Clicks = false, float clickScale = 1.f)
+    bool Get(IDXGIResource* lDesktopResource,bool Curs,RECT* rcx = 0, bool Clicks = false, float clickScale = 1.f,
+        KeyFx::Tracker* keys = nullptr)
     {
         // QI for ID3D11Texture2D
         CComPtr<ID3D11Texture2D> lAcquiredDesktopImage;
@@ -732,7 +738,7 @@ public:
 
 
         // HDR 是 64bpp，GDI 纹理画不了；既不带指针也不要点击可视化时直接拷，省一道 CPU-GPU
-        if (InHDR != DXGI_FORMAT_UNKNOWN || (Curs == 0 && !Clicks))
+        if (InHDR != DXGI_FORMAT_UNKNOWN || (Curs == 0 && !Clicks && !keys))
         {
             // No Cursor support
             context->CopyResource(lDestImage, lAcquiredDesktopImage);
@@ -756,6 +762,12 @@ public:
             HDC  lHDC = nullptr;
             if (SUCCEEDED(lIDXGISurface1->GetDC(FALSE, &lHDC)) && lHDC)
             {
+                // 这张 GDI 纹理的原点是被复制那块屏的左上角，不是虚拟桌面原点
+                //（rcx 裁剪框也是屏内坐标）。而光标位置和鼠标点击拿到的是桌面坐标，
+                // 副屏 left/top 不为 0 时不减掉这个偏移，两者会整体跑偏甚至跑到画面外。
+                // 主屏 left/top 恒为 0，偏移也就是 0，不会改变原有行为
+                const int offX = -monOrigin.x;
+                const int offY = -monOrigin.y;
                 if (lBoolres == TRUE && lCursorInfo.flags == CURSOR_SHOWING && Curs)
                 {
                     // GetIconInfo 可能失败（自绘光标、远程桌面、GDI 被挂钩），
@@ -769,8 +781,8 @@ public:
                         auto lCursorPosition = lCursorInfo.ptScreenPos;
                         DrawIconEx(
                             lHDC,
-                            lCursorPosition.x- iconInfo.xHotspot,
-                            lCursorPosition.y- iconInfo.yHotspot,
+                            lCursorPosition.x - iconInfo.xHotspot + offX,
+                            lCursorPosition.y - iconInfo.yHotspot + offY,
                             lCursorInfo.hCursor,
                             0,
                             0,
@@ -779,12 +791,21 @@ public:
                             DI_NORMAL | DI_DEFAULTSIZE);
                     }
                 }
-                // 点击可视化。与光标共用同一套坐标（连它在副屏上那个既有偏差一起），
-                // 所以两者在画面上永远是重合的
+                // 点击可视化，叠在光标那个位置上
                 if (Clicks)
                 {
                     ripples.pull();
-                    ripples.draw(lHDC, 0, 0, clickScale);
+                    ripples.draw(lHDC, offX, offY, clickScale);
+                }
+                // 按键显示摆在录制区底部居中。没有裁剪框时退到整块输出的底部
+                if (keys)
+                {
+                    std::wstring txt;
+                    if (keys->current(txt, GetTickCount64())) {
+                        const int cx = rcx ? (rcx->left + rcx->right) / 2 : lOutputDuplDesc.ModeDesc.Width / 2;
+                        const int bottom = rcx ? rcx->bottom : lOutputDuplDesc.ModeDesc.Height;
+                        KeyFx::draw(lHDC, txt, cx, bottom, clickScale);
+                    }
                 }
                 // ReleaseDC 只在 GetDC 拿到了 DC 时调
                 lIDXGISurface1->ReleaseDC(nullptr);
@@ -872,8 +893,9 @@ public:
 
         lDxgiAdapter = 0;
 
-        DXGI_OUTPUT_DESC lOutputDesc;
+        DXGI_OUTPUT_DESC lOutputDesc{};
         hr = lDxgiOutput->GetDesc(&lOutputDesc);
+        monOrigin = { lOutputDesc.DesktopCoordinates.left, lOutputDesc.DesktopCoordinates.top };
 
         // QI for Output 1
         CComPtr<IDXGIOutput1> lDxgiOutput1;
@@ -1040,6 +1062,8 @@ struct DESKTOPCAPTUREPARAMS
     // 与 GIF 那条管线共用
     bool ClickFx = false;
     float ClickFxScale = 1.f;
+    // 按键显示。状态由 CapVideo 那边装在 UI 线程上的钩子喂，这里只负责画
+    KeyFx::Tracker* KeyFx = nullptr;
     RECT rx = { 0,0,0,0 };
     HWND hWnd = 0;
     IDXGIAdapter1* ad = 0;
@@ -2192,7 +2216,7 @@ inline int DesktopCapture(DESKTOPCAPTUREPARAMS& dp)
             // take a time stamp here
             // Get the current time point
             if (lDesktopResource && !cap.Get(lDesktopResource, dp.Cursor, dp.rx.right && dp.rx.bottom ? &dp.rx : 0,
-                dp.ClickFx, dp.ClickFxScale))
+                dp.ClickFx, dp.ClickFxScale, dp.KeyFx))
                 break;
 
             if (isFirstFrame)
