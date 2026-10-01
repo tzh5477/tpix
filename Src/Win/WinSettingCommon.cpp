@@ -28,6 +28,27 @@ namespace {
         CoTaskMemFree(path);
         return true;
     }
+    // 存 / 取一个配置文件的对话框。类型只给 json：配置就是这一份，选别的格式没有意义。
+    // 返回 false 表示用户取消或调用失败，out 不动
+    bool pickJsonFile(HWND hwnd, std::wstring& out, const bool save)
+    {
+        Microsoft::WRL::ComPtr<IFileDialog> dialog;
+        auto hr = CoCreateInstance(save ? CLSID_FileSaveDialog : CLSID_FileOpenDialog, nullptr,
+            CLSCTX_INPROC_SERVER, IID_PPV_ARGS(dialog.GetAddressOf()));
+        if (FAILED(hr)) return false;
+        COMDLG_FILTERSPEC filter[]{ { L"JSON", L"*.json" } };
+        dialog->SetFileTypes(1, filter);
+        dialog->SetDefaultExtension(L"json");
+        if (save) dialog->SetFileName(L"ScreenCapture-config.json");
+        if (FAILED(dialog->Show(hwnd))) return false;
+        Microsoft::WRL::ComPtr<IShellItem> item;
+        if (FAILED(dialog->GetResult(item.GetAddressOf()))) return false;
+        PWSTR path{ nullptr };
+        if (FAILED(item->GetDisplayName(SIGDN_FILESYSPATH, &path))) return false;
+        out = path;
+        CoTaskMemFree(path);
+        return true;
+    }
     // 目录可能很长，按钮只有 240 宽，超出就从尾部截断保留文件名那一段
     std::wstring shortenPath(const std::wstring& path)
     {
@@ -47,6 +68,7 @@ WinSettingCommon::WinSettingCommon(Ling::WinBase* parent):Ling::Node(parent)
     initHistoryCtrls();
     initPinCtrls();
     initOcrCtrls();
+    initConfigCtrls();
     auto weakThis = getWeakThis();
     // 这个回调一直挂在窗口上，而本节点可能在窗口关闭之前就被菜单切换换掉了，
     // 所以先确认自己还活着再去碰成员
@@ -537,6 +559,48 @@ void WinSettingCommon::initPinCtrls()
         Setting::get()->setRestorePins(next);
         apply(b, next);
     });
+}
+
+void WinSettingCommon::initConfigCtrls()
+{
+    auto row = makeRow(L"setting.config");
+    auto exportBtn = row->makeChild<Ling::Button>();
+    exportBtn->setText(Lang::get(L"setting.configExport"));
+    exportBtn->setHeight(28.f);
+    exportBtn->setWidth(100.f);
+    exportBtn->setBorder(1.f, 0xE0E0E0FF);
+    exportBtn->setHoverBg(0xFFFFFFFF);
+    exportBtn->onClick.add([this](Ling::Button*) {
+        std::wstring path;
+        if (!pickJsonFile(win->hwnd, path, true)) return;
+        if (Setting::get()->exportConfig(path)) return;
+        showConfigTip(L"setting.configExportFail");
+    });
+
+    auto importBtn = row->makeChild<Ling::Button>();
+    importBtn->setText(Lang::get(L"setting.configImport"));
+    importBtn->setHeight(28.f);
+    importBtn->setWidth(100.f);
+    importBtn->setMarginLeft(8.f);
+    importBtn->setBorder(1.f, 0xE0E0E0FF);
+    importBtn->setHoverBg(0xFFFFFFFF);
+    importBtn->onClick.add([this](Ling::Button*) {
+        std::wstring path;
+        if (!pickJsonFile(win->hwnd, path, false)) return;
+        if (Setting::get()->importConfig(path)) {
+            // 整页都是按旧配置显示出来的，就地改每一行的值不如重建一遍省事
+            win->close();
+            Ling::App::get()->dq.TryEnqueue([]() { WinSetting::init(); });
+            return;
+        }
+        showConfigTip(L"setting.configImportFail");
+    });
+}
+
+void WinSettingCommon::showConfigTip(const std::wstring& key)
+{
+    MessageBox(win->hwnd, Lang::get(key).data(),
+        Lang::get(L"about.sysTip").data(), MB_OK | MB_ICONWARNING);
 }
 
 void WinSettingCommon::initOcrCtrls()

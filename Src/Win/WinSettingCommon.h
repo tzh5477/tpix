@@ -23,6 +23,10 @@ private:
 	void initPinCtrls();
 	// OCR 默认识别语言。与 WinOcr 窗口上的语言按钮共用 Setting 的 ocr 组
 	void initOcrCtrls();
+	// 配置备份与恢复：导出成一份 json / 从一份 json 导入
+	void initConfigCtrls();
+	// 导入导出失败时的提示（系统提示标题 + 一行说明）
+	void showConfigTip(const std::wstring& key);
 	// 开 / 关两套配色，与 ToolSub::applyToggleStyle 保持一致
 	static void applyCapBtnStyle(Ling::Button* btn, bool selected);
 	// 一行「标签 + 控件」。生成的行节点作为返回值交给调用方塞控件，分隔线是本节点的

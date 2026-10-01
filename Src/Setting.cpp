@@ -538,17 +538,25 @@ void Setting::setUpdateCheckDay(long long day)
     save();
 }
 
-void Setting::initShortcutKeys()
+void Setting::applyShortcutKeys()
 {
     auto lingApp = Ling::App::get();
     for (auto& def : shortcutDefs) {
+        // 旧的组合必须先撤：同一 id 上重复 RegisterHotKey 不会覆盖，换了一份配置
+        // 不撤的话新旧两个组合都指向同一个动作
+        lingApp->unRegHotKey(def.msgId);
         // 取不到就用默认的那个组合：热键注册不上顶多是快捷键不好用，不该让程序起不来
         std::wstring str{ getShortcutKey(std::wstring{ def.type }) };
         if (str.empty()) str = std::wstring{ def.def };
         if (str.empty()) continue;   // 这一项既没配也没有默认，等于关着
         lingApp->regHotKey(str, def.msgId);
     }
+}
 
+void Setting::initShortcutKeys()
+{
+    applyShortcutKeys();
+    auto lingApp = Ling::App::get();
     lingApp->onHotKey.add([this](UINT msg) {
         switch (msg) {
         case capShortcutMsgId:
@@ -581,4 +589,40 @@ void Setting::initShortcutKeys()
     lingApp->onSecondInstance.add([this]() {
         WinCap::init();
     });
+}
+
+bool Setting::exportConfig(const std::wstring& path) const
+{
+    JsonObject out;
+    // 逐项抄一份而不是直接 Stringify 原件：要跳过 pin，而 JsonObject 没有"删键"这回事
+    for (auto&& pair : configObj) {
+        if (pair.Key() == L"pin") continue; //贴图是运行时状态，图片文件不在配置里
+        out.SetNamedValue(pair.Key(), pair.Value());
+    }
+    Ling::Util::saveFile(path, std::wstring{ out.Stringify() });
+    return std::filesystem::exists(path);
+}
+
+bool Setting::importConfig(const std::wstring& path)
+{
+    auto content = Ling::Util::readFileText(path);
+    if (content.empty()) return false;
+    JsonObject obj{ nullptr };
+    // 解析不出来就一个字都不改：导入失败最多是没导成，把配置清成默认那才是灾难
+    if (!JsonObject::TryParse(content, obj) || !obj) return false;
+    configObj = obj;
+    save();
+    // 只有这几类设置是"写进系统里 / 已经分发到各处"的，得按新的重来一遍；
+    // 其余的都是每次现读 configObj，下次用到自然生效
+    applyShortcutKeys();
+    setAutoStart(getAutoStart());
+    // 语言也跟上，但只在这份配置里的语言码确实装了的时候才切：写了个没装的语言码，
+    // initLang 会把界面整个退成内置英文，看着像是导入把界面弄坏了
+    auto langCode = getLang();
+    for (auto& pair : Lang::get()->getSupportedLang()) {
+        if (pair.second != langCode) continue;
+        Lang::get()->initLang(langCode);
+        break;
+    }
+    return true;
 }
