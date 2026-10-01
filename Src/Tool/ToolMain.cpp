@@ -12,7 +12,7 @@ ToolMain::ToolMain(WinPin* win) : Ling::WinBase(), win(win)
 	dpi = win->dpi;
 	// 初始位置由 WinPin::layoutTools() 统一决定，这里只算尺寸
 	x = win->x;
-	y = win->y + win->h + 5.f * win->dpi;
+	y = (int)(win->y + win->h + 5.f * win->dpi);
 	refreshSize();
 	// 点按钮会把 ToolMain 激活，此后键盘消息进的是它而不是 WinPin。
 	// 直接把按键转触给 WinPin 的同名事件，快捷键在两个窗口上表现一致。

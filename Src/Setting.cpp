@@ -140,7 +140,7 @@ void Setting::setAutoStart(bool autoStart)
         std::wstring commandLine = std::format(L"\"{}\" --auto-start", curPath.wstring());
         HKEY hKey;
         if (RegOpenKeyEx(HKEY_CURRENT_USER, runKey.data(), 0, KEY_WRITE, &hKey) == ERROR_SUCCESS) {
-            RegSetValueEx(hKey, L"ScreenCapture", 0, REG_SZ, (const BYTE*)commandLine.data(), (commandLine.size() + 1) * sizeof(wchar_t));
+            RegSetValueEx(hKey, L"ScreenCapture", 0, REG_SZ, (const BYTE*)commandLine.data(), (DWORD)((commandLine.size() + 1) * sizeof(wchar_t)));
             RegCloseKey(hKey);
         }
     }

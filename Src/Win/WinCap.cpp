@@ -31,7 +31,7 @@ WinCap::WinCap() : Ling::WinBase()
 {
 	setTitle(L"Screen Capture");
     auto [x1, y1, w1, h1] = App::get()->getScreenArea();
-	this->x = x1;this->y = y1;this->w = w1;this->h = h1;
+	this->x = x1;this->y = y1;this->w = (float)w1;this->h = (float)h1;
     onMouseDown.add([this](POINT pos, bool isRight) { this->onDown(pos, isRight); });
     onMouseMove.add([this](POINT pos) { this->onMove(pos); });
     onMouseUp.add([this](POINT pos, bool isRight) { this->onUp(pos, isRight); });
@@ -49,7 +49,7 @@ WinCap::WinCap() : Ling::WinBase()
         if (!dpiChanged) return;
         dpiChanged = false;
         auto [x1, y1, w1, h1] = App::get()->getScreenArea();
-        this->x = x1; this->y = y1; this->w = w1; this->h = h1;
+        this->x = x1; this->y = y1; this->w = (float)w1; this->h = (float)h1;
         SetWindowPos(hwnd, nullptr, x1, y1, (int)w1, (int)h1, SWP_NOZORDER | SWP_NOACTIVATE);
         relayoutTool();
     });
@@ -99,7 +99,7 @@ void WinCap::dispose()
 
 void WinCap::onCreated()
 {
-    App::get()->takeScreenShot(x, y, w, h, &screenImg);
+    App::get()->takeScreenShot(x, y, (int)w, (int)h, &screenImg);
 	auto d2d = Ling::D2D::get();
     // 画布铺满窗口，走 swap chain（双缓冲）后端，避免调整选区时整帧闪烁
     canvas = body->makeChild<Ling::Canvas>();
@@ -234,9 +234,9 @@ void WinCap::paintPix(ID2D1DeviceContext* ctx)
     ctx->DrawRectangle(pixRect, brushBg.Get(),dpi);
 
     float crossWHalf{ 4.f*dpi };
-    auto crossRect0 = D2D1::RectF(pixPos.x, pixPos.y+pixImgH / 2 - crossWHalf, pixPos.x+pixW / 2 - crossWHalf, pixPos.y + pixImgH / 2 + crossWHalf);
+    auto crossRect0 = D2D1::RectF((float)pixPos.x, pixPos.y+pixImgH / 2 - crossWHalf, pixPos.x+pixW / 2 - crossWHalf, pixPos.y + pixImgH / 2 + crossWHalf);
     auto crossRect1 = D2D1::RectF(pixPos.x + pixW / 2 + crossWHalf, pixPos.y+pixImgH / 2 - crossWHalf, pixPos.x + pixW, pixPos.y + pixImgH / 2 + crossWHalf);
-    auto crossRect2 = D2D1::RectF(pixPos.x + pixW / 2 - crossWHalf, pixPos.y, pixPos.x + pixW / 2 + crossWHalf, pixPos.y + pixImgH / 2 - crossWHalf);
+    auto crossRect2 = D2D1::RectF(pixPos.x + pixW / 2 - crossWHalf, (float)pixPos.y, pixPos.x + pixW / 2 + crossWHalf, pixPos.y + pixImgH / 2 - crossWHalf);
     auto crossRect3 = D2D1::RectF(pixPos.x + pixW / 2 - crossWHalf, pixPos.y+pixImgH / 2 + crossWHalf, pixPos.x + pixW / 2 + crossWHalf, pixPos.y + pixImgH);
 
     ctx->FillRectangle(crossRect0, crossBrush.Get());

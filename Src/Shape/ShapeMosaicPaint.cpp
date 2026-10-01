@@ -49,8 +49,8 @@ bool ShapeMosaicPaint::sampleBgColor(const D2D1_RECT_F bounds, const int ringPx,
 	// 选区在读到这块像素里的位置（可能被窗口边界裁过，所以下面仍然逐点判断）
 	const int inLeft = (int)std::floor(bounds.left - origin.x);
 	const int inTop = (int)std::floor(bounds.top - origin.y);
-	const int inRight = (std::ceil)(bounds.right - origin.x);
-	const int inBottom = (std::ceil)(bounds.bottom - origin.y);
+	const int inRight = (int)(std::ceil)(bounds.right - origin.x);
+	const int inBottom = (int)(std::ceil)(bounds.bottom - origin.y);
 
 	auto modal = [&](bool excludeInside) {
 		std::unordered_map<UINT32, int> counter;

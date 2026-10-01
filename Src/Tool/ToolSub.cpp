@@ -401,7 +401,7 @@ void ToolSub::onColorSelect(Ling::Button* btn)
 	for (size_t i = 0; i < colorBtns.size(); i++)
 	{
 		if (colorBtns[i] == btn) {
-			selectColorIndex = i;
+			selectColorIndex = (UINT)i;
 			break;
 		}
 	}

@@ -55,8 +55,8 @@ WinPin::WinPin(int x, int y, int w, int h, const std::vector<BYTE>* data, const 
 {
 	this->x = x;
 	this->y = y;
-	this->w = w;
-	this->h = h;
+	this->w = (float)w;
+	this->h = (float)h;
 	if (data) {
 		// 外部像素建底图。马赛克那两个会把它当取样源，属性与 getCutImg() 出来的保持一致
 		D2D1_BITMAP_PROPERTIES1 props{};
