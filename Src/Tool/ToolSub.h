@@ -2,6 +2,7 @@
 #include <include/Ling.h>
 #include <functional>
 #include <string>
+#include <vector>
 
 class WinPin;
 class Tip;
@@ -57,9 +58,11 @@ public:
 	// 水印。文字 / 平铺是状态本体；档位存下标，换算成透明度与角度的表在 .cpp 里
 	std::wstring watermarkText{ L"" };
 	bool watermarkTile{ false };
-	int watermarkOpacity{ 0 }, watermarkRotate{ 0 };
+	// watermarkGap 是平铺间距档位（0 紧凑 / 1 标准 / 2 宽松），换算系数的表同样在 .cpp 里
+	int watermarkOpacity{ 0 }, watermarkRotate{ 0 }, watermarkGap{ 1 };
 	float getWatermarkOpacity() const;
 	float getWatermarkRotation() const;
+	float getWatermarkGapRatio() const;
 private:
 	void onCreated() override;
 	void layout() override;
@@ -74,19 +77,34 @@ private:
 	// tipKey 是提示文字的语言键（如 tool.rectFill），cfgKey 是这个开关在 config.json 里的键名
 	// （fill / semiTransparent / bold / …，同一工具下不能重名）。
 	Ling::Button* makeToggleBtn(const std::wstring& text, bool* flag, const std::wstring& tipKey, const std::wstring& cfgKey);
-	// 多值循环按钮：每点一次把 index 往前推一格，按钮上的文本换成新一格对应的样子。
-	// textOf 按 index 生成文本 —— 序号样式那两个按钮要显示"当前编号在各种样式下长什么样"，
-	// 这个文本随 index 变，所以不能像 ToggleBtn 那样一次性把整表传进来
+	// 多值下拉按钮：按钮上显示当前这一档，点一下弹出全部档位，一次点中。
+	// 原来这里是个循环按钮（每点一次往前推一格），档位一多就得点好几下才转到想要的那个。
+	// items 就是每一档在按钮上长什么样 —— 序号样式那两个按钮要显示
+	// "当前编号在各种样式下长什么样"，这个文本随档位变，所以由调用方整份传进来。
+	// onPicked 是选中之后的收尾（贴图不透明度要作用到窗口、水印要重画），没有就传空。
 	// refreshNumbers：切完之后要不要把图上已有的序号重排一遍。只有序号的样式按钮需要，
 	// 马赛克模式那一个跟序号没关系，不该顺带去遍历一遍 shape
-	Ling::Button* makeCycleBtn(const std::wstring& tipKey, const std::wstring& cfgKey,
-		int* index, int count, std::function<std::wstring(int)> textOf,
+	Ling::Button* makeSelectBtn(const std::wstring& tipKey, const std::wstring& cfgKey,
+		int* index, const std::vector<std::wstring>& items,
+		std::function<void()> onPicked = nullptr,
 		bool useIconFont = false, bool refreshNumbers = true);
+	// 开 / 关两项的下拉列表。图标按钮（填充、粗体这类）和开关都用它：
+	// 两项都是图标字体里的勾与叉，跟按钮上显示的是同一套，不用另起一套"开 / 关"译名
+	static const std::vector<std::wstring>& onOffItems();
+	// 弹出一个开 / 关下拉，选中后翻转 flag、落盘、刷新配色。
+	// apply 是翻转之后要做的事（贴图那几个开关直接调 WinPin 的 setter）
+	void showOnOff(Ling::Button* btn, bool cur, std::function<void(bool)> apply);
 	// pin 面板用的文字开关：跟 makeToggleBtn 一样的两态配色，但按钮上写的是字（圆角 / 锁定 / 穿透）
 	// 而不是图标 —— 图标字体里没有锁、穿透这类符号，硬猜码位只会显示成方块。
 	// apply 由调用方给，开关翻转后直接调 WinPin 上对应的 setter
 	Ling::Button* makeTextToggle(const std::wstring& text, const std::wstring& tipKey,
 		const std::wstring& cfgKey, bool def, std::function<void(bool)> apply);
+	// 两态开关，但状态住在外部对象里（读 read、翻转后调 apply），不进 config.json。
+	// pin 面板的圆角 / 锁定 / 穿透用它：这些是"当前这张贴图"的实例属性，谁开的谁自己记着 ——
+	// 走全局配置的话，构建面板时会把别的贴图存下的开关盖到当前这张上，
+	// 而且取消面板也没有复位点，锁定 / 穿透一旦被盖上整张图就拖不动也画不了
+	Ling::Button* makeStateToggle(const std::wstring& text, const std::wstring& tipKey,
+		std::function<bool()> read, std::function<void(bool)> apply);
 	// 「应用到全部」：把工具条当前样式套到图上同工具的所有标注。
 	// 只在改了样式真能看出来的那些工具条上建（水印单实例且每次 paint 现取样式，不建）
 	void makeApplyAllBtn();

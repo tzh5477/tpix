@@ -2,6 +2,7 @@
 #include <filesystem>
 #include "../App.h"
 #include "../Lang.h"
+#include "../SelectPopup.h"
 #include "WinSetting.h"
 #include "WinSettingCommon.h"
 #include "WinSettingShortcut.h"
@@ -21,8 +22,12 @@ WinSetting::WinSetting() :Ling::WinBase()
 	setTitle(Lang::get(L"setting.title"));
 	// 通用设置每一行是定高的（连分隔线 40），既不压缩也不滚动，
 	// 所以窗口高度得跟着行数走 —— 拦在底部的那几行点不到，等于没做。
-	// 加一行就把这个数 +40
-	setSize(680, 960);
+	// 加一行就把这个数 +40。但再高也不许超过工作区：960 在 1080p 上带任务栏就出屏了，
+	// 上半截连拖都拖不到，超出的部分交给内容区的 ScrollerBox 滚出来
+	RECT wa{};
+	SystemParametersInfoW(SPI_GETWORKAREA, 0, &wa, 0);
+	auto workH = (wa.bottom - wa.top) / dpi;
+	setSize(680, std::min(960.f, workH - 40.f));
 	setCenter();
 	createNativeWindow();
 }
@@ -48,6 +53,31 @@ void WinSetting::dispose()
 	winSetting.reset();
 }
 
+void WinSetting::makeContent(int index)
+{
+	// 滚动容器连同内容一起销毁重建，滚动位置随之回到顶（切菜单回顶也合理）。
+	// 不复用容器逐个换 child：ScrollerBox::setChild 把子节点挂到自己的 content 下，
+	// ownership 却记在容器的 children 里，跨层 removeChild 要同时拆 yoga 与 visual 两棵树，
+	// 容易留残影；重建容器则两条路都干净
+	if (scroller) body->removeChild(scroller);
+	scroller = body->makeChild<Ling::ScrollerBox>();
+	scroller->setFlexGrow(1.f);
+	scroller->setWidthPercent(100.f);
+	// 内容保持自然高度（超出容器才滚动），所以不再给它设 flexGrow / 百分比
+	if (index == 0) {
+		content = scroller->makeChild<WinSettingCommon>();
+	}
+	else if (index == 1) {
+		content = scroller->makeChild<WinSettingShortcut>();
+	}
+	else {
+		content = scroller->makeChild<WinSettingAbout>();
+	}
+	content->setPaddingTop(40.f);
+	content->setPadding(20.f, 40.f, 20.f, 40.f);
+	content->setFlexDirection(Ling::FlexDirection::Column);
+}
+
 void WinSetting::onCreated()
 {
 	enableShadow();
@@ -60,12 +90,7 @@ void WinSetting::onCreated()
 	menuBox->setPaddingTop(40.f);
 	initMenuItems(menuBox);
 
-	content = body->makeChild<WinSettingCommon>();
-	content->setFlexGrow(1.0);
-	content->setHeightPercent(100.f);
-	content->setPaddingTop(40.f);
-	content->setPadding(20.f, 40.f, 20.f, 40.f);
-	content->setFlexDirection(Ling::FlexDirection::Column);
+	makeContent(0);
 
 	auto closeBtn = body->makeChild<Ling::Button>();
 	closeBtn->setSize(42.f, 32.f);
@@ -113,10 +138,10 @@ void WinSetting::onMenuItemClick(Ling::Button* menuItem)
 {
 	auto index = Ling::Util::getIndex(menus, menuItem);
 	if (index < 0 || index == menuIndex) return;
-	// 通用设置里的语言下拉框是挂在 body 上的（要能盖住下面的控件），content 被换掉
-	// 它不会跟着消失，所以切菜单之前先收掉
+	// 通用设置里弹出的下拉列表是独立窗口，content 被换掉它不会跟着消失，
+	// 所以切菜单之前先收掉
 	if (menuIndex == 0) {
-		static_cast<WinSettingCommon*>(content)->hideSelectBox();
+		SelectPopup::close();
 	}
 	auto oldItem = menus[menuIndex];
 	oldItem->setColor(0x333333FF);
@@ -129,20 +154,7 @@ void WinSetting::onMenuItemClick(Ling::Button* menuItem)
 	menuItem->setHoverColor(0xFFFFFFFF);
 	menuItem->setHoverBg(0x597ef7ff);
 
-	body->removeChild(content);
-	if (menuIndex == 0) {
-		content = body->makeChild<WinSettingCommon>();
-	}
-	else if (menuIndex == 1) {
-		content = body->makeChild<WinSettingShortcut>();
-	}
-	else if (menuIndex == 2) {
-		content = body->makeChild<WinSettingAbout>();
-	}
-	content->setFlexGrow(1.0);
-	content->setHeightPercent(100.f);
-	content->setPadding(20.f,40.f,20.f,40.f);
-	content->setFlexDirection(Ling::FlexDirection::Column);
+	makeContent(menuIndex);
 }
 
 LRESULT WinSetting::onHitTest(const POINT pos)

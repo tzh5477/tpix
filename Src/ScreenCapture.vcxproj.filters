@@ -45,6 +45,9 @@
     <ClCompile Include="Table.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
+    <ClCompile Include="SelectPopup.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
     <ClCompile Include="PinSource.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
@@ -217,6 +220,9 @@
       <Filter>头文件</Filter>
     </ClInclude>
     <ClInclude Include="Table.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="SelectPopup.h">
       <Filter>头文件</Filter>
     </ClInclude>
     <ClInclude Include="PinSource.h">

@@ -1,0 +1,165 @@
+#include "pch.h"
+#include <include/Ling.h>
+#include <algorithm>
+#include "SelectPopup.h"
+#include "App.h"
+
+namespace
+{
+	// 每项高度、列表最高多少（再高就滚动）、以及不窄于多少（逻辑像素）
+	constexpr float itemH{ 30.f };
+	constexpr float listMaxH{ 320.f };
+	constexpr float listMinW{ 120.f };
+
+	class Popup;
+	// 声明在类定义之前：Popup 自己的 onDestroy 里要按地址比对后把它放掉
+	std::unique_ptr<Popup> popup;
+	// 列表开着的时候挂一个低级鼠标钩子，用来发现"点到别处去了"。
+	// 只有它能在宿主窗口之外也收得到点击 —— 宿主自己的 onMouseDown 只能看见自己这一亩地。
+	// WH_MOUSE_LL 不需要 DLL，回调回到装它的那条线程（UI 线程，有消息泵）。
+	HHOOK mouseHook{ nullptr };
+	// 弹出按钮的屏幕矩形（物理像素）。存矩形而不是存指针：宿主换了工具就重建按钮，
+	// 指针会野；矩形的另一个用处是"点在按钮上不算点在外面"，那一下要留给按钮去收起
+	RECT anchorRect{};
+	// 宿主挪位置时列表要跟着收，否则它就悬在原来的屏幕坐标上了。
+	// 不订阅宿主的销毁：所有会让宿主消失的操作（点关闭按钮、切语言后关窗重开）
+	// 那一下点击都落在列表之外，钩子已经先把列表收了
+	Ling::WinBase* ownerWin{ nullptr };
+	winrt::event_token movedTok{};
+
+	class Popup : public Ling::WinBase
+	{
+	public:
+		Popup(std::vector<std::wstring> items, int cur, std::function<void(int)> onPick,
+			std::wstring fontFamily)
+			: items{ std::move(items) }, cur{ cur }, onPick{ std::move(onPick) },
+			fontFamily{ std::move(fontFamily) }
+		{
+			// 不激活：弹出列表不该把输入焦点从宿主那儿抢走，否则文本框会丢光标、
+			// 贴图窗口也可能因为失焦把自己收了。TOPMOST 保证它盖在宿主之上
+			createNativeWindow(WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, WS_POPUP);
+			onDestroy.add([this]() {
+				// 不能在销毁回调里同步 reset 自己
+				Ling::App::get()->dq.TryEnqueue([this]() {
+					if (popup.get() == this) popup.reset();
+				});
+			});
+		}
+		// 鼠标的屏幕坐标（物理像素）是否落在本窗口里
+		bool isScreenPosIn(POINT pt) const
+		{
+			return pt.x >= x && pt.x < x + w && pt.y >= y && pt.y < y + h;
+		}
+	private:
+		void onCreated() override
+		{
+			body->setBg(0xFFFFFFFF);
+			body->setBorder(1.f, 0x597EF766);
+			auto list = body->makeChild<Ling::ScrollerBox>();
+			list->setSizePercent(100.f, 100.f);
+			for (int i = 0; i < (int)items.size(); ++i)
+			{
+				auto btn = list->makeChild<Ling::Button>();
+				btn->setText(items[i]);
+				btn->setHeight(itemH);
+				btn->setWidthPercent(100.f);
+				if (!fontFamily.empty()) btn->setFontFamily(fontFamily);
+				btn->setHoverBg(0xF2F2F2FF);
+				btn->setHoverColor(0x000000FF);
+				// 当前那一档标成选中色，与设置页工具勾选的高亮一致
+				if (i == cur) {
+					btn->setBg(0xE6F4FFFF);
+					btn->setColor(0x597EF7FF);
+				}
+				btn->onClick.add([this, i](Ling::Button*) { picked(i); });
+			}
+			refresh();
+		}
+		void picked(int index)
+		{
+			// 先收起再回调：回调里多半要重画界面（换语言那处甚至是关窗重开），
+			// 列表还挂着的话会跟着一起被卷进去
+			auto cb = std::move(onPick);
+			SelectPopup::close();
+			if (cb) cb(index);
+		}
+	private:
+		std::vector<std::wstring> items;
+		int cur{ -1 };
+		std::function<void(int)> onPick;
+		std::wstring fontFamily;
+	};
+
+	LRESULT CALLBACK hookProc(int code, WPARAM wp, LPARAM lp)
+	{
+		// 每次都要往下传，否则会掐掉别人的鼠标消息
+		if (code >= 0 && popup && (wp == WM_LBUTTONDOWN || wp == WM_RBUTTONDOWN)) {
+			auto* info = reinterpret_cast<MSLLHOOKSTRUCT*>(lp);
+			POINT pt{ info->pt.x, info->pt.y };
+			if (!PtInRect(&anchorRect, pt) && !popup->isScreenPosIn(pt)) SelectPopup::close();
+		}
+		return CallNextHookEx(mouseHook, code, wp, lp);
+	}
+
+}
+
+void SelectPopup::show(Ling::WinBase* owner, Ling::Node* anchor,
+	const std::vector<std::wstring>& items, int cur, std::function<void(int)> onPick,
+	const std::wstring& fontFamily)
+{
+	if (items.empty() || !owner || !anchor) return;
+	// 同一个按钮再点一次就是收起。比对矩形而不是指针：宿主重建按钮后指针就野了
+	if (popup && anchorRect.left == (int)anchor->x && anchorRect.top == (int)anchor->y
+		&& anchorRect.right == (int)(anchor->x + anchor->w)) {
+		close();
+		return;
+	}
+	close();
+
+	auto dpi = owner->dpi > 0.f ? owner->dpi : 1.f;
+	// 列表宽度跟着按钮走，窄按钮也留个下限，不然"紧凑"两个字就把列表压成一条缝
+	auto listW = std::max(anchor->w / dpi, listMinW);
+	auto listH = std::min(listMaxH, itemH * (float)items.size());
+	// 默认往下弹，底下放不下就翻到按钮上方。用按钮所在显示器的工作区判断，
+	// 而不是虚拟桌面整体 —— 副屏在左上时后者会把翻转判错
+	POINT anchorPt{ (int)(anchor->x + anchor->w / 2.f), (int)(anchor->y + anchor->h / 2.f) };
+	MONITORINFO mi{ sizeof(mi) };
+	GetMonitorInfo(MonitorFromPoint(anchorPt, MONITOR_DEFAULTTONEAREST), &mi);
+	auto top = (int)(anchor->y + anchor->h);
+	if (top + (int)(listH * dpi) > mi.rcWork.bottom) top = (int)(anchor->y - listH * dpi);
+	auto left = (int)anchor->x;
+	if (left + (int)(listW * dpi) > mi.rcWork.right) left = mi.rcWork.right - (int)(listW * dpi);
+
+	anchorRect = RECT{ (int)anchor->x, (int)anchor->y,
+		(int)(anchor->x + anchor->w), (int)(anchor->y + anchor->h) };
+	popup = std::make_unique<Popup>(items, cur, std::move(onPick), fontFamily);
+	// WinBase 的 x/y 是物理像素，直接赋值；setter 收的是逻辑像素
+	popup->x = left;
+	popup->y = top;
+	popup->w = listW * dpi;
+	popup->h = listH * dpi;
+	popup->show();
+	ownerWin = owner;
+	movedTok = owner->onMoved.add([]() { SelectPopup::close(); });
+	mouseHook = SetWindowsHookEx(WH_MOUSE_LL, hookProc, nullptr, 0);
+}
+
+void SelectPopup::close()
+{
+	if (mouseHook) {
+		UnhookWindowsHookEx(mouseHook);
+		mouseHook = nullptr;
+	}
+	if (ownerWin) {
+		ownerWin->onMoved.remove(movedTok);
+		ownerWin = nullptr;
+	}
+	if (!popup) return;
+	// 只销毁窗口句柄，C++ 对象推迟到下一轮消息循环 —— 收起多半是从某次点击的栈上发起的
+	popup->close();
+}
+
+bool SelectPopup::isOpen()
+{
+	return popup != nullptr;
+}

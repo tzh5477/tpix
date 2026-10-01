@@ -1,8 +1,10 @@
 ﻿#include "pch.h"
 #include <shobjidl.h>
+#include <algorithm>
 #include "../Lang.h"
 #include "../GlobalMouse.h"
 #include "../Ocr.h"
+#include "../SelectPopup.h"
 #include "../Setting.h"
 #include "../Util.h"
 #include "WinSetting.h"
@@ -10,6 +12,10 @@
 #include "WinHistory.h"
 
 namespace {
+    // 开 / 关两项：图标字体里的叉与勾，和开关按钮上显示的是同一对码位，
+    // 所以不用另起一套「开 / 关」译名。关在前开在后，下标正好能当 bool 用
+    const std::vector<std::wstring> onOffItems{ L"\ue687", L"\ue688" };
+
     // 选目录对话框。返回 false 表示用户取消或调用失败，out 不动
     bool pickFolder(HWND hwnd, std::wstring& out)
     {
@@ -70,18 +76,15 @@ WinSettingCommon::WinSettingCommon(Ling::WinBase* parent):Ling::Node(parent)
     initPinCtrls();
     initOcrCtrls();
     initConfigCtrls();
-    auto weakThis = getWeakThis();
-    // 这个回调一直挂在窗口上，而本节点可能在窗口关闭之前就被菜单切换换掉了，
-    // 所以先确认自己还活着再去碰成员
-    win->onDestroy.add([this, weakThis]() {
-        if (!weakThis.lock()) return;
-        this->hideSelectBox();
+    // 窗口关掉时把还开着的列表一起收掉。列表是独立窗口，不会跟着本节点走
+    win->onDestroy.add([]() {
+        SelectPopup::close();
     });
 }
 
 WinSettingCommon::~WinSettingCommon()
 {
-    win->onMouseDown.remove(onMouseDownToken);
+    SelectPopup::close();
 }
 
 void WinSettingCommon::initAutoStartCtrls()
@@ -105,11 +108,13 @@ void WinSettingCommon::initAutoStartCtrls()
     btn->setWidth(60.f);
     setAutoStartBtn(btn);
 
-    btn->onClick.add([this](Ling::Button* btn) {
-        auto setting = Setting::get();
-        auto isAutoStart = setting->getAutoStart();
-        setting->setAutoStart(!isAutoStart);
-        setAutoStartBtn(btn);
+    btn->onClick.add([this](Ling::Button* b) {
+        SelectPopup::show(win, b, onOffItems, Setting::get()->getAutoStart() ? 1 : 0,
+            [this, b](int idx) {
+                Setting::get()->setAutoStart(idx == 1);
+                // 写注册表可能失败，按钮上显示的是真正读回来的状态，不是刚想设的那个
+                setAutoStartBtn(b);
+            }, L"icon");
     });
 
     auto border = makeChild<Ling::Node>();
@@ -132,23 +137,37 @@ void WinSettingCommon::initLangCtrls()
 
     auto langCode = Setting::get()->getLang();
     auto langs = Lang::get()->getSupportedLang();
-    std::wstring langName{ L"简体中文" };
+    std::vector<std::wstring> items;
+    int idx{ 0 };
     for (auto& pair:langs)
     {
-        if (pair.second == langCode) {
-            langName = pair.first;
-            break;
-        }
+        if (pair.second == langCode) idx = (int)items.size();
+        items.push_back(pair.first);
     }
-    selectBtn = box->makeChild<Ling::Button>();
-    selectBtn->setText(langName);
-    selectBtn->setHeight(28.f);
-    selectBtn->setWidth(160.f);
-    selectBtn->setBorder(1.f, 0xE0E0E0FF);
-    selectBtn->setHoverBg(0XFFFFFFFF);
-    selectBtn->onClick.add([this](Ling::Button* btn) {
-        if (selectBox) return;
-        this->showSelectBox(btn);
+    // 最后另起一项去下载更多语言包：它不是选项，选中了只是打开仓库目录
+    auto moreIdx = (int)items.size();
+    items.push_back(Lang::get(L"setting.getMoreLang"));
+
+    auto btn = box->makeChild<Ling::Button>();
+    btn->setText(items[idx]);
+    btn->setHeight(28.f);
+    btn->setWidth(160.f);
+    btn->setBorder(1.f, 0xE0E0E0FF);
+    btn->setHoverBg(0XFFFFFFFF);
+    btn->onClick.add([this, langs, items, moreIdx](Ling::Button* b) {
+        SelectPopup::show(win, b, items, -1, [this, langs, moreIdx](int i) {
+            if (i == moreIdx) {
+                std::wstring url{ L"https://github.com/xland/ScreenCapture/tree/main/Lang" };
+                ShellExecute(win->hwnd, L"open", url.data(), nullptr, nullptr, SW_SHOWNORMAL);
+                return;
+            }
+            Setting::get()->setLang(langs[i].second);
+            // 界面上每一句都要换成新语言，逐个节点改不如关掉重开
+            win->close();
+            Ling::App::get()->dq.TryEnqueue([]() {
+                WinSetting::init();
+            });
+        });
         });
     auto border = makeChild<Ling::Node>();
     border->setHeight(1.f);
@@ -252,220 +271,147 @@ Ling::Node* WinSettingCommon::makeRow(const std::wstring& labelKey)
     return box;
 }
 
-void WinSettingCommon::initCapCtrls()
+Ling::Button* WinSettingCommon::makeSelectBtn(Ling::Node* row, float width,
+    const std::vector<std::wstring>& items, int cur, std::function<void(int)> onPick)
 {
-    // 开 / 关两套配色，与 ToolSub::applyToggleStyle、initPinCtrls 里的保持一致
-    auto applySwitch = [](Ling::Button* btn, bool on) {
+    // 夹一下：cur 多半是从配置文件读回来的，被手工改坏就会取到表外
+    cur = std::clamp(cur, 0, (int)items.size() - 1);
+    auto btn = row->makeChild<Ling::Button>();
+    btn->setHeight(28.f);
+    btn->setWidth(width);
+    btn->setBorder(1.f, 0xE0E0E0FF);
+    btn->setHoverBg(0xFFFFFFFF);
+    btn->setText(items[cur]);
+    // items 按值进闭包：选完要拿它把按钮上的字换掉，而那时列表已经收了、调用方也不再持有它
+    btn->onClick.add([this, btn, items, onPick](Ling::Button*) {
+        SelectPopup::show(win, btn, items, -1, [btn, items, onPick](int idx) {
+            onPick(idx);
+            btn->setText(items[idx]);
+        });
+    });
+    return btn;
+}
+
+Ling::Button* WinSettingCommon::makeSwitchBtn(Ling::Node* row,
+    std::function<bool()> read, std::function<void(bool)> write)
+{
+    auto btn = row->makeChild<Ling::Button>();
+    btn->setFontFamily(L"icon");
+    btn->setHeightPercent(100.f);
+    btn->setFontSize(18.f);
+    btn->setWidth(60.f);
+    auto apply = [btn](bool on) {
         btn->setText(on ? L"\ue688" : L"\ue687");
         btn->setColor(on ? 0x597ef7ff : 0x666666FF);
         btn->setHoverColor(on ? 0x597ef7ff : 0x666666FF);
     };
+    apply(read());
+    btn->onClick.add([this, btn, read, write, apply](Ling::Button*) {
+        SelectPopup::show(win, btn, onOffItems, read() ? 1 : 0,
+            [write, apply](int idx) {
+                apply(idx == 1);
+                write(idx == 1);
+            }, L"icon");
+    });
+    return btn;
+}
+
+void WinSettingCommon::initCapCtrls()
+{
     // 延时：0 就是关。给固定几档而不是自由输入 —— 这几秒是用来摆菜单、等悬停态的，
     // 真要精确到 7 秒的场景不存在
     constexpr int delayOpts[]{ 0, 2, 3, 5, 10 };
+    std::vector<std::wstring> delayItems;
+    for (auto v : delayOpts) {
+        delayItems.push_back(v == 0 ? Lang::get(L"setting.delayOff")
+            : std::to_wstring(v) + Lang::get(L"setting.sec"));
+    }
+    auto curDelay = Setting::get()->getCapDelay();
+    int delayIdx{ 0 };
+    for (int i = 0; i < 5; ++i) {
+        if (delayOpts[i] == curDelay) { delayIdx = i; break; }
+    }
     auto delayRow = makeRow(L"setting.capDelay");
-    auto delayBtn = delayRow->makeChild<Ling::Button>();
-    delayBtn->setHeight(28.f);
-    delayBtn->setWidth(80.f);
-    delayBtn->setBorder(1.f, 0xE0E0E0FF);
-    delayBtn->setHoverBg(0xFFFFFFFF);
-    auto applyDelay = [delayOpts](Ling::Button* btn) {
-        auto cur = Setting::get()->getCapDelay();
-        int idx{ 0 };
-        for (int i = 0; i < 5; ++i) {
-            if (delayOpts[i] == cur) { idx = i; break; }
-        }
-        btn->setText(delayOpts[idx] == 0 ? Lang::get(L"setting.delayOff")
-            : std::to_wstring(delayOpts[idx]) + Lang::get(L"setting.sec"));
-    };
-    applyDelay(delayBtn);
-    delayBtn->onClick.add([delayOpts, applyDelay](Ling::Button* btn) {
-        auto cur = Setting::get()->getCapDelay();
-        int idx{ 0 };
-        for (int i = 0; i < 5; ++i) {
-            if (delayOpts[i] == cur) { idx = i; break; }
-        }
-        Setting::get()->setCapDelay(delayOpts[(idx + 1) % 5]);
-        applyDelay(btn);
-    });
+    makeSelectBtn(delayRow, 80.f, delayItems, delayIdx,
+        [delayOpts](int idx) { Setting::get()->setCapDelay(delayOpts[idx]); });
 
     // 框选形状。真要用的时候不必先来设置页改 —— 框选时按住 Alt 拖动就是手绘
     auto shapeRow = makeRow(L"setting.capShape");
-    auto shapeBtn = shapeRow->makeChild<Ling::Button>();
-    shapeBtn->setHeight(28.f);
-    shapeBtn->setWidth(80.f);
-    shapeBtn->setBorder(1.f, 0xE0E0E0FF);
-    shapeBtn->setHoverBg(0xFFFFFFFF);
-    auto applyShape = [](Ling::Button* btn) {
-        btn->setText(Lang::get(Setting::get()->getCapShape() == 1
-            ? L"setting.polyShape" : L"setting.rectShape"));
-    };
-    applyShape(shapeBtn);
-    shapeBtn->onClick.add([applyShape](Ling::Button* btn) {
-        Setting::get()->setCapShape(Setting::get()->getCapShape() == 1 ? 0 : 1);
-        applyShape(btn);
-    });
+    makeSelectBtn(shapeRow, 80.f,
+        { Lang::get(L"setting.rectShape"), Lang::get(L"setting.polyShape") },
+        Setting::get()->getCapShape() == 1 ? 1 : 0,
+        [](int idx) { Setting::get()->setCapShape(idx); });
 
     // 固定尺寸区域：0 号预设是"不固定"
-    auto fixRow = makeRow(L"setting.capFixed");
-    auto fixBtn = fixRow->makeChild<Ling::Button>();
-    fixBtn->setHeight(28.f);
-    fixBtn->setWidth(100.f);
-    fixBtn->setBorder(1.f, 0xE0E0E0FF);
-    fixBtn->setHoverBg(0xFFFFFFFF);
-    auto applyFix = [](Ling::Button* btn) {
-        auto idx = Setting::get()->getCapFixedIdx();
+    auto& presets = Setting::fixedSizePresets();
+    std::vector<std::wstring> fixItems;
+    for (int i = 0; i < (int)presets.size(); ++i) {
         int w{ 0 }, h{ 0 };
-        btn->setText(Setting::fixedSize(idx, w, h)
+        fixItems.push_back(Setting::fixedSize(i, w, h)
             ? std::to_wstring(w) + L" × " + std::to_wstring(h)
             : Lang::get(L"setting.delayOff"));
-    };
-    applyFix(fixBtn);
-    fixBtn->onClick.add([applyFix](Ling::Button* btn) {
-        auto& presets = Setting::fixedSizePresets();
-        Setting::get()->setCapFixedIdx((Setting::get()->getCapFixedIdx() + 1) % (int)presets.size());
-        applyFix(btn);
-    });
+    }
+    auto fixRow = makeRow(L"setting.capFixed");
+    makeSelectBtn(fixRow, 100.f, fixItems, Setting::get()->getCapFixedIdx(),
+        [](int idx) { Setting::get()->setCapFixedIdx(idx); });
 
-    auto fxRow = makeRow(L"setting.clickFx");
-    auto fxBtn = fxRow->makeChild<Ling::Button>();
-    fxBtn->setFontFamily(L"icon");
-    fxBtn->setHeightPercent(100.f);
-    fxBtn->setFontSize(18.f);
-    fxBtn->setWidth(60.f);
-    applySwitch(fxBtn, Setting::get()->getClickFx());
-    fxBtn->onClick.add([applySwitch](Ling::Button* btn) {
-        auto next = !Setting::get()->getClickFx();
-        Setting::get()->setClickFx(next);
-        applySwitch(btn, next);
-    });
+    makeSwitchBtn(makeRow(L"setting.clickFx"),
+        [] { return Setting::get()->getClickFx(); },
+        [](bool on) { Setting::get()->setClickFx(on); });
 
     // 全局鼠标：按住 Win 键拖动就出结果。开关一动就装 / 卸钩子
-    auto mouseRow = makeRow(L"setting.globalMouse");
-    auto mouseBtn = mouseRow->makeChild<Ling::Button>();
-    mouseBtn->setFontFamily(L"icon");
-    mouseBtn->setHeightPercent(100.f);
-    mouseBtn->setFontSize(18.f);
-    mouseBtn->setWidth(60.f);
-    applySwitch(mouseBtn, Setting::get()->getGlobalMouse());
-    mouseBtn->onClick.add([applySwitch](Ling::Button* btn) {
-        auto next = !Setting::get()->getGlobalMouse();
-        Setting::get()->setGlobalMouse(next);
-        GlobalMouse::setEnabled(next);
-        applySwitch(btn, next);
-    });
+    makeSwitchBtn(makeRow(L"setting.globalMouse"),
+        [] { return Setting::get()->getGlobalMouse(); },
+        [](bool on) {
+            Setting::get()->setGlobalMouse(on);
+            GlobalMouse::setEnabled(on);
+        });
 
-    auto cursorRow = makeRow(L"setting.includeCursor");
-    auto cursorBtn = cursorRow->makeChild<Ling::Button>();
-    cursorBtn->setFontFamily(L"icon");
-    cursorBtn->setHeightPercent(100.f);
-    cursorBtn->setFontSize(18.f);
-    cursorBtn->setWidth(60.f);
-    applySwitch(cursorBtn, Setting::get()->getIncludeCursor());
-    cursorBtn->onClick.add([applySwitch](Ling::Button* btn) {
-        auto next = !Setting::get()->getIncludeCursor();
-        Setting::get()->setIncludeCursor(next);
-        applySwitch(btn, next);
-    });
+    makeSwitchBtn(makeRow(L"setting.includeCursor"),
+        [] { return Setting::get()->getIncludeCursor(); },
+        [](bool on) { Setting::get()->setIncludeCursor(on); });
 
-    auto shotRow = makeRow(L"setting.autoShot");
-    auto shotBtn = shotRow->makeChild<Ling::Button>();
-    shotBtn->setFontFamily(L"icon");
-    shotBtn->setHeightPercent(100.f);
-    shotBtn->setFontSize(18.f);
-    shotBtn->setWidth(60.f);
-    applySwitch(shotBtn, Setting::get()->getAutoShot());
-    shotBtn->onClick.add([applySwitch](Ling::Button* btn) {
-        auto next = !Setting::get()->getAutoShot();
-        Setting::get()->setAutoShot(next);
-        applySwitch(btn, next);
-    });
+    makeSwitchBtn(makeRow(L"setting.autoShot"),
+        [] { return Setting::get()->getAutoShot(); },
+        [](bool on) { Setting::get()->setAutoShot(on); });
 
     // 间隔：定时截图是无人值守的，太密会把硬盘堆满，给到分钟这一档
     constexpr int minOpts[]{ 1, 5, 10, 30, 60 };
+    std::vector<std::wstring> minItems;
+    for (auto v : minOpts) minItems.push_back(std::to_wstring(v) + Lang::get(L"setting.min"));
+    auto curMin = Setting::get()->getAutoShotMin();
+    int minIdx{ 0 };
+    for (int i = 0; i < 5; ++i) {
+        if (minOpts[i] == curMin) { minIdx = i; break; }
+    }
     auto minRow = makeRow(L"setting.autoShotMin");
-    auto minBtn = minRow->makeChild<Ling::Button>();
-    minBtn->setHeight(28.f);
-    minBtn->setWidth(80.f);
-    minBtn->setBorder(1.f, 0xE0E0E0FF);
-    minBtn->setHoverBg(0xFFFFFFFF);
-    auto applyMin = [minOpts](Ling::Button* btn) {
-        auto cur = Setting::get()->getAutoShotMin();
-        int idx{ 0 };
-        for (int i = 0; i < 5; ++i) {
-            if (minOpts[i] == cur) { idx = i; break; }
-        }
-        btn->setText(std::to_wstring(minOpts[idx]) + Lang::get(L"setting.min"));
-    };
-    applyMin(minBtn);
-    minBtn->onClick.add([minOpts, applyMin](Ling::Button* btn) {
-        auto cur = Setting::get()->getAutoShotMin();
-        int idx{ 0 };
-        for (int i = 0; i < 5; ++i) {
-            if (minOpts[i] == cur) { idx = i; break; }
-        }
-        Setting::get()->setAutoShotMin(minOpts[(idx + 1) % 5]);
-        applyMin(btn);
-    });
+    makeSelectBtn(minRow, 80.f, minItems, minIdx,
+        [minOpts](int idx) { Setting::get()->setAutoShotMin(minOpts[idx]); });
 
     // 滚动截图方向。只是个默认值：真滚起来发现这个方向滚不动，CapLong 会自己换一次向
     auto dirRow = makeRow(L"setting.longDir");
-    auto dirBtn = dirRow->makeChild<Ling::Button>();
-    dirBtn->setHeight(28.f);
-    dirBtn->setWidth(80.f);
-    dirBtn->setBorder(1.f, 0xE0E0E0FF);
-    dirBtn->setHoverBg(0xFFFFFFFF);
-    auto applyDir = [](Ling::Button* btn) {
-        btn->setText(Lang::get(Setting::get()->getLongHorizontal()
-            ? L"long.horizontal" : L"long.vertical"));
-    };
-    applyDir(dirBtn);
-    dirBtn->onClick.add([applyDir](Ling::Button* btn) {
-        Setting::get()->setLongHorizontal(!Setting::get()->getLongHorizontal());
-        applyDir(btn);
-    });
+    makeSelectBtn(dirRow, 80.f,
+        { Lang::get(L"long.vertical"), Lang::get(L"long.horizontal") },
+        Setting::get()->getLongHorizontal() ? 1 : 0,
+        [](int idx) { Setting::get()->setLongHorizontal(idx == 1); });
 }
 
 void WinSettingCommon::initSaveCtrls()
 {
-    // 保存格式：三种循环切换，按钮上直接写扩展名（大写），比另起一套译名更不容易对不上
+    // 保存格式：选项直接写扩展名（大写），比另起一套译名更不容易对不上
+    std::vector<std::wstring> fmtItems;
+    for (int i = 0; i < 3; ++i) {
+        auto ext = Util::getExtOfFormat((Util::ImgFormat)i);
+        for (auto& c : ext) if (c >= L'a' && c <= L'z') c -= 32;
+        fmtItems.push_back(ext);
+    }
     auto fmtRow = makeRow(L"setting.saveFormat");
-    auto fmtBtn = fmtRow->makeChild<Ling::Button>();
-    fmtBtn->setHeight(28.f);
-    fmtBtn->setWidth(80.f);
-    fmtBtn->setBorder(1.f, 0xE0E0E0FF);
-    fmtBtn->setHoverBg(0xFFFFFFFF);
-    auto applyFormat = [](Ling::Button* btn) {
-        auto ext = Util::getExtOfFormat((Util::ImgFormat)Util::getSaveFormat());
-        std::wstring upper;
-        for (auto c : ext) upper += (wchar_t)(c >= L'a' && c <= L'z' ? c - 32 : c);
-        btn->setText(upper);
-    };
-    applyFormat(fmtBtn);
-    fmtBtn->onClick.add([applyFormat](Ling::Button* btn) {
-        auto next = (Util::getSaveFormat() + 1) % 3;
-        Setting::get()->setSaveFormat(next);
-        applyFormat(btn);
-    });
+    makeSelectBtn(fmtRow, 80.f, fmtItems, Util::getSaveFormat(),
+        [](int idx) { Setting::get()->setSaveFormat(idx); });
 
-    auto autoRow = makeRow(L"setting.autoSave");
-    auto autoBtn = autoRow->makeChild<Ling::Button>();
-    autoBtn->setFontFamily(L"icon");
-    autoBtn->setHeightPercent(100.f);
-    autoBtn->setFontSize(18.f);
-    autoBtn->setWidth(60.f);
-    auto applyAutoSave = [](Ling::Button* btn, bool on) {
-        btn->setText(on ? L"\ue688" : L"\ue687");
-        btn->setColor(on ? 0x597ef7ff : 0x666666FF);
-        btn->setHoverColor(on ? 0x597ef7ff : 0x666666FF);
-    };
-    applyAutoSave(autoBtn, Setting::get()->getAutoSave());
-    autoBtn->onClick.add([applyAutoSave](Ling::Button* btn) {
-        auto setting = Setting::get();
-        auto next = !setting->getAutoSave();
-        setting->setAutoSave(next);
-        applyAutoSave(btn, next);
-    });
+    makeSwitchBtn(makeRow(L"setting.autoSave"),
+        [] { return Setting::get()->getAutoSave(); },
+        [](bool on) { Setting::get()->setAutoSave(on); });
 
     auto dirRow = makeRow(L"setting.saveDir");
     auto dirBtn = dirRow->makeChild<Ling::Button>();
@@ -499,71 +445,28 @@ void WinSettingCommon::initSaveCtrls()
     });
 
     // 复制后自动粘贴到截图前那个窗口
-    auto pasteRow = makeRow(L"setting.autoPaste");
-    auto pasteBtn = pasteRow->makeChild<Ling::Button>();
-    pasteBtn->setFontFamily(L"icon");
-    pasteBtn->setHeightPercent(100.f);
-    pasteBtn->setFontSize(18.f);
-    pasteBtn->setWidth(60.f);
-    auto applyPaste = [](Ling::Button* btn, bool on) {
-        btn->setText(on ? L"\ue688" : L"\ue687");
-        btn->setColor(on ? 0x597ef7ff : 0x666666FF);
-        btn->setHoverColor(on ? 0x597ef7ff : 0x666666FF);
-    };
-    applyPaste(pasteBtn, Setting::get()->getAutoPaste());
-    pasteBtn->onClick.add([applyPaste](Ling::Button* b) {
-        auto next = !Setting::get()->getAutoPaste();
-        Setting::get()->setAutoPaste(next);
-        applyPaste(b, next);
-    });
+    makeSwitchBtn(makeRow(L"setting.autoPaste"),
+        [] { return Setting::get()->getAutoPaste(); },
+        [](bool on) { Setting::get()->setAutoPaste(on); });
 }
 
 void WinSettingCommon::initHistoryCtrls()
 {
     // 上限不做自由输入：历史条目的成本是磁盘上一整张原图，给个滑杆反而容易填出个 10000
     constexpr int limitOpts[]{ 50, 100, 200, 500 };
+    std::vector<std::wstring> limitItems;
+    int limitIdx{ 0 };
+    for (int i = 0; i < 4; ++i) {
+        limitItems.push_back(std::to_wstring(limitOpts[i]));
+        if (limitOpts[i] == Setting::get()->getHistoryLimit()) limitIdx = i;
+    }
     auto limitRow = makeRow(L"setting.historyLimit");
-    auto limitBtn = limitRow->makeChild<Ling::Button>();
-    limitBtn->setHeight(28.f);
-    limitBtn->setWidth(80.f);
-    limitBtn->setBorder(1.f, 0xE0E0E0FF);
-    limitBtn->setHoverBg(0xFFFFFFFF);
-    auto applyLimit = [limitOpts](Ling::Button* btn) {
-        auto cur = Setting::get()->getHistoryLimit();
-        int idx{ 0 };
-        for (int i = 0; i < 4; ++i) {
-            if (limitOpts[i] == cur) { idx = i; break; }
-        }
-        btn->setText(std::to_wstring(limitOpts[idx]));
-    };
-    applyLimit(limitBtn);
-    limitBtn->onClick.add([limitOpts, applyLimit](Ling::Button* btn) {
-        auto cur = Setting::get()->getHistoryLimit();
-        int idx{ 0 };
-        for (int i = 0; i < 4; ++i) {
-            if (limitOpts[i] == cur) { idx = i; break; }
-        }
-        Setting::get()->setHistoryLimit(limitOpts[(idx + 1) % 4]);
-        applyLimit(btn);
-    });
+    makeSelectBtn(limitRow, 80.f, limitItems, limitIdx,
+        [limitOpts](int idx) { Setting::get()->setHistoryLimit(limitOpts[idx]); });
 
-    auto clipRow = makeRow(L"setting.clipboardHistory");
-    auto clipBtn = clipRow->makeChild<Ling::Button>();
-    clipBtn->setFontFamily(L"icon");
-    clipBtn->setHeightPercent(100.f);
-    clipBtn->setFontSize(18.f);
-    clipBtn->setWidth(60.f);
-    auto applyClip = [](Ling::Button* btn, bool on) {
-        btn->setText(on ? L"\ue688" : L"\ue687");
-        btn->setColor(on ? 0x597ef7ff : 0x666666FF);
-        btn->setHoverColor(on ? 0x597ef7ff : 0x666666FF);
-    };
-    applyClip(clipBtn, Setting::get()->getClipboardHistory());
-    clipBtn->onClick.add([applyClip](Ling::Button* btn) {
-        auto next = !Setting::get()->getClipboardHistory();
-        Setting::get()->setClipboardHistory(next);
-        applyClip(btn, next);
-    });
+    makeSwitchBtn(makeRow(L"setting.clipboardHistory"),
+        [] { return Setting::get()->getClipboardHistory(); },
+        [](bool on) { Setting::get()->setClipboardHistory(on); });
 
     auto openRow = makeRow(L"setting.openHistory");
     auto openBtn = openRow->makeChild<Ling::Button>();
@@ -577,23 +480,9 @@ void WinSettingCommon::initHistoryCtrls()
 
 void WinSettingCommon::initPinCtrls()
 {
-    auto row = makeRow(L"setting.restorePins");
-    auto btn = row->makeChild<Ling::Button>();
-    btn->setFontFamily(L"icon");
-    btn->setHeightPercent(100.f);
-    btn->setFontSize(18.f);
-    btn->setWidth(60.f);
-    auto apply = [](Ling::Button* btn, bool on) {
-        btn->setText(on ? L"\ue688" : L"\ue687");
-        btn->setColor(on ? 0x597ef7ff : 0x666666FF);
-        btn->setHoverColor(on ? 0x597ef7ff : 0x666666FF);
-    };
-    apply(btn, Setting::get()->getRestorePins());
-    btn->onClick.add([apply](Ling::Button* b) {
-        auto next = !Setting::get()->getRestorePins();
-        Setting::get()->setRestorePins(next);
-        apply(b, next);
-    });
+    makeSwitchBtn(makeRow(L"setting.restorePins"),
+        [] { return Setting::get()->getRestorePins(); },
+        [](bool on) { Setting::get()->setRestorePins(on); });
 }
 
 void WinSettingCommon::initConfigCtrls()
@@ -642,35 +531,25 @@ void WinSettingCommon::initOcrCtrls()
 {
     auto langs = Ocr::languages();
     auto row = makeRow(L"setting.ocrLang");
-    auto btn = row->makeChild<Ling::Button>();
-    btn->setHeight(28.f);
-    btn->setWidth(140.f);
-    btn->setBorder(1.f, 0xE0E0E0FF);
-    btn->setHoverBg(0xFFFFFFFF);
     if (langs.empty()) {
-        // 一个识别语言包都没装：这行只能当提示用，点了也没得切
+        // 一个识别语言包都没装：这行只能当提示用，点开了也没得选
+        auto btn = row->makeChild<Ling::Button>();
+        btn->setHeight(28.f);
+        btn->setWidth(140.f);
+        btn->setBorder(1.f, 0xE0E0E0FF);
         btn->setText(Lang::get(L"ocr.notInstalled"));
         return;
     }
-    auto apply = [langs](Ling::Button* b) {
-        auto tag = Setting::get()->getToolStr(L"ocr", L"lang", L"");
-        auto name = std::wstring{ Lang::get(L"ocr.langAuto") };
-        for (auto const& lang : langs) {
-            if (lang.tag == tag) { name = lang.name; break; }
-        }
-        b->setText(name);
-    };
-    apply(btn);
-    btn->onClick.add([langs, apply](Ling::Button* b) {
-        auto tag = Setting::get()->getToolStr(L"ocr", L"lang", L"");
-        // 空标签（跟随系统）算第 0 项，之后依次是列表里的每一项
-        int idx{ 0 };
-        for (int i = 0; i < static_cast<int>(langs.size()); ++i) {
-            if (langs[i].tag == tag) { idx = i + 1; break; }
-        }
-        auto next = (idx + 1) % static_cast<int>(langs.size() + 1);
-        Setting::get()->setToolStr(L"ocr", L"lang", next == 0 ? L"" : langs[next - 1].tag);
-        apply(b);
+    // 空标签（跟随系统）是第 0 项，之后依次是每个已装的语言包
+    std::vector<std::wstring> items{ Lang::get(L"ocr.langAuto") };
+    for (auto const& lang : langs) items.push_back(lang.name);
+    auto tag = Setting::get()->getToolStr(L"ocr", L"lang", L"");
+    int idx{ 0 };
+    for (int i = 0; i < (int)langs.size(); ++i) {
+        if (langs[i].tag == tag) { idx = i + 1; break; }
+    }
+    makeSelectBtn(row, 140.f, items, idx, [langs](int i) {
+        Setting::get()->setToolStr(L"ocr", L"lang", i == 0 ? L"" : langs[i - 1].tag);
     });
 }
 
@@ -690,76 +569,3 @@ void WinSettingCommon::setAutoStartBtn(Ling::Button* btn)
     }
 }
 
-void WinSettingCommon::hideSelectBox()
-{
-    if (!selectBox) return;
-    win->onMouseDown.remove(onMouseDownToken);
-    win->body->removeChild(selectBox);
-    selectBox = nullptr;
-}
-
-void WinSettingCommon::showSelectBox(Ling::Button* btn)
-{
-    auto weakThis = getWeakThis();
-    onMouseDownToken = win->onMouseDown.add([this,weakThis](POINT pos, bool isRight) {
-        if (!weakThis.lock()) return;
-        if (!this->selectBox) return;
-        if (this->selectBtn->isPosIn(pos)) return;
-        if (this->selectBox->isPosIn(pos)) return;
-        win->body->removeChild(selectBox);
-        this->selectBox = nullptr;
-        this->win->onMouseDown.remove(this->onMouseDownToken);
-    });
-    if (selectBox) {
-        win->body->removeChild(selectBox);
-    }
-    auto langs = Lang::get()->getSupportedLang();
-    auto itemH{ 30.f };
-    auto totalH = std::min(320.f, itemH * (langs.size()+1));
-
-    selectBox = win->body->makeChild<Ling::ScrollerBox>();
-    selectBox->setSize(btn->w/win->dpi, totalH);
-    selectBox->setPositionType(Ling::Position::Absolute);
-    selectBox->setPosition(Ling::Edge::Left, btn->x/win->dpi);
-    selectBox->setPosition(Ling::Edge::Top, btn->y/win->dpi);
-    selectBox->setBg(0xFFFFFFFF);
-    selectBox->setBorder(1.f, 0x597ef766);
-    for (auto& pair:langs)
-    {
-        auto btn = selectBox->makeChild<Ling::Button>();
-        btn->setText(pair.first);
-        btn->setHeight(itemH);
-        btn->setWidthPercent(100.f);
-        btn->setHoverBg(0Xf2f2f2FF);
-        btn->setHoverColor(0X000000FF);
-        btn->onClick.add([this](Ling::Button* btn) {
-            auto lang = Lang::get();
-            auto langName = btn->getText();
-            auto langs = lang->getSupportedLang();
-            for (auto& pair : langs)
-            {
-                if (pair.first == langName) {
-                    Setting::get()->setLang(pair.second);
-                    win->close();
-                    Ling::App::get()->dq.TryEnqueue([this]() {
-                        WinSetting::init();
-                    });
-                    break;
-                }
-            }
-        });
-    }
-    auto lastItem = selectBox->makeChild<Ling::Button>();
-    lastItem->setText(Lang::get(L"setting.getMoreLang"));
-    lastItem->setHeight(itemH);
-    lastItem->setWidthPercent(100.f);
-    lastItem->setHoverBg(0Xf2f2f2FF);
-    lastItem->setHoverColor(0X000000FF);
-    lastItem->onClick.add([this](Ling::Button* btn) {
-        win->onMouseDown.remove(onMouseDownToken);
-        std::wstring downloadUrl{ L"https://github.com/xland/ScreenCapture/tree/main/Lang" };
-        ShellExecute(win->hwnd, L"open", downloadUrl.data(), nullptr, nullptr, SW_SHOWNORMAL);
-        win->body->removeChild(selectBox);
-        selectBox = nullptr;
-    });
-}

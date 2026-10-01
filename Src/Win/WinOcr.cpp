@@ -2,6 +2,7 @@
 #include <thread>
 #include "../Lang.h"
 #include "../Ocr.h"
+#include "../SelectPopup.h"
 #include "../Setting.h"
 #include "../ShotHistory.h"
 #include "../Table.h"
@@ -70,12 +71,17 @@ void WinOcr::onCreated()
 	langBtn->setWidth(140.f);
 	langBtn->setBorder(1.f, 0xE0E0E0FF);
 	langBtn->setHoverBg(0xF2F2F2FF);
-	langBtn->onClick.add([this](Ling::Button*) {
+	langBtn->onClick.add([this](Ling::Button* b) {
 		if (langs.empty()) return;
-		langIndex = (langIndex + 1) % static_cast<int>(langs.size() + 1);
-		Setting::get()->setToolStr(L"ocr", L"lang", curLangTag());
-		applyLangBtn();
-		startRecognize();
+		// 第 0 项是跟随系统，之后依次是装了的每个语言包
+		std::vector<std::wstring> items{ Lang::get(L"ocr.langAuto") };
+		for (auto const& lang : langs) items.push_back(lang.name);
+		SelectPopup::show(this, b, items, langIndex, [this](int idx) {
+			langIndex = idx;
+			Setting::get()->setToolStr(L"ocr", L"lang", curLangTag());
+			applyLangBtn();
+			startRecognize();
+		});
 	});
 	// 记住上次选的；没装的语言包（卸载了）认不出来，退回跟随系统
 	auto saved = Setting::get()->getToolStr(L"ocr", L"lang", L"");
@@ -92,10 +98,13 @@ void WinOcr::onCreated()
 	tableBtn->setWidth(90.f);
 	tableBtn->setBorder(1.f, 0xE0E0E0FF);
 	tableBtn->setHoverBg(0xF2F2F2FF);
-	tableBtn->onClick.add([this](Ling::Button*) {
-		tableMode = !tableMode;
-		applyTableBtn();
-		startRecognize();
+	tableBtn->onClick.add([this](Ling::Button* b) {
+		std::vector<std::wstring> items{ Lang::get(L"ocr.text"), Lang::get(L"ocr.table") };
+		SelectPopup::show(this, b, items, tableMode ? 1 : 0, [this](int idx) {
+			tableMode = idx == 1;
+			applyTableBtn();
+			startRecognize();
+		});
 	});
 	applyTableBtn();
 

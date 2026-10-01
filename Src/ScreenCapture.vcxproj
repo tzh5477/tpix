@@ -186,6 +186,7 @@
     <ClCompile Include="AnimImage.cpp" />
     <ClCompile Include="Ocr.cpp" />
     <ClCompile Include="Table.cpp" />
+    <ClCompile Include="SelectPopup.cpp" />
     <ClCompile Include="PinSource.cpp" />
     <ClCompile Include="ShotHistory.cpp" />
     <ClCompile Include="Shape\ShapeWatermark.cpp" />
@@ -281,6 +282,7 @@
     <ClInclude Include="AnimImage.h" />
     <ClInclude Include="Ocr.h" />
     <ClInclude Include="Table.h" />
+    <ClInclude Include="SelectPopup.h" />
     <ClInclude Include="PinSource.h" />
     <ClInclude Include="ShotHistory.h" />
     <ClInclude Include="Win\WinBall.h" />

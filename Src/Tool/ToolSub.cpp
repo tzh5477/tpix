@@ -2,6 +2,7 @@
 #include <cmath>
 #include "../Win/WinPin.h"
 #include "../Lang.h"
+#include "../SelectPopup.h"
 #include "../Setting.h"
 #include "../History.h"
 #include "../Shape/ShapeNumber.h"
@@ -46,8 +47,11 @@ namespace {
 	// 贴图不透明度的四档。index 落盘的是下标，百分比文本由 showPinTools 按这张表生成
 	const float pinOpacitySteps[]{ 1.f, 0.75f, 0.5f, 0.25f };
 	// 水印的透明度档位与旋转档位。透明度与 pin 那组共用一套档位
-	const float watermarkOpacitySteps[]{ 1.f, 0.75f, 0.5f, 0.25f };
-	const float watermarkRotateSteps[]{ 0.f, 30.f, 45.f, 60.f };
+const float watermarkOpacitySteps[]{ 1.f, 0.75f, 0.5f, 0.25f };
+const float watermarkRotateSteps[]{ 0.f, 30.f, 45.f, 60.f };
+// 平铺间距三档：间距 = 文字尺寸 × 这个系数。紧凑几乎相连、标准留四分之三个字、宽松空一倍半 ——
+// 写死像素值配小字号就是"整片空白里零星几个字"，按比例才随字号自动疏密
+const float watermarkGapSteps[]{ 0.25f, 0.75f, 1.5f };
 }
 
 float ToolSub::getWatermarkOpacity() const
@@ -60,6 +64,12 @@ float ToolSub::getWatermarkRotation() const
 {
 	auto i = std::clamp(watermarkRotate, 0, 3);
 	return watermarkRotateSteps[i];
+}
+
+float ToolSub::getWatermarkGapRatio() const
+{
+	auto i = std::clamp(watermarkGap, 0, 2);
+	return watermarkGapSteps[i];
 }
 
 ToolSub::ToolSub(WinPin* win) :Ling::WinBase(), win(win)
@@ -125,8 +135,10 @@ void ToolSub::onCreated()
 // 切到某个工具时从里面读，用户一改就写回去，所以内存里不用再留一份每工具的状态。
 void ToolSub::beginTool(const std::wstring& id)
 {
-	// 按钮和滑块马上要被销毁，onLeave 不会触发，提示得手动收掉
+	// 按钮和滑块马上要被销毁，onLeave 不会触发，提示得手动收掉。
+	// 列表是独立窗口、锚点按钮也在这批要销毁的里面，一并收掉
 	tip->hide();
+	SelectPopup::close();
 	contentNode->removeAllChildren();
 	// 滑块也一起作废：pin 面板不建滑块，留着的话 onMouseMove 里就是悬垂指针
 	slider = nullptr;
@@ -196,11 +208,15 @@ void ToolSub::showNumberTools()
 	// 两个样式按钮上显示的是"当前编号在这个样式下长什么样"，比写死的图标好认：
 	// 图上已经有 3 个序号时，这里就显示 3 / c / C / III / 三
 	auto sampleVal = getNumberSampleVal();
-	makeCycleBtn(L"tool.numberStyle", L"numStyle", &numberStyle, 5,
-		[sampleVal](int index) { return ShapeNumber::serializeVal(sampleVal, (ShapeNumber::NumStyle)index); });
+	std::vector<std::wstring> styleItems;
+	for (int i = 0; i < 5; ++i) {
+		styleItems.push_back(ShapeNumber::serializeVal(sampleVal, (ShapeNumber::NumStyle)i));
+	}
+	makeSelectBtn(L"tool.numberStyle", L"numStyle", &numberStyle, styleItems);
 	// 圆 / 方 / 无外圈，用几何符号，不依赖某一种语言
-	makeCycleBtn(L"tool.numberRing", L"ringStyle", &numberRing, 3,
-		[](int index) { return std::wstring{ RingSample[index] }; });
+	std::vector<std::wstring> ringItems;
+	for (auto s : RingSample) ringItems.push_back(std::wstring{ s });
+	makeSelectBtn(L"tool.numberRing", L"ringStyle", &numberRing, ringItems);
 	initSlider();
 	initColorBtns();
 	makeApplyAllBtn();
@@ -235,9 +251,10 @@ void ToolSub::showMosaicTools()
 	// 三个模式共用一个循环按钮：矩形马赛克 / 涂抹马赛克 / 智能擦除。
 	// 三个图标码位都是项目里已经在用的（矩形填充、线条、橡皮擦），不存在画成豆腐块的风险
 	static const wchar_t* mosaicIcons[]{ L"\ue602", L"\ue601", L"\ue6be" };
-	// 按钮上显示的是当前模式，提示写的是"每点一次就换到下一种模式"，所以只挂一条
-	makeCycleBtn(L"tool.mosaicMode", L"mode", &mosaicMode, 3,
-		[](int index) { return std::wstring{ mosaicIcons[index] }; }, true, false);
+	// 按钮上显示的是当前模式，选项同样是这三个图标，所以列表要用图标字体
+	std::vector<std::wstring> modeItems;
+	for (auto c : mosaicIcons) modeItems.push_back(std::wstring{ c });
+	makeSelectBtn(L"tool.mosaicMode", L"mode", &mosaicMode, modeItems, nullptr, true, false);
 	initSlider();
 	makeApplyAllBtn();
 }
@@ -254,22 +271,31 @@ void ToolSub::showEraserTools()
 void ToolSub::showPinTools()
 {
 	beginTool(L"pin");
-	// 比原来多一枚按钮：成组 / 解组（同一枚，文案随状态切换）；动图另有播放 / 暂停
-	initSize(win->hasAnim() ? 6 : 5, false, true);
-	// 四档不透明度循环。按钮上直接写百分比，比一个滑杆直观、也比滑杆少占一截宽度
-	auto opacityBtn = makeCycleBtn(L"tool.pinOpacity", L"opacity", &pinOpacity, 4, [](int i) {
-		return std::format(L"{}%", (int)std::lround(pinOpacitySteps[i] * 100));
+	// 比原来多一枚按钮：成组 / 解组（同一枚，文案随状态切换）；动图另有播放 / 暂停。
+	// +1 是把末尾的标题输入框也计入宽度（它同样 flex 抢空间，不算进去就会被挤成一条缝），
+	// extraW 再单给它 180 的预算 —— 公式对 pin 面板本来是亏的：它没有滑块，那 86 的滑块宽
+	// 相当于白送，正好补上文字按钮比图标格宽出来的部分
+	initSize((win->hasAnim() ? 6 : 5) + 1, false, true, 180.f);
+	// 四档不透明度。按钮上直接写百分比，比一个滑杆直观、也比滑杆少占一截宽度
+	std::vector<std::wstring> opacityItems;
+	for (auto v : pinOpacitySteps) {
+		opacityItems.push_back(std::format(L"{}%", (int)std::lround(v * 100)));
+	}
+	// makeSelectBtn 只负责换档与落盘，"档位变了要作用到窗口"这半截由 onPicked 补上
+	makeSelectBtn(L"tool.pinOpacity", L"opacity", &pinOpacity, opacityItems, [this]() {
+		win->setOpacity(pinOpacitySteps[pinOpacity]);
 		}, false, false);
 	win->setOpacity(pinOpacitySteps[pinOpacity]);
-	// makeCycleBtn 只负责换档与落盘，"档位变了要作用到窗口"这半截由这里补上
-	opacityBtn->onClick.add([this](Ling::Button*) {
-		win->setOpacity(pinOpacitySteps[pinOpacity]);
-		});
-	makeTextToggle(Lang::get(L"tool.pinRound"), L"tool.pinRound", L"round", false,
+	// 三个开关读写的是这张贴图自己的状态（getRounded/getLocked/getThrough），
+	// 不再走全局配置 —— 详见 makeStateToggle 的注释
+	makeStateToggle(Lang::get(L"tool.pinRound"), L"tool.pinRound",
+		[this] { return win->getRounded(); },
 		[this](bool on) { win->setRounded(on); });
-	makeTextToggle(Lang::get(L"tool.pinLock"), L"tool.pinLock", L"lock", false,
+	makeStateToggle(Lang::get(L"tool.pinLock"), L"tool.pinLock",
+		[this] { return win->getLocked(); },
 		[this](bool on) { win->setLocked(on); });
-	makeTextToggle(Lang::get(L"tool.pinThrough"), L"tool.pinThrough", L"through", false,
+	makeStateToggle(Lang::get(L"tool.pinThrough"), L"tool.pinThrough",
+		[this] { return win->getThrough(); },
 		[this](bool on) { win->setMouseThrough(on); });
 	// 成组：把当前所有贴图并为一组，之后拖一张 / Ctrl+滚轮缩放一张，整组跟着动；
 	// 已经成组时点一下就是解散。按钮上写的是"点了会变成什么"
@@ -301,15 +327,22 @@ void ToolSub::showPinTools()
 			};
 		syncText();
 		tip->bind(playBtn, Lang::get(L"tool.pinPlayTip"));
-		playBtn->onClick.add([this, syncText](Ling::Button*) {
-			win->toggleAnim();
-			syncText();
+		playBtn->onClick.add([this, playBtn, syncText](Ling::Button*) {
+			// 两项就是"播 / 停"，直接选到想要的那个状态，不用先看清现在是哪个再点
+			std::vector<std::wstring> items{ Lang::get(L"tool.pinPlay"), Lang::get(L"tool.pinPause") };
+			SelectPopup::show(this, playBtn, items, win->isAnimPlaying() ? 0 : 1,
+				[this, syncText](int idx) {
+					if (idx == (win->isAnimPlaying() ? 0 : 1)) return;   // 已经就是这个状态
+					win->toggleAnim();
+					syncText();
+				});
 			});
 	}
 	// 标题：写什么显示什么，清空即隐藏。失焦才生效，边打边刷没必要
 	auto titleBox = contentNode->makeChild<Ling::TextBox>();
 	titleBox->setHeight(btnSize - 2.5);
-	titleBox->setFlexGrow(1.f);
+	// 多吃两份空间：五个按钮各占一份，标题要能放下"截图标题"四个字加光标
+	titleBox->setFlexGrow(2.f);
 	titleBox->setMarginLeft(sliderMargin);
 	titleBox->setMarginRight(sliderMargin);
 	titleBox->setVerticalCenter(true);
@@ -478,39 +511,60 @@ Ling::Button* ToolSub::makeToggleBtn(const std::wstring& text, bool* flag, const
 	// flag 指向 ToolSub 的成员，生命周期与 this 相同，btn 也挂在 this 的节点树上，捕获裸指针安全。
 	// cfgKey 按值捕获：调用方传进来的是临时量
 	btn->onClick.add([this, flag, cfgKey](Ling::Button* b) {
-		*flag = !*flag;
-		applyToggleStyle(b, *flag);
-		Setting::get()->setToolFlag(curToolId, cfgKey, *flag);
-		win->onToolStyleChanged();
+		showOnOff(b, *flag, [this, flag, cfgKey, b](bool next) {
+			*flag = next;
+			applyToggleStyle(b, next);
+			Setting::get()->setToolFlag(curToolId, cfgKey, next);
+			win->onToolStyleChanged();
+		});
 	});
 	return btn;
 }
 
-Ling::Button* ToolSub::makeCycleBtn(const std::wstring& tipKey, const std::wstring& cfgKey,
-	int* index, int count, std::function<std::wstring(int)> textOf,
-	bool useIconFont, bool refreshNumbers)
+const std::vector<std::wstring>& ToolSub::onOffItems()
+{
+	// 图标字体里的叉与勾，与设置页的开关按钮用的是同一对码位。
+	// 关在前开在后，下标正好能当 bool 用
+	static const std::vector<std::wstring> items{ L"\ue687", L"\ue688" };
+	return items;
+}
+
+void ToolSub::showOnOff(Ling::Button* btn, bool cur, std::function<void(bool)> apply)
+{
+	SelectPopup::show(this, btn, onOffItems(), cur ? 1 : 0,
+		[apply](int index) { apply(index == 1); }, L"icon");
+}
+
+Ling::Button* ToolSub::makeSelectBtn(const std::wstring& tipKey, const std::wstring& cfgKey,
+	int* index, const std::vector<std::wstring>& items,
+	std::function<void()> onPicked, bool useIconFont, bool refreshNumbers)
 {
 	// 与 makeToggleBtn 同理：上一次的选择在配置文件里，取回来盖掉内存里那份。
-	// 夹值域是因为配置文件可能被手工改坏，而这个值要用来 % count，越界就取到表外了
-	*index = std::clamp((int)Setting::get()->getToolNum(curToolId, cfgKey, 0.f), 0, count - 1);
+	// 夹值域是因为配置文件可能被手工改坏，而这个值要用来取 items，越界就取到表外了
+	*index = std::clamp((int)Setting::get()->getToolNum(curToolId, cfgKey, 0.f), 0, (int)items.size() - 1);
 	auto btn = contentNode->makeChild<Ling::Button>();
 	btn->setHeight(btnSize - 2.5);
 	btn->setFlexGrow(1.f);
 	btn->setFontSize(13.f);
 	if (useIconFont) btn->setFontFamily(L"icon");
-	btn->setText(textOf(*index));
-	// 循环按钮没有"开 / 关"两种态，统一用常态配色
+	btn->setText(items[*index]);
+	// 多档按钮没有"开 / 关"两种态，统一用常态配色
 	btn->setBg(0);
 	btn->setHoverBg(0xF2F2F2ff);
 	tip->bind(btn, Lang::get(tipKey));
-	// index 与 textOf 捕获到 lambda 里，按钮重建时会跟着 contentNode 一起销毁，
+	// index 与 items 捕获到 lambda 里，按钮重建时会跟着 contentNode 一起销毁，
 	// 而 ToolSub 与 WinPin 同生命周期，index 指向的成员不会先没
-	btn->onClick.add([this, index, count, cfgKey, textOf, btn, refreshNumbers](Ling::Button*) {
-		*index = (*index + 1) % count;
-		Setting::get()->setToolNum(curToolId, cfgKey, (float)*index);
-		btn->setText(textOf(*index));
-		// 已经画在图上的序号跟着换样子，而不是等下一次新建才生效
-		if (refreshNumbers) win->refreshNumberShapes();
+	btn->onClick.add([this, index, items, cfgKey, btn, onPicked, refreshNumbers, useIconFont](Ling::Button*) {
+		SelectPopup::show(this, btn, items, *index,
+			[this, index, items, cfgKey, btn, onPicked, refreshNumbers](int picked) {
+				*index = picked;
+				Setting::get()->setToolNum(curToolId, cfgKey, (float)picked);
+				btn->setText(items[picked]);
+				// 已经画在图上的序号跟着换样子，而不是等下一次新建才生效
+				if (refreshNumbers) win->refreshNumberShapes();
+				if (onPicked) onPicked();
+			},
+			useIconFont ? std::wstring{ L"icon" } : std::wstring{});
 	});
 	return btn;
 }
@@ -531,10 +585,35 @@ Ling::Button* ToolSub::makeTextToggle(const std::wstring& text, const std::wstri
 	apply(on);
 	tip->bind(btn, Lang::get(tipKey));
 	btn->onClick.add([this, cfgKey, apply](Ling::Button* b) {
-		auto next = !Setting::get()->getToolFlag(curToolId, cfgKey, false);
-		Setting::get()->setToolFlag(curToolId, cfgKey, next);
-		applyToggleStyle(b, next);
-		apply(next);
+		showOnOff(b, Setting::get()->getToolFlag(curToolId, cfgKey, false),
+			[this, cfgKey, apply, b](bool next) {
+				Setting::get()->setToolFlag(curToolId, cfgKey, next);
+				applyToggleStyle(b, next);
+				apply(next);
+			});
+	});
+	return btn;
+}
+
+Ling::Button* ToolSub::makeStateToggle(const std::wstring& text, const std::wstring& tipKey,
+	std::function<bool()> read, std::function<void(bool)> apply)
+{
+	auto btn = contentNode->makeChild<Ling::Button>();
+	btn->setText(text);
+	btn->setHeight(btnSize - 2.5);
+	btn->setFlexGrow(1.f);
+	btn->setFontSize(12.f);
+	btn->setBg(0);
+	btn->setHoverBg(0xF2F2F2ff);
+	// 只按当前实例状态上色，构建期不调 apply：这张图本来是什么样就是什么样，
+	// 不像 makeTextToggle 那样拿全局配置把状态盖一遍
+	applyToggleStyle(btn, read());
+	tip->bind(btn, Lang::get(tipKey));
+	btn->onClick.add([this, read, apply](Ling::Button* b) {
+		showOnOff(b, read(), [this, apply, b](bool next) {
+			applyToggleStyle(b, next);
+			apply(next);
+		});
 	});
 	return btn;
 }
@@ -558,7 +637,8 @@ void ToolSub::makeApplyAllBtn()
 void ToolSub::showWatermarkTools()
 {
 	beginTool(L"watermark");
-	initSize(3, true, true, 150.f);
+	// 四枚按钮：透明度 / 旋转 / 间距 / 平铺
+	initSize(4, true, true, 150.f);
 	auto setting = Setting::get();
 	// 文字从配置读回：水印十有八九每张截图都写同一句，不该每次都重打
 	watermarkText = setting->getToolStr(L"watermark", L"text", L"");
@@ -579,14 +659,23 @@ void ToolSub::showWatermarkTools()
 		win->refresh();
 		});
 	// 水印是画的时候现读工具条状态的，档位一变就得刷一下才看得见
-	auto opacityBtn = makeCycleBtn(L"tool.watermarkOpacity", L"opacity", &watermarkOpacity, 4, [](int i) {
-		return std::format(L"{}%", (int)std::lround(watermarkOpacitySteps[i] * 100));
-		});
-	opacityBtn->onClick.add([this](Ling::Button*) { win->refresh(); });
-	auto rotateBtn = makeCycleBtn(L"tool.watermarkRotate", L"rotate", &watermarkRotate, 4, [](int i) {
-		return std::format(L"{}\u00b0", (int)watermarkRotateSteps[i]);
-		});
-	rotateBtn->onClick.add([this](Ling::Button*) { win->refresh(); });
+	std::vector<std::wstring> opacityItems;
+	for (auto v : watermarkOpacitySteps) {
+		opacityItems.push_back(std::format(L"{}%", (int)std::lround(v * 100)));
+	}
+	makeSelectBtn(L"tool.watermarkOpacity", L"opacity", &watermarkOpacity, opacityItems,
+		[this]() { win->refresh(); });
+	std::vector<std::wstring> rotateItems;
+	for (auto v : watermarkRotateSteps) {
+		rotateItems.push_back(std::format(L"{}°", (int)v));
+	}
+	makeSelectBtn(L"tool.watermarkRotate", L"rotate", &watermarkRotate, rotateItems,
+		[this]() { win->refresh(); });
+	// 平铺间距三档：布局是 paint 时现算的，跟透明度 / 旋转一样换档就得刷
+	std::vector<std::wstring> gapItems;
+	for (int i = 0; i < 3; ++i) gapItems.push_back(Lang::get(std::format(L"tool.watermarkGap{}", i)));
+	makeSelectBtn(L"tool.watermarkGap", L"gap", &watermarkGap, gapItems,
+		[this]() { win->refresh(); });
 	makeTextToggle(Lang::get(L"tool.watermarkTile"), L"tool.watermarkTile", L"tile", false,
 		[this](bool) { win->refresh(); });
 	initSlider();
@@ -680,6 +769,7 @@ void ToolSub::hideTools()
 {
 	hasTools = false;
 	tip->hide();
+	SelectPopup::close();
 	if (!isVisible) return;
 	hide();
 	isVisible = false;

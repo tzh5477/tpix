@@ -1,13 +1,13 @@
 ﻿#pragma once
 #include <include/Ling.h>
+#include <functional>
+#include <string>
+#include <vector>
 class WinSettingCommon:public Ling::Node
 {
 public:
 	WinSettingCommon(Ling::WinBase* parent);
 	~WinSettingCommon();
-	// 收掉语言下拉框。它挂在 win->body 上而不是挂在本节点里，所以本节点被换掉 / 销毁时
-	// 它不会跟着走，得由外面在合适的时机显式收掉
-	void hideSelectBox();
 private:
 	void initAutoStartCtrls();
 	void initLangCtrls();
@@ -32,11 +32,16 @@ private:
 	// 一行「标签 + 控件」。生成的行节点作为返回值交给调用方塞控件，分隔线是本节点的
 	// 子节点而不是行内的，必须在下一行入列之前加好，所以顺手在这里加掉
 	Ling::Node* makeRow(const std::wstring& labelKey);
+	// 一行里那个「点一下弹出全部选项」的按钮。按钮上显示当前这一档，
+	// 选完由 onPick 落盘（按钮上的字这里自己换掉）。
+	// 原来这些位置都是「点一次切一档」的循环按钮，档位一多就得点好几下才转到想要的那个
+	Ling::Button* makeSelectBtn(Ling::Node* row, float width,
+		const std::vector<std::wstring>& items, int cur,
+		std::function<void(int)> onPick);
+	// 行尾那个开 / 关开关：按钮上是勾或叉，点一下弹出两项直接选。
+	// read 取当前是否开着，write 把新状态落盘（顺带做装钩子这类副作用）
+	Ling::Button* makeSwitchBtn(Ling::Node* row,
+		std::function<bool()> read, std::function<void(bool)> write);
 	void setAutoStartBtn(Ling::Button* btn);
-	void showSelectBox(Ling::Button* btn);
-private:
-	Ling::Button* selectBtn{ nullptr };
-	Ling::ScrollerBox* selectBox{ nullptr };
-	winrt::event_token onMouseDownToken;
 };
 

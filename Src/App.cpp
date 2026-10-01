@@ -7,6 +7,7 @@
 #include "Tray.h"
 #include "GlobalMouse.h"
 #include "Lang.h"
+#include "SelectPopup.h"
 #include "ShotHistory.h"
 #include "Update.h"
 #include "Util.h"
@@ -92,7 +93,8 @@ void App::dispose()
     // 必须在 WinPin::dispose 之前：窗口一放掉，底图位图就跟着没了
     WinPin::saveAll();
     // 窗口对象是文件级静态变量，交给静态析构就晚了（那时 CoUninitialize 已经跑完），
-    // 所以趁这里把还开着的窗口先放掉
+    // 所以趁这里把还开着的窗口先放掉。下拉列表是独立窗口，也得单独收
+    SelectPopup::close();
     WinPin::dispose();
     WinCap::dispose();
     WinDelay::dispose();    // 倒计时窗口：退出时可能正倒数到一半
