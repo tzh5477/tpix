@@ -5,14 +5,14 @@
 // 屏幕文字。
 //
 // 编辑态与非编辑态用的是两套东西：
-//   编辑中  —— 文本由 WinPin 上那个共用的 Ling::TextBox 画（它有自己的 swapchain，
+//   编辑中  —— 文本由 Canvas 上那个共用的 Ling::TextBox 画（它有自己的 swapchain，
 //              光标、选区、IME 都归它），本 shape 只负责那圈虚线框；
-//   编辑完 —— TextBox 隐藏，文本由本 shape 自己的 textLayout 画进 WinPin 的画布，
+//   编辑完 —— TextBox 隐藏，文本由本 shape 自己的 textLayout 画进 Canvas 的画布，
 //              这样它才会出现在保存/复制出去的图里（导出走的是离屏 paint(ctx)）。
 class ShapeText : public ShapeBase
 {
 public:
-	ShapeText(WinPin* win);
+	ShapeText(Canvas* win);
 	~ShapeText();
 	void paint(ID2D1DeviceContext* ctx) override;
 	void paintDragger(ID2D1DeviceContext* ctx) override;
@@ -23,9 +23,9 @@ public:
 	// 单击进编辑态，留不留由 finishEdit 按文本是否为空决定，这里不能提前删
 	bool isValidWithoutDrag() override { return true; };
 	// 收尾：把 TextBox 里的文字取回来自己画，空文本则把自己从 history 里删掉。
-	// 除了本类内部，WinPin（导出图片前）和 History（删除 shape 前）也会调。
+	// 除了本类内部，Canvas（导出图片前）和 History（删除 shape 前）也会调。
 	void finishEdit();
-	// WinPin 只认 ShapeBase，收尾时从基类转过来走到 finishEdit
+	// Canvas 只认 ShapeBase，收尾时从基类转过来走到 finishEdit
 	void finishEditing() override { finishEdit(); }
 	// ToolSub 上的颜色/字号/粗斜体变了，编辑中的话立即生效
 	void applyStyle() override;
@@ -42,7 +42,7 @@ private:
 	D2D1_POINT_2F rotatedPoint(const D2D1_POINT_2F& p);
 	// 旋转手柄的矩形（在已经转过之后的坐标里），以及顺手更新它
 	void updateRotateDragger();
-	// 画布当前的变换里可能带着 WinPin 的缩放，旋转中心得跟着它落到画布坐标上
+	// 画布当前的变换里可能带着 Canvas 的缩放，旋转中心得跟着它落到画布坐标上
 	D2D1_POINT_2F transformCenter(ID2D1DeviceContext* ctx) const;
 private:
 	std::wstring text;

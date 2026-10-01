@@ -1,16 +1,16 @@
 ﻿#include "pch.h"
-#include "Win/WinPin.h"
+#include "Canvas.h"
 #include "Tool/ToolMain.h"
 #include "Tool/ToolSub.h"
 #include "ShapeArrow.h"
 
 using Microsoft::WRL::ComPtr;
 
-ShapeArrow::ShapeArrow(WinPin* win) :ShapeBase(win), draggers{
+ShapeArrow::ShapeArrow(Canvas* win) :ShapeBase(win), draggers{
 	D2D1::RectF(0,0,0,0),
 	D2D1::RectF(0,0,0,0) }
 {
-	auto toolSub = win->toolSub.get();
+	auto toolSub = win->getToolSub();
 	auto d2d = Ling::D2D::get();
 	d2d->deviceContext->CreateSolidColorBrush(toolSub->getSelectedColor(), brush.GetAddressOf());
 	// 滑块值当箭头尺寸用。太小的话箭头画出来只有几个像素，看不出形状
@@ -31,7 +31,7 @@ void ShapeArrow::paint(ID2D1DeviceContext* ctx)
 		ctx->FillGeometry(path.Get(), brush.Get());
 	}
 	else {
-		ctx->DrawGeometry(path.Get(), brush.Get(), win->dpi);
+		ctx->DrawGeometry(path.Get(), brush.Get(), win->getDpi());
 	}
 }
 
@@ -39,7 +39,7 @@ void ShapeArrow::paintDragger(ID2D1DeviceContext* ctx)
 {
 	for (auto& dragger : draggers)
 	{
-		ctx->DrawRectangle(dragger, brushDragger.Get(), win->dpi);
+		ctx->DrawRectangle(dragger, brushDragger.Get(), win->getDpi());
 	}
 }
 
@@ -130,15 +130,15 @@ void ShapeArrow::mouseMove(const float x, const float y)
 	}
 }
 
-// 光标停在两端的 dragger 或箭头身上（此时 WinPin 才把滚轮事件转过来）滚滚轮 = 调箭头大小，
+// 光标停在两端的 dragger 或箭头身上（此时 Canvas 才把滚轮事件转过来）滚滚轮 = 调箭头大小，
 // 与矩形/椭圆用滚轮调线宽是一回事。
 void ShapeArrow::mouseWheel(const float x, const float y, const short delta)
 {
 	// arrowSize 是滑块值的 4 倍（见构造函数），所以换算回滑块那个尺度再交给 ToolSub 夹值，
 	// 它返回的也是滑块尺度的物理像素，再乘回 4。一格走一个滑块刻度
-	auto step{ 4.f * win->dpi };
+	auto step{ 4.f * win->getDpi() };
 	auto next = arrowSize + (delta < 0 ? -step : step);
-	auto applied = win->toolSub->setShapeSliderVal(L"arrow", next / 4.f) * 4.f;
+	auto applied = win->getToolSub()->setShapeSliderVal(L"arrow", next / 4.f) * 4.f;
 	if (applied == arrowSize) return;   //已经顶到值域的头了，不用重画
 	arrowSize = applied;
 	makeArrow();                        //形状是按 arrowSize 算出来的，得重建

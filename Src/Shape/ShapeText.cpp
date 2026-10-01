@@ -2,14 +2,14 @@
 #include "App.h"
 #include "Util.h"
 #include "History.h"
-#include "Win/WinPin.h"
+#include "Canvas.h"
 #include "Tool/ToolMain.h"
 #include "Tool/ToolSub.h"
 #include "ShapeText.h"
 
 using Microsoft::WRL::ComPtr;
 
-ShapeText::ShapeText(WinPin* win) :ShapeBase(win), borderPadding{ 6.f * win->dpi }
+ShapeText::ShapeText(Canvas* win) :ShapeBase(win), borderPadding{ 6.f * win->getDpi() }
 {
 	setAttr();
 	// 虚线框：2 实 2 虚，与 2.4.25 一致
@@ -47,7 +47,7 @@ D2D1_POINT_2F ShapeText::rotatedPoint(const D2D1_POINT_2F& p)
 	return { c.x + dx * cosValue - dy * sinValue, c.y + dx * sinValue + dy * cosValue };
 }
 
-// 旋转中心不是 rect 的中心点本身：画布上可能还压着 WinPin 的缩放变换（Ctrl+滚轮），
+// 旋转中心不是 rect 的中心点本身：画布上可能还压着 Canvas 的缩放变换（Ctrl+滚轮），
 // 而导出那条路走的是不带缩放的离屏画布。统一用当前矩阵把中心点映射过去，
 // 两条路都不用各写一份换算
 D2D1_POINT_2F ShapeText::transformCenter(ID2D1DeviceContext* ctx) const
@@ -75,7 +75,7 @@ void ShapeText::paint(ID2D1DeviceContext* ctx)
 		// 它的宽高跟着文本内容长，顺手把框的矩形同步过来 —— 本函数在 yoga 排布之后才跑，取到的是本帧的值。
 		// TextBox 的 x/y/w/h 是窗口坐标（物理像素），rect 存的是底图坐标，差一个缩放倍数
 		auto tb = win->getTextBox();
-		auto s = win->scale;
+		auto s = win->getScale();
 		rect = D2D1::RectF(tb->x / s, tb->y / s, (tb->x + tb->w) / s, (tb->y + tb->h) / s);
 		return;
 	}
@@ -102,10 +102,10 @@ void ShapeText::paintDragger(ID2D1DeviceContext* ctx)
 	if (angle != 0.f) {
 		ctx->SetTransform(prev * D2D1::Matrix3x2F::Rotation(angle, transformCenter(ctx)));
 	}
-	ctx->DrawRectangle(rect, textBrush.Get(), win->dpi, dashedStrokeStyle.Get());
+	ctx->DrawRectangle(rect, textBrush.Get(), win->getDpi(), dashedStrokeStyle.Get());
 	ctx->SetTransform(prev);
 	// 手柄的坐标已经是转好之后的，不能再跟着上面的变换转一遍
-	ctx->DrawRectangle(rotateDragger, textBrush.Get(), win->dpi);
+	ctx->DrawRectangle(rotateDragger, textBrush.Get(), win->getDpi());
 	ctx->FillRectangle(rotateDragger, textBrush.Get());
 }
 
@@ -180,7 +180,7 @@ void ShapeText::mouseMove(const float x, const float y)
 		lx = c.x + dx * cosValue - dy * sinValue;
 		ly = c.y + dx * sinValue + dy * cosValue;
 	}
-	auto half{ borderPadding / 2.f + win->dpi };//多给一个 dpi，让判定范围宽松点
+	auto half{ borderPadding / 2.f + win->getDpi() };//多给一个 dpi，让判定范围宽松点
 	if (lx >= rect.left - half && lx <= rect.right + half && ly >= rect.top - half && ly <= rect.bottom + half)
 	{
 		if (lx <= rect.left + half || lx >= rect.right - half || ly >= rect.top + half || ly >= rect.bottom - half) {
@@ -224,10 +224,10 @@ void ShapeText::startEdit()
 	editAngle = angle;
 	angle = 0.f;
 	auto tb = win->getTextBox();
-	auto d = win->dpi;
+	auto d = win->getDpi();
 	// rect 是底图坐标，TextBox 是挂在窗口上的真控件、收的是逻辑像素，
 	// 所以要先乘上缩放倍数（窗口坐标）再除以 dpi（逻辑像素）
-	auto s = win->scale;
+	auto s = win->getScale();
 	tb->setPosition(Ling::Edge::Left, rect.left * s / d);
 	tb->setPosition(Ling::Edge::Top, rect.top * s / d);
 	// 顺手把布局坐标也写成本 shape 的矩形：TextBox 刚显示出来时 x/y/w/h 还是上一次的旧值，
@@ -296,7 +296,7 @@ void ShapeText::applyStyle()
 	auto tb = win->getTextBox();
 	tb->setColor(Ling::Color(colorValue));
 	tb->setCaretColor(Ling::Color(colorValue));
-	tb->setFontSize(fontSize * win->scale / win->dpi);
+	tb->setFontSize(fontSize * win->getScale() / win->getDpi());
 	tb->setBold(isBold);
 	tb->setItalic(isItalic);
 	win->refresh();
@@ -313,7 +313,7 @@ void ShapeText::makeTextLayout()
 
 void ShapeText::setAttr()
 {
-	auto toolSub = win->toolSub.get();
+	auto toolSub = win->getToolSub();
 	colorValue = toolSub->getSelectedColorValue();
 	color = toolSub->getSelectedColor();
 	// getSliderVal 返回的已经是物理像素

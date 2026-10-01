@@ -1,31 +1,12 @@
 #pragma once
 #include <include/Ling.h>
-#include "ShapeBase.h"
-class ShapeLine : public ShapeBase
+#include "ShapeLineBase.h"
+// 直线：折线族里"取工具条当前颜色描一条线"的那个。
+// 拖首端、拖末端、整体平移、线段命中判定都在 ShapeLineBase，这里只剩画什么
+class ShapeLine : public ShapeLineBase
 {
 public:
-	ShapeLine(WinPin* win);
+	ShapeLine(Canvas* win);
 	~ShapeLine();
 	void paint(ID2D1DeviceContext* ctx) override;
-	void paintDragger(ID2D1DeviceContext* ctx) override;
-	void mouseDrag(const float x, const float y) override;
-	void mouseDown(const float x, const float y) override;
-	void mouseUp(const float x, const float y) override;
-	void mouseMove(const float x, const float y) override;
-	void setCursor() override;
-public:
-private:
-	void makePath();
-	float pointToSegmentDistance(const D2D1_POINT_2F& p, const D2D1_POINT_2F& a, const D2D1_POINT_2F& b);
-	void hitTest(const D2D1_POINT_2F& mousePos);
-private:
-	std::vector<D2D1_RECT_F> draggers;
-	std::vector<D2D1_POINT_2F> linePoints;
-	Microsoft::WRL::ComPtr<ID2D1PathGeometry> path;
-	// 圆头圆角描边：自由画的折线不用它，拐点会是尖角，端点是方头
-	Microsoft::WRL::ComPtr<ID2D1StrokeStyle> roundStyle;
-	Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brush;
-	float strokeWidth{ 1.f }, pressX{0.f}, pressY{ 0.f };
-	bool isTransparent{ false };
 };
-

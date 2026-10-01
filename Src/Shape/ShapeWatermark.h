@@ -8,7 +8,7 @@
 class ShapeWatermark : public ShapeBase
 {
 public:
-	ShapeWatermark(WinPin* win);
+	ShapeWatermark(Canvas* win);
 	~ShapeWatermark();
 	void paint(ID2D1DeviceContext* ctx) override;
 	void paintDragger(ID2D1DeviceContext* ctx) override;

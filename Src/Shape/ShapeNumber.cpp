@@ -1,6 +1,6 @@
 ﻿#include "pch.h"
 #include "App.h"
-#include "Win/WinPin.h"
+#include "Canvas.h"
 #include "Tool/ToolMain.h"
 #include "Tool/ToolSub.h"
 #include "History.h"
@@ -56,24 +56,24 @@ namespace {
 	}
 }
 
-ShapeNumber::ShapeNumber(WinPin* win) :ShapeBase(win), draggers{
+ShapeNumber::ShapeNumber(Canvas* win) :ShapeBase(win), draggers{
 	D2D1::RectF(0,0,0,0),
 	D2D1::RectF(0,0,0,0),
 	D2D1::RectF(0,0,0,0) },
 	// 半径就是工具栏滑块的值（物理像素），跟别的工具的"线宽"是同一个滑块。
 	// 拖拽/滚轮改过之后会回写给滑块（见 ToolSub::setShapeSliderVal），所以后面新建的序号沿用同一大小，
 	// 关掉应用再打开也还是这个大小 —— 值存在 config.json 的 toolPin.number.radius 里
-	r{ win->toolSub->getSliderVal() },
+	r{ win->getToolSub()->getSliderVal() },
 	val{ getNextVal(win) }
 {
-	auto toolSub = win->toolSub.get();
+	auto toolSub = win->getToolSub();
 	auto d2d = Ling::D2D::get();
 	d2d->deviceContext->CreateSolidColorBrush(toolSub->getSelectedColor(), brush.GetAddressOf());
 	d2d->deviceContext->CreateSolidColorBrush(D2D1::ColorF(0XFFFFFF), brushText.GetAddressOf());
 	setAttr();
 }
 
-int ShapeNumber::getNextVal(WinPin* win)
+int ShapeNumber::getNextVal(Canvas* win)
 {
 	int maxVal{ 0 };
 	for (auto& shape : win->history->shapes) {
@@ -103,7 +103,7 @@ std::wstring ShapeNumber::serializeVal(const int val, const NumStyle style)
 
 void ShapeNumber::setAttr()
 {
-	auto toolSub = win->toolSub.get();
+	auto toolSub = win->getToolSub();
 	numStyle = static_cast<NumStyle>(toolSub->numberStyle);
 	ringStyle = static_cast<RingStyle>(toolSub->numberRing);
 	isFill = toolSub->isNumberFill;
@@ -149,7 +149,7 @@ void ShapeNumber::paint(ID2D1DeviceContext* ctx)
 			ctx->FillGeometry(path.Get(), brush.Get());
 		}
 		else {
-			ctx->DrawGeometry(path.Get(), brush.Get(), win->dpi);
+			ctx->DrawGeometry(path.Get(), brush.Get(), win->getDpi());
 		}
 	}
 	ctx->DrawTextLayout({ cx - r,cy - r }, layoutText.Get(),
@@ -161,7 +161,7 @@ void ShapeNumber::paintDragger(ID2D1DeviceContext* ctx)
 	if (isWheel) return;
 	for (auto& dragger : draggers)
 	{
-		ctx->DrawRectangle(dragger, brushDragger.Get(), win->dpi);
+		ctx->DrawRectangle(dragger, brushDragger.Get(), win->getDpi());
 	}
 }
 
@@ -224,10 +224,10 @@ void ShapeNumber::mouseDrag(const float x, const float y)
 		auto dx{ x - cx };
 		auto dy{ y - cy };
 		r = sqrtf(dx * dx + dy * dy);
-		auto minR{ 8.f * win->dpi };
+		auto minR{ 8.f * win->getDpi() };
 		if (r < minR) r = minR;
 		// 用它夹好的返回值：半径不能超出工具栏滑块的值域，否则滑块显示的就不是真实大小了
-		r = win->toolSub->setShapeSliderVal(L"number", r);
+		r = win->getToolSub()->setShapeSliderVal(L"number", r);
 		makePath();
 		makeTextLayout();
 	}
@@ -296,13 +296,13 @@ void ShapeNumber::mouseWheel(const float x, const float y, const short delta)
 {
 	isWheel = true;
 	if (delta < 0) {
-		if (r <= 6.f * win->dpi) return;
+		if (r <= 6.f * win->getDpi()) return;
 		r--;
 	}
 	else {
 		r++;
 	}
-	r = win->toolSub->setShapeSliderVal(L"number", r);
+	r = win->getToolSub()->setShapeSliderVal(L"number", r);
 	makePath();
 	makeTextLayout();
 	win->refresh();
@@ -383,8 +383,8 @@ void ShapeNumber::startEdit()
 	if (isEditing) return;
 	isEditing = true;
 	auto tb = win->getTextBox();
-	auto d = win->dpi;
-	auto s = win->scale;
+	auto d = win->getDpi();
+	auto s = win->getScale();
 	// tb 的位置与字号收逻辑像素，而 cx/cy/r 都是底图上的物理像素，中间隔着缩放与 dpi 两个换算
 	tb->setPosition(Ling::Edge::Left, (cx - r) * s / d);
 	tb->setPosition(Ling::Edge::Top, (cy - r) * s / d);

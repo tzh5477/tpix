@@ -1,11 +1,13 @@
 ﻿#pragma once
 #include <include/Ling.h>
+class Canvas;
 class ShapeBase;
-class WinPin;
+// 标注图层：shape 的生命周期与 undo / redo。
+// 与"历史截图"无关，那一份在 ShotHistory 里，别混。
 class History
 {
 public:
-	History(WinPin* win);
+	History(Canvas* canvas);
 	~History();
 	ShapeBase* createShape(const std::wstring& state, const int& x, const int& y);
 	void undo();
@@ -18,6 +20,6 @@ public:
 private:
 	void removeUndoShape();
 private:
-	WinPin* win;
+	// 画布。shape 全都由它持有，刷新与取样底图也要走它 —— 这里不认识窗口
+	Canvas* canvas;
 };
-

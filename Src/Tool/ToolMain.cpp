@@ -138,11 +138,11 @@ void ToolMain::onClick(Ling::Button* btn)
 	// 下面这几个都是"执行一次动作"而不是"切换绘图工具"，做完就返回，不动 curId 和选中态。
 	// undo/redo 由 History 内部负责 refresh；save/clipboard 成功后会关窗，同样不能往下走。
 	else if (btn->id == L"undo") {
-		win->history->undo();
+		win->getHistory()->undo();
 		return;
 	}
 	else if (btn->id == L"redo") {
-		win->history->redo();
+		win->getHistory()->redo();
 		return;
 	}
 	else if (btn->id == L"save") {

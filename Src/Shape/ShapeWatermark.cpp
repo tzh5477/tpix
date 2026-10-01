@@ -1,11 +1,11 @@
 ﻿#include "pch.h"
-#include "Win/WinPin.h"
+#include "Canvas.h"
 #include "Tool/ToolSub.h"
 #include "Tool/ToolMain.h"
 #include "History.h"
 #include "ShapeWatermark.h"
 
-ShapeWatermark::ShapeWatermark(WinPin* win) : ShapeBase(win)
+ShapeWatermark::ShapeWatermark(Canvas* win) : ShapeBase(win)
 {
 }
 
@@ -32,11 +32,11 @@ bool ShapeWatermark::makeLayout()
 	brush.Reset();
 	textW = 0.f;
 	textH = 0.f;
-	if (!win->toolSub) return false;
-	auto text = win->toolSub->watermarkText;
+	if (!win->getToolSub()) return false;
+	auto text = win->getToolSub()->watermarkText;
 	if (text.empty()) return false;
 	// 字号在工具条上是逻辑像素语义，shape 存的是底图像素，换算要乘 dpi
-	auto fontSize = win->toolSub->getSliderVal() * win->dpi;
+	auto fontSize = win->getToolSub()->getSliderVal() * win->getDpi();
 	layout = Ling::D2D::makeTextLayout(text, fontSize);
 	if (!layout) return false;
 	DWRITE_TEXT_METRICS m{};
@@ -45,8 +45,8 @@ bool ShapeWatermark::makeLayout()
 	textH = m.height;
 	// 透明度四档与颜色都在工具条上。alpha 按"用户选的颜色的 alpha × 档位"叠乘，
 	// 取白色 + 25% 档就是常见的浅灰水印，不必再单独做一个颜色通道
-	auto value = win->toolSub->getSelectedColorValue();
-	auto alpha = (float)(value & 0xFF) / 255.f * win->toolSub->getWatermarkOpacity();
+	auto value = win->getToolSub()->getSelectedColorValue();
+	auto alpha = (float)(value & 0xFF) / 255.f * win->getToolSub()->getWatermarkOpacity();
 	D2D1_COLOR_F c{
 		((value >> 16) & 0xFF) / 255.f,
 		((value >> 8) & 0xFF) / 255.f,
@@ -70,15 +70,15 @@ void ShapeWatermark::drawOne(ID2D1DeviceContext* ctx, float x, float y, float ro
 void ShapeWatermark::paint(ID2D1DeviceContext* ctx)
 {
 	if (!makeLayout()) return;
-	// 不走 win->getImgSize()（那是私有方法），直接问底图要尺寸 —— 平铺范围就是整张底图
+	// 不走 win->getImgSize()，直接问底图要尺寸 —— 平铺范围就是整张底图
 	if (!win->screenImg) return;
 	auto sz = win->screenImg->GetSize();
 	if (sz.width == 0 || sz.height == 0) return;
-	auto rotation = win->toolSub->getWatermarkRotation();
+	auto rotation = win->getToolSub()->getWatermarkRotation();
 	// 屏幕绘制时外层是缩放变换、导出时是单位阵，进来是什么出去还是什么，
 	// 不能自己设回 Scale —— 导出图会被放大 scale 倍
 	auto prev = ctx->GetTransform();
-	if (win->toolSub->watermarkTile) {
+	if (win->getToolSub()->watermarkTile) {
 		// 平铺：沿水平方向铺满，行距给足一倍字高，密度靠字号自己调
 		constexpr float gapX{ 60.f }, gapY{ 40.f };
 		auto stepX = textW + gapX;

@@ -1,5 +1,6 @@
-#include "pch.h"
+﻿#include "pch.h"
 #include <algorithm>
+#include "../Canvas.h"
 #include "../Tool/ToolMain.h"
 #include "../Tool/ToolSub.h"
 #include "../Shape/ShapeBase.h"
@@ -50,23 +51,23 @@ namespace {
 }
 
 WinPin::WinPin(int x, int y, int w, int h, const std::vector<BYTE>* data, const std::wstring& initToolId)
-	: Ling::WinBase(), history{ std::make_unique<History>(this) }
+	: Ling::WinBase(), drawing{ std::make_unique<Canvas>(this) }
 {
 	this->x = x;
 	this->y = y;
 	this->w = w;
 	this->h = h;
 	if (data) {
-		// 外部像素建底图。ShapeMosaic / ShapeEraser 会把它当画刷源，属性与 getCutImg() 出来的保持一致
+		// 外部像素建底图。马赛克那两个会把它当取样源，属性与 getCutImg() 出来的保持一致
 		D2D1_BITMAP_PROPERTIES1 props{};
 		props.pixelFormat = D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED);
 		props.bitmapOptions = D2D1_BITMAP_OPTIONS_NONE;
 		props.dpiX = 96.0f;
 		props.dpiY = 96.0f;
-		Ling::D2D::get()->deviceContext->CreateBitmap(D2D1::SizeU(w, h), data->data(), w * 4, &props, screenImg.GetAddressOf());
+		Ling::D2D::get()->deviceContext->CreateBitmap(D2D1::SizeU(w, h), data->data(), w * 4, &props, drawing->screenImg.GetAddressOf());
 	}
 	else {
-		screenImg = WinCap::get()->getCutImg();
+		drawing->screenImg = WinCap::get()->getCutImg();
 	}
 	toolMain = std::make_unique<ToolMain>(this);
     toolSub = std::make_unique<ToolSub>(this);
@@ -104,9 +105,9 @@ WinPin::WinPin(int x, int y, int w, int h, const std::vector<BYTE>* data, const 
 			applyScale(scale * (space > 0 ? 1.1f : 1.f / 1.1f), pos);
 			return;
 		}
-		if (!shapeHover) return;
+		if (!drawing->shapeHover) return;
 		auto imgPos = toImgPos(pos);
-		shapeHover->mouseWheel((float)imgPos.x, (float)imgPos.y, space > 0 ? (short)WHEEL_DELTA : (short)-WHEEL_DELTA);
+		drawing->shapeHover->mouseWheel((float)imgPos.x, (float)imgPos.y, space > 0 ? (short)WHEEL_DELTA : (short)-WHEEL_DELTA);
 	});
 	onTimer.add([this](UINT id) {this->onTimerCB(id);});
 	onKeyDown.add([this](UINT key) {this->onKey(key);});
@@ -124,12 +125,12 @@ void WinPin::onClosed()
 	isClosed = true;
 	if (editingShape) editingShape->finishEditing();
 	// 先收起附属窗口，再让出 hover 指针 —— shapeHover 指向 history 里的元素，
-	// history 随 WinPin 一起析构，留着悬空指针没意义
+	// 而 history 现在归 drawing 所有（与 WinPin 同生共死），留着悬空指针没意义
 	if (toolSub) toolSub->close();
 	if (toolMain) toolMain->close();
-	shapeHover = nullptr;
+	drawing->shapeHover = nullptr;
 	editingShape = nullptr;
-	// screenImg / canvas / history 都是成员（canvas 挂在 body 的子节点上），随下面这次 erase 一并释放
+	// screenImg / canvas / drawing 都是成员（canvas 挂在 body 的子节点上），随下面这次 erase 一并释放
 	Ling::App::get()->dq.TryEnqueue([this]() {
 		std::erase_if(winPins, [this](const std::unique_ptr<WinPin>& p) { return p.get() == this; });
 		// 用完即走模式下，最后一个贴图窗口关掉就退出进程，不驻留在系统里。
@@ -275,9 +276,9 @@ void WinPin::restoreAll()
 
 D2D1_SIZE_U WinPin::getImgSize() const
 {
-	if (!screenImg) return D2D1::SizeU(0, 0);
+	if (!drawing->screenImg) return D2D1::SizeU(0, 0);
 	// 要的是像素数，所以问 GetPixelSize 而不是 GetSize（后者返回的是按位图自身 dpi 折算的 DIP）
-	return screenImg->GetPixelSize();
+	return drawing->screenImg->GetPixelSize();
 }
 
 void WinPin::applyWinSize()
@@ -363,7 +364,7 @@ void WinPin::setThumbMode(bool on)
 		// 窗口尺寸要变，编辑中的文字先收尾 —— 它的位置是按当前倍率算死的
 		if (editingShape) editingShape->finishEditing();
 		// hover 的夹点也是按当前倍率画的，留着会画到缩略图框外面去
-		shapeHover = nullptr;
+		drawing->shapeHover = nullptr;
 		savedX = x;
 		savedY = y;
 		savedW = static_cast<int>(w);
@@ -642,10 +643,10 @@ void WinPin::showFrame(int index)
 {
 	if (index < 0 || index >= (int)frames.size()) return;
 	auto& frame = frames[index];
-	if (!screenImg) return;
-	auto sz = screenImg->GetPixelSize();
+	if (!drawing->screenImg) return;
+	auto sz = drawing->screenImg->GetPixelSize();
 	if (sz.width != frame.w || sz.height != frame.h) return;
-	screenImg->CopyFromMemory(nullptr, frame.pixels.data(), frame.w * 4);
+	drawing->screenImg->CopyFromMemory(nullptr, frame.pixels.data(), frame.w * 4);
 	refresh();
 }
 
@@ -680,26 +681,26 @@ void WinPin::onCreated()
 void WinPin::layout()
 {
     Ling::WinBase::layout();
-    if (!screenImg || !canvas) return;
+    if (!drawing->screenImg || !canvas) return;
     auto ctx = canvas->startPaint();
     if (!ctx) return;
     ctx->Clear(0);
-    auto sz = screenImg->GetSize();
+    auto sz = drawing->screenImg->GetSize();
     D2D1_RECT_F destRect = D2D1::RectF(0, 0, sz.width, sz.height);
     // 底图和 shape 都是按底图像素画的，放大缩小整个交给这个变换，
     // 笔宽、夹点跟着一起缩 —— 鼠标坐标进来时也除掉了倍数，所以命中判定天然对得上。
     // 倍数取 viewScale：缩略图模式下窗口被缩成小图，画的时候也得跟着缩，否则只剩左上角一块
     auto vs = viewScale();
     ctx->SetTransform(D2D1::Matrix3x2F::Scale(vs, vs));
-    ctx->DrawBitmap(screenImg.Get(), destRect);
-	for (auto& shape : history->shapes)
+    ctx->DrawBitmap(drawing->screenImg.Get(), destRect);
+	for (auto& shape : drawing->history->shapes)
 	{
 		if (!shape->isUndo) {
 			shape->paint(ctx);
 		}
 	}
-	if (!isMouseDown && shapeHover) {
-		shapeHover->paintDragger(ctx);
+	if (!isMouseDown && drawing->shapeHover) {
+		drawing->shapeHover->paintDragger(ctx);
 	}
 	// 蓝边框和倍数提示属于窗口装饰，不跟着图缩放：变换收回来，按窗口坐标画。
 	// 边框也因此从"底图矩形"改成"窗口矩形"，任何倍数下都是 2*dpi 粗
@@ -779,7 +780,7 @@ void WinPin::onDown(POINT pos, BOOL isRight)
 	if (isDblClick && !editingShape) {
 		// 前半段那一下点击是这个手势的一部分，它顺手放下的元素（只有序号是按一下就成形的，
 		// 别的都在抬手时按"没画出东西"清掉了）不该被带进剪切板
-		if (prevPressCreatedShape) history->undo();
+		if (prevPressCreatedShape) drawing->history->undo();
 		copyToClipboard();
 		return;
 	}
@@ -795,13 +796,13 @@ void WinPin::onDown(POINT pos, BOOL isRight)
 	}
 	// 以下都是交给 shape 的坐标，一律换算成底图像素（拖窗口那条路仍用窗口坐标）
 	auto imgPos = toImgPos(pos);
-	if (shapeHover) {
-		newShape = nullptr; //改的是已有元素，不参与空元素判定
-		shapeHover->mouseDown((float)imgPos.x, (float)imgPos.y);
+	if (drawing->shapeHover) {
+		drawing->shapeCur = nullptr; //改的是已有元素，不参与空元素判定
+		drawing->shapeHover->mouseDown((float)imgPos.x, (float)imgPos.y);
 		return;
 	}
-	shapeHover = history->createShape(toolMain->curId, imgPos.x, imgPos.y);
-	newShape = shapeHover;
+	drawing->shapeHover = drawing->history->createShape(toolMain->curId, imgPos.x, imgPos.y);
+	drawing->shapeCur = drawing->shapeHover;
 }
 
 void WinPin::onMove(POINT pos)
@@ -828,33 +829,33 @@ void WinPin::onMove(POINT pos)
 			syncGroupPos(this, dx, dy);
 			return;
 		}
-		else if(shapeHover) {
+		else if(drawing->shapeHover) {
 			// 光标一步没挪也会来 WM_MOUSEMOVE，所以跟按下点比一下再算拖动
 			if (pos.x != pressPos.x || pos.y != pressPos.y) hasDragged = true;
-			shapeHover->mouseDrag((float)imgPos.x, (float)imgPos.y);
+			drawing->shapeHover->mouseDrag((float)imgPos.x, (float)imgPos.y);
 			refresh();
 		}
 	}
 	else
 	{
 		if (toolMain->curId == L"") return;
-		int i{ (int)(history->shapes.size() - 1) };
+		int i{ (int)(drawing->history->shapes.size() - 1) };
 		for (; i >= 0; i--)
 		{
-			auto cur = history->shapes[i].get();
+			auto cur = drawing->history->shapes[i].get();
 			if (cur->isUndo) continue;
 			cur->mouseMove((float)imgPos.x, (float)imgPos.y);
 			if (cur->hoverDraggerIndex >= 0) {
-				if (shapeHover != cur) {
-					shapeHover = cur;
+				if (drawing->shapeHover != cur) {
+					drawing->shapeHover = cur;
 					setTimer(800, 100);
 					refresh();
 				}
 				return;
 			}
 		}
-		if (shapeHover) {
-			shapeHover = nullptr;
+		if (drawing->shapeHover) {
+			drawing->shapeHover = nullptr;
 		}
 	}
 }
@@ -867,8 +868,8 @@ void WinPin::onUp(POINT pos, BOOL isRight)
 	if (isRight) return;
 	isMouseDown = false;
 	ReleaseCapture();
-	auto justCreated = newShape;
-	newShape = nullptr;
+	auto justCreated = drawing->shapeCur;
+	drawing->shapeCur = nullptr;
 	// 这一下按下有没有新建出一个留得住的元素：紧接着来第二下凑成双击时要把它撤掉（见 onDown）
 	prevPressCreatedShape = false;
 	if (toolMain->curId == L"") {
@@ -879,16 +880,16 @@ void WinPin::onUp(POINT pos, BOOL isRight)
 		layoutTools();
 		toolMain->show();
 	}
-	else if (shapeHover) {
+	else if (drawing->shapeHover) {
 		// 新建的这一笔按下马上弹起，什么也没画出来：直接丢掉，
 		// 也省了 mouseUp 里的收尾开销（马赛克那边要把 GPU 像素读回内存，不该为一个要删的元素白做）
-		if (shapeHover == justCreated && !hasDragged && !shapeHover->isValidWithoutDrag()) {
-			history->removeShape(shapeHover); //它会顺手清掉 shapeHover 并刷新
+		if (drawing->shapeHover == justCreated && !hasDragged && !drawing->shapeHover->isValidWithoutDrag()) {
+			drawing->history->removeShape(drawing->shapeHover); //它会顺手清掉 drawing->shapeHover 并刷新
 			return;
 		}
-		prevPressCreatedShape = (shapeHover == justCreated);
+		prevPressCreatedShape = (drawing->shapeHover == justCreated);
 		auto imgPos = toImgPos(pos);
-		shapeHover->mouseUp((float)imgPos.x, (float)imgPos.y);
+		drawing->shapeHover->mouseUp((float)imgPos.x, (float)imgPos.y);
 		refresh();
 		setTimer(800, 100);
 	}
@@ -911,7 +912,7 @@ void WinPin::onTimerCB(UINT id)
 		return;
 	}
 	if (id != 100) return;
-	if (!shapeHover) {
+	if (!drawing->shapeHover) {
 		refresh();
 		killTimer(100);
 	}
@@ -936,6 +937,23 @@ void WinPin::setEditingShape(ShapeBase* shape)
 	editingShape = shape;
 }
 
+// ---- CanvasHost ----
+// 前四个都在头文件里内联了：就一条取值，跟着成员声明放一起更好读
+const std::wstring& WinPin::curToolId() const
+{
+	return toolMain->curId;
+}
+
+void WinPin::requestRefresh()
+{
+	refresh();
+}
+
+History* WinPin::getHistory() const
+{
+	return drawing->history.get();
+}
+
 void WinPin::onToolStyleChanged()
 {
 	if (editingShape) editingShape->applyStyle();
@@ -945,7 +963,7 @@ void WinPin::onToolStyleChanged()
 // 而不是等下一次新画的才生效。全量重排的代价可以忽略 —— 一张图上序号通常是个位数
 void WinPin::refreshNumberShapes()
 {
-	for (auto& shape : history->shapes)
+	for (auto& shape : drawing->history->shapes)
 	{
 		auto number = dynamic_cast<ShapeNumber*>(shape.get());
 		if (number) number->applyStyle();
@@ -960,7 +978,7 @@ void WinPin::onKey(UINT key)
 	// Delete 删掉的是整个 shape、ESC 直接把窗口关了。ESC 结束编辑由 TextBox 自己处理。
 	// 选中某个元素时先把按键交给它：序号用 +/- 改编号、F2 编辑序号里的文字。
 	// 这几个键不与下面的全局快捷键冲突，所以不用抢返回值
-	if (shapeHover) shapeHover->onKey(key);
+	if (drawing->shapeHover) drawing->shapeHover->onKey(key);
 	if (editingShape) return;
 	bool ctrl = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
 	bool alt = (GetKeyState(VK_MENU) & 0x8000) != 0;
@@ -976,10 +994,10 @@ void WinPin::onKey(UINT key)
 		setThumbMode(!isThumb);
 	}
 	else if (ctrl && key == 'Z') {
-		history->undo();
+		drawing->history->undo();
 	}
 	else if (ctrl && key == 'Y') {
-		history->redo();
+		drawing->history->redo();
 	}
 	else if (ctrl && key == 'C') {
 		copyToClipboard();
@@ -991,7 +1009,7 @@ void WinPin::onKey(UINT key)
 		copyToClipboard();
 	}
 	else if (key == VK_DELETE) {
-		history->removeHoverShape();
+		drawing->history->removeHoverShape();
 	}
 	else if (key == VK_PRIOR) {     // PageUp：往前翻历史截图（更早的那张）
 		previewHistory(1);
@@ -1051,10 +1069,10 @@ bool WinPin::swapImage(const std::vector<BYTE>& data, const int w, const int h)
 	ComPtr<ID2D1Bitmap1> bmp;
 	if (FAILED(Ling::D2D::get()->deviceContext->CreateBitmap(D2D1::SizeU(w, h), data.data(),
 		w * 4, &props, bmp.GetAddressOf()))) return false;
-	screenImg = bmp;
+	drawing->screenImg = bmp;
 	scale = 1.f;
-	history->shapes.clear();
-	shapeHover = nullptr;
+	drawing->history->shapes.clear();
+	drawing->shapeHover = nullptr;
 	editingShape = nullptr;
 	applyWinSize();
 	layoutTools();
@@ -1140,7 +1158,7 @@ void WinPin::restoreWindowState(HWND foregroundBeforeDialog)
 }
 
 // 离屏把底图和 shape 合成到一张新位图上再读回像素。
-// 不直接画到 screenImg 上：它是 ShapeEraser 的"原样"来源，也是 ShapeMosaic 的取样来源，
+// 不直接画到 drawing->screenImg 上：橡皮擦那两个是它的"原样"来源，马赛克那两个拿它取样，
 // 一旦被 shape 覆写，之后再擦除/打码就会拿到已经画过的画面。
 // 用 d2d->deviceContext 做离屏是安全的，SetTarget → BeginDraw → EndDraw → SetTarget(nullptr) 在本函数内闭环。
 bool WinPin::getImagePixels(std::vector<BYTE>& pixels, D2D1_SIZE_U& size)
@@ -1169,8 +1187,8 @@ bool WinPin::getImagePixels(std::vector<BYTE>& pixels, D2D1_SIZE_U& size)
 	ctx->SetTransform(D2D1::Matrix3x2F::Identity());
 	ctx->BeginDraw();
 	ctx->Clear(D2D1::ColorF(0, 0.0f));
-	ctx->DrawBitmap(screenImg.Get(), D2D1::RectF(0.f, 0.f, (float)imgSize.width, (float)imgSize.height));
-	for (auto& shape : history->shapes)
+	ctx->DrawBitmap(drawing->screenImg.Get(), D2D1::RectF(0.f, 0.f, (float)imgSize.width, (float)imgSize.height));
+	for (auto& shape : drawing->history->shapes)
 	{
 		if (!shape->isUndo) {
 			shape->paint(ctx);
@@ -1221,8 +1239,8 @@ BOOL WinPin::setCursor()
 		SetCursor(LoadCursor(nullptr, IDC_SIZEALL));
 		return TRUE;
 	}
-	if (shapeHover) {
-		shapeHover->setCursor();
+	if (drawing->shapeHover) {
+		drawing->shapeHover->setCursor();
 		return TRUE;
 	}
 	if (toolMain->curId == L"text") {

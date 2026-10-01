@@ -1,27 +1,22 @@
 #pragma once
 #include <include/Ling.h>
-#include "ShapeBase.h"
-class ShapeEllipse : public ShapeBase
+#include "ShapeRectBase.h"
+// 矩形族里唯一需要 rect 之外几何的那个：画的时候 D2D 收的是 cx/cy/rx/ry，
+// 命中判定又是椭圆环带而不是一圈直边。
+// 所以这里只覆写"几何怎么派生"和"怎么命中"这两类钩子，八向手柄整套照搬 ShapeRectBase
+class ShapeEllipse : public ShapeRectBase
 {
 public:
-	ShapeEllipse(WinPin* win);
+	ShapeEllipse(Canvas* win);
 	~ShapeEllipse();
 	void paint(ID2D1DeviceContext* ctx) override;
-	void paintDragger(ID2D1DeviceContext* ctx) override;
-	void mouseDrag(const float x, const float y) override;
-	void mouseDown(const float x, const float y) override;
-	void mouseUp(const float x, const float y) override;
-	void mouseMove(const float x, const float y) override;
 	void mouseWheel(const float x, const float y, const short delta) override;
-	void setCursor() override;
-public:
+protected:
+	void hitBody(const float x, const float y) override;
+	void syncFromRect() override;
+	int firstDraggerIndex() const override;
 private:
-	std::vector<D2D1_RECT_F> draggers;
-	// 都给初值：mouseDown 只记按下点，rect/cx/cy/rx/ry 要等第一次 mouseDrag 才算出来，
+	// 都给初值：mouseDown 只记按下点，cx/cy/rx/ry 要等第一次 mouseDrag 才算出来，
 	// 而这之间已经可能来一次 paint（刷新时机不受控），不初始化就是拿垃圾值画椭圆
-	D2D1_RECT_F rect{ 0,0,0,0 };
-	Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brush;
-	float strokeWidth{ 1.f }, pressX{ 0.f }, pressY{ 0.f }, cx{ 0.f }, cy{ 0.f }, rx{ 0.f }, ry{ 0.f };
-	bool isFill{ false };
+	float cx{ 0.f }, cy{ 0.f }, rx{ 0.f }, ry{ 0.f };
 };
-

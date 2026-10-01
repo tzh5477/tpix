@@ -175,7 +175,7 @@ void ToolSub::showArrowTools()
 int ToolSub::getNumberSampleVal()
 {
 	int maxVal{ 0 };
-	for (auto& shape : win->history->shapes) {
+	for (auto& shape : win->getHistory()->shapes) {
 		auto number = dynamic_cast<ShapeNumber*>(shape.get());
 		if (number && !number->isUndo && number->val > maxVal) {
 			maxVal = number->val;

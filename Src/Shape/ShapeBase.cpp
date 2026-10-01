@@ -1,9 +1,9 @@
 ﻿#include "pch.h"
 #include "App.h"
-#include "../Win/WinPin.h"
+#include "Canvas.h"
 #include "ShapeBase.h"
 
-ShapeBase::ShapeBase(WinPin* win):win{win}, draggerSize{6*win->dpi}
+ShapeBase::ShapeBase(Canvas* win):win{win}, draggerSize{6*win->getDpi()}
 {
 	auto d2d = Ling::D2D::get();
 	d2d->deviceContext->CreateSolidColorBrush(D2D1::ColorF(0x000000), brushDragger.GetAddressOf());

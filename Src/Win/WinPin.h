@@ -8,7 +8,8 @@ class ToolSub;
 class ShapeBase;
 class ShapeText;
 class History;
-class WinPin : public Ling::WinBase
+class Canvas;
+class WinPin : public Ling::WinBase, public CanvasHost
 {
 public:
 	~WinPin();
@@ -45,9 +46,23 @@ public:
 	// 所有 ShapeText 共用的文本输入框，第一次用到时才建。
 	// 共用而不是一个 shape 一个：TextBox 构造时会往窗口的十来个事件上挂回调，
 	// N 个实例意味着每次鼠标移动都要跑 N 遍，而同一时刻只可能有一个 ShapeText 在编辑。
-	Ling::TextBox* getTextBox();
+	Ling::TextBox* getTextBox() override;
 	// ShapeText / ShapeNumber 进入 / 退出编辑时登记自己。传 nullptr 表示没有元素在编辑。
-	void setEditingShape(ShapeBase* shape);
+	void setEditingShape(ShapeBase* shape) override;
+	// ---- CanvasHost：Canvas 与 Shape 层只认这十件事（清单见 Canvas.h），这里把它们接到窗口 ----
+	// getTextBox / setEditingShape 就落在这上面两条，签名已经对得上 CanvasHost，不再重复声明
+	float dpiValue() const override { return dpi; }
+	float scaleValue() const override { return scale; }
+	float widthValue() const override { return (float)w; }
+	float heightValue() const override { return (float)h; }
+	const std::wstring& curToolId() const override;
+	ToolMain* getToolMain() override { return toolMain.get(); }
+	ToolSub* getToolSub() override { return toolSub.get(); }
+	void requestRefresh() override;
+	// 标注图层本身（undo / redo、元素枚举）住在 Canvas 里，窗口只转发这一条给
+	// ToolMain 的撤销/重做快捷键和 ToolSub 算最大序号用。定义在 cpp 里：
+	// 头文件只认得 History 的前置声明，拿不到 drawing->history 的完整类型
+	History* getHistory() const;
 	// ToolSub 上的序号样式 / 外圈样式变了，让图上所有已画的序号重排几何与文字
 	void refreshNumberShapes();
 	// ToolSub 上的颜色 / 字号 / 粗体 / 斜体变了，转给正在编辑的文本立即生效
@@ -71,15 +86,9 @@ public:
 	float scale{ 1.f };
 	std::unique_ptr<ToolMain> toolMain;
 	std::unique_ptr<ToolSub> toolSub;
-	ShapeBase* shapeHover{ nullptr };
-	// 本次按下新建出来的 shape（不是拖已有元素）。抬手时只对它做"有没有画出东西"的判定
-	ShapeBase* newShape{ nullptr };
 	// 本次按下之后光标有没有真的移动过。判"按下马上弹起"只认这个，
 	// 不去看各 shape 的几何 —— 那些成员的初值状态不一，不可靠
 	bool hasDragged{ false };
-	std::unique_ptr<History> history;
-	// 贴图窗口的底图。ShapeMosaic 要读它算马赛克块，ShapeEraser 拿它当"擦回原样"的画刷
-	Microsoft::WRL::ComPtr<ID2D1Bitmap1> screenImg;
 private:
 	WinPin(int x, int y, int w, int h, const std::vector<BYTE>* data = nullptr,
 		const std::wstring& initToolId = L"");
@@ -153,6 +162,9 @@ private:
 	// 整个窗口内容都画在这块画布上，走 swap chain 后端：贴图窗口拖动 shape 时每帧重绘，
 	// 单缓冲的合成表面会被采样到"擦干净→逐个重画"的中间态，表现为 shape 和边框整帧闪掉。
 	Ling::Canvas* canvas{ nullptr };
+	// 标注画布：底图 + shapes + 悬停/正在画的那一个，由窗口组合进来而不是继承（见 Canvas.h）。
+	// 与上面那个 Ling 的绘制节点不是一回事，两个别混：一个是"在哪里画"，一个是"画什么"
+	std::unique_ptr<Canvas> drawing;
 	// 文本输入框与当前正在编辑的 ShapeText。非空表示"编辑中"：此时落在文本框里的
 	// 鼠标事件、以及所有键盘事件都归 TextBox，WinPin 自己的那套要让路。
 	Ling::TextBox* textBox{ nullptr };
