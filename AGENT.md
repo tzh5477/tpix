@@ -68,6 +68,8 @@ Src/
 6. **DPI**：所有 setter 收**逻辑像素**（内部乘 dpi），`Node::x/y/w/h` 是**物理像素**。宿主窗口可能在与系统不同的缩放比的屏幕上，工具条一律以 `win->dpi` 为准。
 7. **驶入 / 驶出**：工具类构造 -> `createNativeWindow()` -> `onCreated()`（此时 `body` 才可用）-> 末尾 `show()`。
 8. **语言包是 UTF-16**：用 python 读写（`open(p,'rb').read().decode('utf-16')`），不要用普通文本编辑。
+9. **`WinBase::w/h/x/y` 只是记账，不是窗口尺寸**：`createNativeWindow()` 是在被调用的那一刻照着它们建 hwnd 的，事后直接给成员赋值**不会动窗口**。要改尺寸 / 位置必须走 `setSize()`（收逻辑像素，内部乘 dpi）与 `setPosition()`（收物理像素）——只有它们内部会 `SetWindowPos`。
+10. **比 800×600 小的窗口必须覆盖 `onMinMaxInfo`**：`WinBase::onMinMaxInfo` 默认把 `ptMinTrackSize` 设成 `minW/minH`（默认 **800×600**），而 `SetWindowPos` 会被这条限制按住（WinPin 里那条注释踩的是同一处：默认最大跟踪尺寸只有主显示器那么大）。做法是覆盖它把 `ptMinTrackSize` 设成 1×1。已覆盖：`ToolMain / ToolSub / ToolCap / ToolCapStage / ToolLong / WinPin / WinBall / SelectPopup::Popup`。**创建时不夹，改尺寸时才夹** —— 所以 WinDelay（200×140、创建后从不 `SetWindowPos`）不覆盖也没事，悬浮球（折叠态 100×5、`applyGeometry` 每次都 `SetWindowPos`）一覆盖才现身。
 
 ## 5. 开发规范
 
@@ -236,6 +238,10 @@ Alt+方向 = 贴到屏幕边；Ctrl+Alt+左右 = 搬到相邻显示器。
   和按钮上显示的是同一对，所以不用另起一套「开 / 关」译名。关在前开在后，下标能当 bool 用。
 - 收起只销毁窗口句柄，C++ 对象推迟到下一轮消息循环 —— 收起多半是从某次点击的栈上发起的。
   重复 `close()` 是安全的：`WM_DESTROY` 不会二次触发。
+- **尺寸必须在建完窗口后用 setter 设，不能给 `w/h` 赋值**：`Popup` 的 `createNativeWindow`
+  跑在它自己的构造函数里，那时 `w/h` 还是 0，hwnd 就是 0×0；`show()` 之后再赋值也不会
+  改 hwnd，表现就是"点了没反应"。正确顺序是 `setSize(listW, listH)` -> `setPosition(left, top)`
+  -> `show()`，并覆盖 `onMinMaxInfo` 放开 800×600 这条下限（见第 4 节第 10 条）。
 
 接入点：设置页 `WinSettingCommon::makeSelectBtn / makeSwitchBtn`；
 工具条 `ToolSub::makeSelectBtn / showOnOff`（原来的 `makeCycleBtn` 已删）；
