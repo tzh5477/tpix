@@ -6,8 +6,10 @@ class ShapeNumber : public ShapeBase
 public:
 	enum class NumStyle { Arabic = 0, AlphaLower, AlphaUpper, Roman, Chinese };
 	// 外圈样式。Circle / Square 是 pixpin 那种纯粹的圈号（没有尾巴），是默认的两项；
-	// 带尾巴的"指向某处"版本单独留成带 Arrow 的两个
-	enum class RingStyle { Circle = 0, Square, CircleArrow, SquareArrow, None };
+	// 带尾巴的"指向某处"版本单独留成带 Arrow 的两个。
+	// 顺序不能随便改：这个值直接落盘（config.json 的 toolPin.number.ringStyle），
+	// 插到中间会让老配置串味 —— 所以新增的两个排在 None 后面
+	enum class RingStyle { Circle = 0, Square, None, CircleArrow, SquareArrow };
 	ShapeNumber(Canvas* win);
 	~ShapeNumber();
 	void paint(ID2D1DeviceContext* ctx) override;

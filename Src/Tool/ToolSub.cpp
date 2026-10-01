@@ -41,10 +41,11 @@ namespace {
 		}
 		return nullptr;
 	}
-	// 外圈样式按钮上显示的五样东西：无尾圆 / 无尾方 / 带箭头的圆 / 带箭头的方 /
-	// 一条横线（表示"没有外圈"）。这几个符号在任何语言的字体里都在，不必跟着语言包走；
+	// 外圈样式按钮上显示的五样东西，顺序与 ShapeNumber::RingStyle 一一对应
+	// （这个值要落盘，顺序不能随便动）：无尾圆 / 无尾方 / 一条横线（表示"没有外圈"）/
+	// 带箭头的圆 / 带箭头的方。这几个符号在任何语言的字体里都在，不必跟着语言包走；
 	// 箭头用 → 而不是 ➤ 那批符号，后者的字形不一定装得到
-	const wchar_t* RingSample[]{ L"\u25cf", L"\u25a0", L"\u25cf\u2192", L"\u25a0\u2192", L"\u2014" };
+	const wchar_t* RingSample[]{ L"\u25cf", L"\u25a0", L"\u2014", L"\u25cf\u2192", L"\u25a0\u2192" };
 	// 箭头样式的两个图标：普通（首尾等粗）/ 尖尾，码位见 Src/Res/iconfont.ttf
 	const std::vector<std::wstring>& arrowStyleItems()
 	{

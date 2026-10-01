@@ -145,6 +145,47 @@ Alt+方向 = 贴到屏幕边；Ctrl+Alt+左右 = 搬到相邻显示器。
 7. **G1 余项** 摄像头画中画（需另起 MediaFoundation 摄像头采集管线，单独评估）
 8. ✅ ~~**D2** 表格识别~~（已完成，见下）
 
+### 标注工具（ShapeText / ShapeNumber / ShapeArrow）
+
+三个工具按 pixpin 的手感对齐了一轮（提交 `24ab6ec`）。
+
+- **文本（`ShapeText`）**
+  - **字体**：工具条新增字体按钮（`ToolSub::makeFontBtn`），点开是**系统已装字体全表**
+    （`IDWriteFontCollection` 枚举一次存成静态表；族名取 en-US 那份落盘，按钮上显示中文名，
+    没中文名就退回族名）。落盘存的是**族名而不是下标** —— 下标会随机器上装的字体变化串味。
+    渲染侧在 `makeTextLayout` 建完 layout 之后 `SetFontFamilyName`，编辑中的 `TextBox` 走
+    `setFontFamily`。字体默认不加粗（`isTextBold` 初值本来就是 false）。
+  - **滚轮调字号**：光标停在文字上时滚滚轮，一格两个逻辑像素，改完经
+    `ToolSub::setShapeSliderVal(L"text", ...)` 夹值域并回写滑块（与矩形滚轮调线宽同一套）。
+    字号变了要 `fitRectToText()` 把边框盒重新贴到文字上，否则文字会溢出原来的框。
+  - **旋转手柄**：从"框正上方"挪到**右下角**，并改画成**圆弧 + 两端箭头**的括号
+    （pixpin 那个旋转提示），不再是原来那个实心方块。静止方向变了，`mouseDrag` 里算出的
+    是鼠标方向，要减掉 `restAngle` 才是"相对静止位置转了多少"。
+- **序号（`ShapeNumber`）**
+  - 外圈样式扩到**五种**：无尾圆 / 无尾方 / 无 / 圆+箭头 / 方+箭头，**默认无尾圆**
+    （pixpin 的圈号没有尾巴）。带不带尾巴由 `hasTail()` 一处判定，几何、控制点、命中
+    三处都看它 —— 无尾时 tip / mid 那两个控制点既不画也不响应。
+  - **枚举顺序是按落盘兼容排的，别改**：这个值直接进 `config.json`（`number.ringStyle`），
+    所以 0 / 1 / 2 仍是圆 / 方 / 无（圆与方只是按需求去掉了尾巴），带尾的两个新增在 3 / 4。
+    把新增项插到中间，"无外圈"的老配置会变成"圆+箭头"。
+  - 徽章**左侧**挂 `+` / `−` 两个小圆按钮（`updateValueBtns` 定位，恒在左、不跟着 `angle`
+    转）。`hoverDraggerIndex` 用 3 / 4 表示这两枚，`mouseDown` 里按下即 `bumpVal` 并
+    **直接返回、不进拖拽**。按钮位置在 `makePath` 末尾统一刷新 —— 所有会动 cx/cy/r 的
+    路径都会调它，不用逐个补。
+  - 编号来源改成**工具条上的「编号」输入框**（`ToolSub::takeNumberVal`，取完自增并落盘）。
+    原来是"图上最大编号 + 1"，连删几个再画就会重号。撞号仍然级联顶号（`setValAndPush`）。
+- **箭头（`ShapeArrow`）**
+  - 新增**普通箭头**（平口尾、箭杆首尾等粗、头上接三角）并设为默认；原来的**尖尾渐变**
+    （尾部收成一个点、箭杆由细到粗）留作第二项。两者只在尾部不同，在 `makeArrow` 里
+    分 `arrowStyle` 走。切样式时 `makeSelectBtn` 的 `onPicked` 调
+    `WinPin::onToolStyleChanged()`，选中的那个箭头立刻换形状。
+
+**图标字体**：这一轮又补两个字形 —— **E909**（普通箭头）/ **E90A**（尖尾箭头），共 42 个。
+`Doc/tools/mkicons.py` 改成了**可重复执行**（已存在的码位 / 字形名直接跳过），再跑不会重复插入。
+
+**`SelectPopup`**：`show` 多了一个 `minW`（逻辑像素）。字体名能长到十几个字符，
+按按钮宽度开会把「Microsoft YaHei UI Light」这种截掉。
+
 ### 悬浮球（WinBall）
 
 折叠态是**贴着屏幕边的一条 100×5 的红线**（不是原来的圆球），鼠标移上去展开成一排操作
