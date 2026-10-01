@@ -246,7 +246,8 @@ void ToolSub::showEraserTools()
 void ToolSub::showPinTools()
 {
 	beginTool(L"pin");
-	initSize(4, false, true);
+	// 动图贴图多一个播放 / 暂停按钮，静态贴图不占位
+	initSize(win->hasAnim() ? 5 : 4, false, true);
 	// 四档不透明度循环。按钮上直接写百分比，比一个滑杆直观、也比滑杆少占一截宽度
 	auto opacityBtn = makeCycleBtn(L"tool.pinOpacity", L"opacity", &pinOpacity, 4, [](int i) {
 		return std::format(L"{}%", (int)std::lround(pinOpacitySteps[i] * 100));
@@ -262,6 +263,24 @@ void ToolSub::showPinTools()
 		[this](bool on) { win->setLocked(on); });
 	makeTextToggle(Lang::get(L"tool.pinThrough"), L"tool.pinThrough", L"through", false,
 		[this](bool on) { win->setMouseThrough(on); });
+	// 动图才有的播放 / 暂停。按钮上写的是"点了会变成什么"，与录音机那类按钮一个习惯
+	if (win->hasAnim()) {
+		auto playBtn = contentNode->makeChild<Ling::Button>();
+		playBtn->setHeight(btnSize - 2.5);
+		playBtn->setFlexGrow(1.f);
+		playBtn->setFontSize(12.f);
+		playBtn->setBg(0);
+		playBtn->setHoverBg(0xF2F2F2ff);
+		auto syncText = [this, playBtn]() {
+			playBtn->setText(win->isAnimPlaying() ? Lang::get(L"tool.pinPause") : Lang::get(L"tool.pinPlay"));
+			};
+		syncText();
+		tip->bind(playBtn, Lang::get(L"tool.pinPlayTip"));
+		playBtn->onClick.add([this, syncText](Ling::Button*) {
+			win->toggleAnim();
+			syncText();
+			});
+	}
 	// 标题：写什么显示什么，清空即隐藏。失焦才生效，边打边刷没必要
 	auto titleBox = contentNode->makeChild<Ling::TextBox>();
 	titleBox->setHeight(btnSize - 2.5);

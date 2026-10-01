@@ -3,6 +3,7 @@
 #include <cmath>
 #include "PinSource.h"
 #include "Util.h"
+#include "AnimImage.h"
 #include "Win/WinPin.h"
 #include "ShotHistory.h"
 
@@ -157,6 +158,14 @@ void PinSource::fromFile(HWND hwnd)
 	if (FAILED(item->GetDisplayName(SIGDN_FILESYSPATH, &rawPath))) return;
 	std::wstring path{ rawPath };
 	CoTaskMemFree(rawPath);
+	// 动图走另一条路：解出帧序列交给贴图窗口自己播，静态图才合成一块像素
+	std::vector<AnimFrame> frames;
+	if (AnimImage::load(path, frames)) {
+		int px{ 0 }, py{ 0 };
+		placeCenter((int)frames[0].w, (int)frames[0].h, px, py);
+		WinPin::initFromAnim(px, py, path, frames);
+		return;
+	}
 	std::vector<BYTE> data;
 	DWORD w{ 0 }, h{ 0 };
 	if (!Util::loadImageBytes(path, data, w, h)) return;

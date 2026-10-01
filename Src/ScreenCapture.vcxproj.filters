@@ -30,6 +30,9 @@
     <ClCompile Include="Lang.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
+    <ClCompile Include="AnimImage.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
     <ClCompile Include="Ocr.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
@@ -169,6 +172,9 @@
       <Filter>头文件</Filter>
     </ClInclude>
     <ClInclude Include="pch.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="AnimImage.h">
       <Filter>头文件</Filter>
     </ClInclude>
     <ClInclude Include="Ocr.h">

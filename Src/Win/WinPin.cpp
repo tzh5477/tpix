@@ -28,6 +28,15 @@ namespace {
 		if (result > upper) result = upper;
 		return result;
 	}
+
+	// 贴图属性回写。四个 setter 都是公开接口，所以这个帮忙的可以待在匿名 namespace 里
+	void restoreProps(WinPin* pin, JsonObject obj)
+	{
+		pin->setOpacity((float)obj.GetNamedNumber(L"opacity", 1.0));
+		pin->setRounded(obj.GetNamedBoolean(L"round", false));
+		pin->setLocked(obj.GetNamedBoolean(L"lock", false));
+		pin->setPinTitle(std::wstring{ obj.GetNamedString(L"title", L"") });
+	}
 }
 
 WinPin::WinPin(int x, int y, int w, int h, const std::vector<BYTE>* data, const std::wstring& initToolId)
@@ -147,34 +156,66 @@ void WinPin::saveAll()
 		auto dir = Setting::get()->getDataPath() / L"pin";
 		std::error_code ec;
 		std::filesystem::create_directories(dir, ec);
-		// 整目录重写：上一次留下的文件与这次的编号对不上，留着只会越积越多。
-		// 先收集再删 —— 边枚举边删目录项，没枚举到的可能被跳过
-		std::vector<std::filesystem::path> stale;
-		for (auto& entry : std::filesystem::directory_iterator(dir, ec)) {
-			stale.push_back(entry.path());
-		}
-		for (auto& path : stale) {
-			std::filesystem::remove_all(path, ec);
-		}
+		// 本轮写出的文件名。清理排在写盘之后（见函数末尾）—— 恢复出来的动图，源文件
+		// 就在这个目录里，先清目录等于把要拷的源自己删了，第二次退出后动图会退化成静态图
+		std::vector<std::wstring> written;
 		int index{ 0 };
 		for (auto& pin : winPins)
 		{
-			std::vector<BYTE> pixels;
-			D2D1_SIZE_U size{};
-			if (!pin->getImagePixels(pixels, size)) continue;
-			auto name = std::format(L"{}.png", index++);
-			if (!Util::saveToFile((dir / name).wstring(), (int)size.width, (int)size.height, pixels.data())) continue;
+			auto imgSize = pin->getImgSize();
+			if (imgSize.width == 0 || imgSize.height == 0) continue;
+			// 动图存原始文件 —— 存的是当帧的话重启后就静止了；
+			// 原文件没了（比如用户删了）才退回存当前这一帧
+			auto base = std::format(L"{}", index);
+			std::wstring savedName;
+			bool isAnim{ false };
+			if (pin->hasAnim() && !pin->animSrc.empty()) {
+				auto animName = base + std::filesystem::path(pin->animSrc).extension().wstring();
+				auto dst = dir / animName;
+				std::error_code ec2;
+				// 恢复出来的贴图，animSrc 就在本目录里，编号没变时源与目的是同一个文件，
+				// 而标准规定那种情况 copy_file 必须报错 —— 先认一下"已经在位"
+				if (std::filesystem::equivalent(pin->animSrc, dst, ec2)
+					|| std::filesystem::copy_file(pin->animSrc, dst,
+						std::filesystem::copy_options::overwrite_existing, ec2)) {
+					savedName = animName;
+					isAnim = true;
+				}
+			}
+			if (savedName.empty()) {
+				std::vector<BYTE> pixels;
+				D2D1_SIZE_U size{};
+				if (!pin->getImagePixels(pixels, size)) continue;
+				savedName = base + L".png";
+				if (!Util::saveToFile((dir / savedName).wstring(),
+					(int)size.width, (int)size.height, pixels.data())) continue;
+			}
+			++index;
+			written.push_back(savedName);
 			JsonObject obj;
-			obj.SetNamedValue(L"img", JsonValue::CreateStringValue(name));
+			obj.SetNamedValue(isAnim ? L"anim" : L"img", JsonValue::CreateStringValue(savedName));
 			obj.SetNamedValue(L"x", JsonValue::CreateNumberValue((double)pin->x));
 			obj.SetNamedValue(L"y", JsonValue::CreateNumberValue((double)pin->y));
-			obj.SetNamedValue(L"w", JsonValue::CreateNumberValue((double)size.width));
-			obj.SetNamedValue(L"h", JsonValue::CreateNumberValue((double)size.height));
+			obj.SetNamedValue(L"w", JsonValue::CreateNumberValue((double)imgSize.width));
+			obj.SetNamedValue(L"h", JsonValue::CreateNumberValue((double)imgSize.height));
 			obj.SetNamedValue(L"opacity", JsonValue::CreateNumberValue((double)pin->opacity));
 			obj.SetNamedValue(L"round", JsonValue::CreateBooleanValue(pin->isRounded));
 			obj.SetNamedValue(L"lock", JsonValue::CreateBooleanValue(pin->isLocked));
 			obj.SetNamedValue(L"title", JsonValue::CreateStringValue(pin->pinTitle));
 			arr.Append(obj);
+		}
+		// 上一次留下的文件与这次的编号对不上，留着只会越积越多，所以本轮没写到的都删掉。
+		// 先收集再删 —— 边枚举边删目录项，没枚举到的可能被跳过
+		std::vector<std::filesystem::path> stale;
+		std::error_code ec2;
+		for (auto& entry : std::filesystem::directory_iterator(dir, ec2)) {
+			auto name = entry.path().filename().wstring();
+			if (std::find(written.begin(), written.end(), name) == written.end()) {
+				stale.push_back(entry.path());
+			}
+		}
+		for (auto& path : stale) {
+			std::filesystem::remove_all(path, ec2);
 		}
 		keep = arr.Size() > 0;
 	}
@@ -188,19 +229,27 @@ void WinPin::restoreAll()
 	for (auto&& value : Setting::get()->getPins())
 	{
 		auto obj = value.GetObject();
+		auto x = (int)obj.GetNamedNumber(L"x", 0.0);
+		auto y = (int)obj.GetNamedNumber(L"y", 0.0);
+		// 动图：原始文件还在就按帧序列恢复，解不出来（文件坏了）就当这条不存在
+		auto animName = std::wstring{ obj.GetNamedString(L"anim", L"") };
+		if (!animName.empty()) {
+			auto animPath = (dir / animName).wstring();
+			std::vector<AnimFrame> frames;
+			if (AnimImage::load(animPath, frames)) {
+				initFromAnim(x, y, animPath, frames);
+				restoreProps(winPins.back().get(), obj);
+			}
+			continue;
+		}
 		auto name = std::wstring{ obj.GetNamedString(L"img", L"") };
 		if (name.empty()) continue;
 		std::vector<BYTE> data;
 		DWORD w{ 0 }, h{ 0 };
 		if (!Util::loadImageBytes((dir / name).wstring(), data, w, h)) continue;
-		initFromData((int)obj.GetNamedNumber(L"x", 0.0), (int)obj.GetNamedNumber(L"y", 0.0),
-			(int)w, (int)h, data);
+		initFromData(x, y, (int)w, (int)h, data);
 		// initFromData 刚把新窗口压进 winPins，back() 就是它
-		auto pin = winPins.back().get();
-		pin->setOpacity((float)obj.GetNamedNumber(L"opacity", 1.0));
-		pin->setRounded(obj.GetNamedBoolean(L"round", false));
-		pin->setLocked(obj.GetNamedBoolean(L"lock", false));
-		pin->setPinTitle(std::wstring{ obj.GetNamedString(L"title", L"") });
+		restoreProps(winPins.back().get(), obj);
 	}
 }
 
@@ -396,6 +445,47 @@ void WinPin::initFromData(int x, int y, int w, int h, std::vector<BYTE>& data)
 	std::unique_ptr<WinPin> winPin{ ptr };
 	ptr->createNativeWindow(WS_EX_TOPMOST | WS_EX_TOOLWINDOW, WS_MAXIMIZEBOX | WS_MINIMIZEBOX | WS_POPUP);
 	winPins.push_back(std::move(winPin));
+}
+
+void WinPin::initFromAnim(int x, int y, const std::wstring& src, std::vector<AnimFrame>& frames)
+{
+	if (frames.empty()) return;
+	auto& first = frames[0];
+	auto ptr = new WinPin(x, y, (int)first.w, (int)first.h, &first.pixels);
+	std::unique_ptr<WinPin> winPin{ ptr };
+	ptr->animSrc = src;
+	ptr->frames = std::move(frames);
+	ptr->createNativeWindow(WS_EX_TOPMOST | WS_EX_TOOLWINDOW, WS_MAXIMIZEBOX | WS_MINIMIZEBOX | WS_POPUP);
+	winPins.push_back(std::move(winPin));
+	// 定时器要 hwnd，所以开播排在窗口创建之后。新建的窗口刚压进 winPins，back() 就是它
+	winPins.back()->setAnimPlaying(true);
+}
+
+// 动图换帧只换底图像素：窗口尺寸、shapes、缩放倍数都不动 ——
+// 走 swapImage 那套会把标注清掉、把缩放打回 1 倍，播起来就是一路闪
+void WinPin::showFrame(int index)
+{
+	if (index < 0 || index >= (int)frames.size()) return;
+	auto& frame = frames[index];
+	if (!screenImg) return;
+	auto sz = screenImg->GetPixelSize();
+	if (sz.width != frame.w || sz.height != frame.h) return;
+	screenImg->CopyFromMemory(nullptr, frame.pixels.data(), frame.w * 4);
+	refresh();
+}
+
+void WinPin::setAnimPlaying(bool on)
+{
+	if (!hasAnim()) return;
+	animPlaying = on;
+	// 每帧的停留时间不一样，所以定时器不能设一次管到底：到点先撤，按下一帧的延时重设
+	killTimer(102);
+	if (on) setTimer(frames[frameIndex].delayMs, 102);
+}
+
+void WinPin::toggleAnim()
+{
+	setAnimPlaying(!animPlaying);
 }
 
 void WinPin::onCreated()
@@ -622,6 +712,13 @@ void WinPin::onTimerCB(UINT id)
 		refresh();
 		return;
 	}
+	if (id == 102) {   // 动图：翻到下一帧，并按这一帧自己的延时重新起表
+		killTimer(102);
+		frameIndex = (frameIndex + 1) % (int)frames.size();
+		showFrame(frameIndex);
+		if (animPlaying && hasAnim()) setTimer(frames[frameIndex].delayMs, 102);
+		return;
+	}
 	if (id != 100) return;
 	if (!shapeHover) {
 		refresh();
@@ -702,6 +799,9 @@ void WinPin::onKey(UINT key)
 	else if (ctrl && key == 'M') {  // Ctrl+M：收成贴边细条 / 展开。悬停细条也会展开
 		setMinimized(!isMinimized);
 	}
+	else if (hasAnim() && key == VK_SPACE) {   // 空格：动图播放 / 暂停。静态贴图不认这个键
+		toggleAnim();
+	}
 	else if (key == VK_ESCAPE) {
 		close();
 	}
@@ -730,6 +830,16 @@ void WinPin::previewHistory(int step)
 bool WinPin::swapImage(const std::vector<BYTE>& data, const int w, const int h)
 {
 	if (w <= 0 || h <= 0 || data.empty()) return false;
+	// 换了底图，动图的帧就对不上了（尺寸、内容都不是原来那张），一并丢掉停播。
+	// shrink_to_fit 是必要的：几百帧的大图能占几十 MB，clear 只是把 size 归零
+	killTimer(102);
+	frames.clear();
+	frames.shrink_to_fit();
+	frameIndex = 0;
+	animPlaying = false;
+	animSrc.clear();
+	// 正显示着 pin 面板的话，那个播放按钮已经没东西可播，重建一下把它去掉
+	if (toolMain && toolMain->curId == L"pin") toolSub->showPinTools();
 	D2D1_BITMAP_PROPERTIES1 props{};
 	props.pixelFormat = D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED);
 	props.bitmapOptions = D2D1_BITMAP_OPTIONS_NONE;

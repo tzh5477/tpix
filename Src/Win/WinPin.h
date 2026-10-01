@@ -1,5 +1,6 @@
 #pragma once
 #include <include/Ling.h>
+#include "../AnimImage.h"
 
 class ToolMain;
 class ToolSub;
@@ -15,6 +16,12 @@ public:
 	// 底图不来自 WinCap 的截屏，而是外部给的一块 BGRA、top-down、行紧凑（步长 = w*4）像素。
 	// 滚动截图（WinLong）拼出来的长图走这条路进贴图窗口。
 	static void initFromData(int x, int y, int w, int h, std::vector<BYTE>& data);
+	// 动图贴图：底图是 frames[0]，随后由定时器逐帧换。src 是原始动图文件，
+	// 退出持久化时把它拷进数据目录，重启后还能接着播
+	static void initFromAnim(int x, int y, const std::wstring& src, std::vector<AnimFrame>& frames);
+	bool hasAnim() const { return frames.size() > 1; }
+	bool isAnimPlaying() const { return animPlaying; }
+	void toggleAnim();
 	// 当前屏幕上还有没有贴图窗口。用完即走模式靠它判断"活干完了没"：
 	// 截图窗口关掉时贴图窗口可能才刚建起来，那时候不能退进程
 	static bool hasWindow();
@@ -86,6 +93,15 @@ private:
 	// Ctrl+滚轮缩放改的只有窗口大小，两者对不上就是按错误的宽高读缓冲区（越界崩溃、图也是花的）
 	bool getImagePixels(std::vector<BYTE>& pixels, D2D1_SIZE_U& size);
 	bool swapImage(const std::vector<BYTE>& data, const int w, const int h);
+	// 动图播放：把第 index 帧的像素拷进底图。帧尺寸与底图尺寸对不上就什么都不做
+	// （贴图窗口的尺寸钉死在第一帧上，中途换尺寸的帧画出来是歪的）
+	void showFrame(int index);
+	void setAnimPlaying(bool on);
+	std::vector<AnimFrame> frames;
+	int frameIndex{ 0 };
+	bool animPlaying{ false };
+	// 原始动图文件的路径，持久化时按它把文件拷进数据目录
+	std::wstring animSrc;
 	// 历史翻页当前指到哪一张（0 = 最新一张）。-1 表示还没翻过页
 	int previewIndex{ -1 };
 	// 收成细条前的位置与尺寸，展开时恢复

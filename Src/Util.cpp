@@ -177,24 +177,13 @@ namespace {
 		return true;
 	}
 
-	// 解码成 BGRA top-down 行紧凑。源可能是灰度 / CMYK / BGR 之类，统一走一次格式转换，
-	// 调用方拿到的永远是同一套布局
-	bool decodeFrame(IWICImagingFactory* factory, IWICBitmapDecoder* decoder,
-		std::vector<BYTE>& out, DWORD& w, DWORD& h)
+	// 静态图取第 0 帧，统一转成 BGRA top-down 行紧凑。源可能是灰度 / CMYK / BGR 之类，
+	// 走一次格式转换，调用方拿到的永远是同一套布局
+	bool decodeFrame(IWICBitmapDecoder* decoder, std::vector<BYTE>& out, DWORD& w, DWORD& h)
 	{
 		ComPtr<IWICBitmapFrameDecode> frame;
 		if (FAILED(decoder->GetFrame(0, frame.GetAddressOf()))) return false;
-		UINT fw{ 0 }, fh{ 0 };
-		if (FAILED(frame->GetSize(&fw, &fh)) || fw == 0 || fh == 0) return false;
-		ComPtr<IWICFormatConverter> converter;
-		if (FAILED(factory->CreateFormatConverter(converter.GetAddressOf()))) return false;
-		if (FAILED(converter->Initialize(frame.Get(), GUID_WICPixelFormat32bppBGRA,
-			WICBitmapDitherTypeNone, nullptr, 0.0, WICBitmapPaletteTypeCustom))) return false;
-		out.assign((size_t)fw * fh * 4, 0);
-		if (FAILED(converter->CopyPixels(nullptr, fw * 4, (UINT)out.size(), out.data()))) return false;
-		w = fw;
-		h = fh;
-		return true;
+		return Util::decodeWicFrame(frame.Get(), out, w, h);
 	}
 }
 
@@ -310,7 +299,7 @@ bool Util::loadImageBytes(const std::wstring& path, std::vector<BYTE>& out, DWOR
 	ComPtr<IWICBitmapDecoder> decoder;
 	if (FAILED(factory->CreateDecoderFromFilename(path.c_str(), nullptr, GENERIC_READ,
 		WICDecodeMetadataCacheOnDemand, decoder.GetAddressOf()))) return false;
-	return decodeFrame(factory.Get(), decoder.Get(), out, w, h);
+	return decodeFrame(decoder.Get(), out, w, h);
 }
 
 bool Util::decodeImageBytes(BYTE* buf, DWORD size, std::vector<BYTE>& out, DWORD& w, DWORD& h)
@@ -337,7 +326,26 @@ bool Util::decodeImageBytes(BYTE* buf, DWORD size, std::vector<BYTE>& out, DWORD
 	ComPtr<IWICBitmapDecoder> decoder;
 	if (FAILED(factory->CreateDecoderFromStream(stream.Get(), nullptr,
 		WICDecodeMetadataCacheOnDemand, decoder.GetAddressOf()))) return false;
-	return decodeFrame(factory.Get(), decoder.Get(), out, w, h);
+	return decodeFrame(decoder.Get(), out, w, h);
+}
+
+bool Util::decodeWicFrame(IWICBitmapFrameDecode* frame, std::vector<BYTE>& out, DWORD& w, DWORD& h)
+{
+	if (!frame) return false;
+	ComPtr<IWICImagingFactory> factory;
+	if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER,
+		IID_PPV_ARGS(factory.GetAddressOf())))) return false;
+	UINT fw{ 0 }, fh{ 0 };
+	if (FAILED(frame->GetSize(&fw, &fh)) || fw == 0 || fh == 0) return false;
+	ComPtr<IWICFormatConverter> converter;
+	if (FAILED(factory->CreateFormatConverter(converter.GetAddressOf()))) return false;
+	if (FAILED(converter->Initialize(frame, GUID_WICPixelFormat32bppBGRA,
+		WICBitmapDitherTypeNone, nullptr, 0.0, WICBitmapPaletteTypeCustom))) return false;
+	out.assign((size_t)fw * fh * 4, 0);
+	if (FAILED(converter->CopyPixels(nullptr, fw * 4, (UINT)out.size(), out.data()))) return false;
+	w = fw;
+	h = fh;
+	return true;
 }
 
 Util::ClipContent Util::readClipboard(std::vector<BYTE>& img, int& w, int& h, std::wstring& text)

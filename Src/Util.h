@@ -3,6 +3,8 @@
 #include <fstream>
 #include <array>
 
+struct IWICBitmapFrameDecode;   // 前向声明就够：只在实现里用到它的成员，这里不必拖进 wincodec.h
+
 // 图像输出相关的工具函数。data 一律要求 BGRA、top-down、行紧凑（步长 = w*4），
 // 这也是 WinPin::getImagePixels 交出来的格式。
 class Util
@@ -56,4 +58,7 @@ public:
 	static ClipContent readClipboard(std::vector<BYTE>& img, int& w, int& h, std::wstring& text);
 	// 同上，但源是内存里的一段编码数据（剪贴板上的 PNG 就是这种）
 	static bool decodeImageBytes(BYTE* buf, DWORD size, std::vector<BYTE>& out, DWORD& w, DWORD& h);
+	// 把 WIC 已经解出来的一帧转成 BGRA 行紧凑。动图逐帧解码用得上（见 AnimImage），
+	// 静态图走上面两个入口，它们内部取的也是第 0 帧
+	static bool decodeWicFrame(IWICBitmapFrameDecode* frame, std::vector<BYTE>& out, DWORD& w, DWORD& h);
 };
