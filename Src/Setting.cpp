@@ -498,6 +498,17 @@ bool Setting::getClickFx()
 	return getCapObj().GetNamedBoolean(L"clickFx", false);
 }
 
+bool Setting::getGlobalMouse()
+{
+	return getCapObj().GetNamedBoolean(L"globalMouse", false);
+}
+
+void Setting::setGlobalMouse(bool val)
+{
+	getCapObj().SetNamedValue(L"globalMouse", JsonValue::CreateBooleanValue(val));
+	save();
+}
+
 void Setting::setClickFx(bool val)
 {
 	getCapObj().SetNamedValue(L"clickFx", JsonValue::CreateBooleanValue(val));

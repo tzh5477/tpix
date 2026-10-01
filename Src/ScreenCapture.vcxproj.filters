@@ -24,6 +24,9 @@
     <ClCompile Include="Canvas.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
+    <ClCompile Include="GlobalMouse.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
     <ClCompile Include="pch.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
@@ -277,6 +280,9 @@
       <Filter>头文件</Filter>
     </ClInclude>
     <ClInclude Include="Canvas.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="GlobalMouse.h">
       <Filter>头文件</Filter>
     </ClInclude>
     <ClInclude Include="History.h">

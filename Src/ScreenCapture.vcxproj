@@ -171,6 +171,7 @@
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Create</PrecompiledHeader>
     </ClCompile>
     <ClCompile Include="Canvas.cpp" />
+    <ClCompile Include="GlobalMouse.cpp" />
     <ClCompile Include="Setting.cpp" />
     <ClCompile Include="AnimImage.cpp" />
     <ClCompile Include="Ocr.cpp" />
@@ -257,6 +258,7 @@
   <ItemGroup>
     <ClInclude Include="App.h" />
     <ClInclude Include="Canvas.h" />
+    <ClInclude Include="GlobalMouse.h" />
     <ClInclude Include="History.h" />
     <ClInclude Include="Lang.h" />
     <ClInclude Include="pch.h" />

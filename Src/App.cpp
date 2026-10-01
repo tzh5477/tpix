@@ -5,6 +5,7 @@
 #include "App.h"
 #include "Setting.h"
 #include "Tray.h"
+#include "GlobalMouse.h"
 #include "Lang.h"
 #include "ShotHistory.h"
 #include "Update.h"
@@ -100,6 +101,7 @@ void App::dispose()
     WinOcr::dispose();
     WinBall::dispose();
     WinHistory::dispose();
+    GlobalMouse::dispose();     // 全局钩子：不卸会一直挂在系统里
     ShotHistory::dispose();   // 必须在 Setting 之前：析构里要写索引文件
     Lang::dispose();
     Setting::dispose();
@@ -178,6 +180,8 @@ App::App()
             return;
         }
         WinPin::restoreAll();   // 上次退出前贴着的图，回到原来的位置
+		// 全局鼠标：按住 Win 拖动就出结果。钩子挂在 UI 线程上，得在这条线程起来之后装
+		GlobalMouse::setEnabled(Setting::get()->getGlobalMouse());
 		WinBall::init();        // 悬浮球：配置里开过就一直挂着，位置是上次拖到的地方
 		WinCap::init();//默认情况下，应用启动随即进入截图模式
     }

@@ -80,6 +80,10 @@ public:
 	// 录屏时鼠标点击可视化（按下处扩一圈圆环）。默认关：它会把画面改掉，不该静默生效
 	bool getClickFx();
 	void setClickFx(bool val);
+	// 全局鼠标（C5 余项）：按住 Win 键拖动直接出结果 —— 左键贴图 / 中键复制 / 右键认文字。
+	// 默认关：它要吞掉 Win+拖动那一串鼠标消息，属于抢系统手势，不该静默生效
+	bool getGlobalMouse();
+	void setGlobalMouse(bool val);
 	// 滚动截图的方向：true = 横向（拼出来的图往右长），false = 竖向（默认）
 	bool getLongHorizontal();
 	void setLongHorizontal(bool val);

@@ -1,6 +1,7 @@
 ﻿#include "pch.h"
 #include <shobjidl.h>
 #include "../Lang.h"
+#include "../GlobalMouse.h"
 #include "../Ocr.h"
 #include "../Setting.h"
 #include "../Util.h"
@@ -336,6 +337,21 @@ void WinSettingCommon::initCapCtrls()
     fxBtn->onClick.add([applySwitch](Ling::Button* btn) {
         auto next = !Setting::get()->getClickFx();
         Setting::get()->setClickFx(next);
+        applySwitch(btn, next);
+    });
+
+    // 全局鼠标：按住 Win 键拖动就出结果。开关一动就装 / 卸钩子
+    auto mouseRow = makeRow(L"setting.globalMouse");
+    auto mouseBtn = mouseRow->makeChild<Ling::Button>();
+    mouseBtn->setFontFamily(L"icon");
+    mouseBtn->setHeightPercent(100.f);
+    mouseBtn->setFontSize(18.f);
+    mouseBtn->setWidth(60.f);
+    applySwitch(mouseBtn, Setting::get()->getGlobalMouse());
+    mouseBtn->onClick.add([applySwitch](Ling::Button* btn) {
+        auto next = !Setting::get()->getGlobalMouse();
+        Setting::get()->setGlobalMouse(next);
+        GlobalMouse::setEnabled(next);
         applySwitch(btn, next);
     });
 
