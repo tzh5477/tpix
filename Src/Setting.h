@@ -1,6 +1,8 @@
 ﻿#pragma once
 #include <include/Ling.h>
 #include <filesystem>
+#include <utility>
+#include <vector>
 #include <winrt/Windows.Data.Json.h>
 using namespace winrt::Windows::Data::Json;
 
@@ -64,6 +66,13 @@ public:
 	// 框选形状：0 = 矩形，1 = 手绘自由多边形（多边形以外的像素导出成透明）
 	int getCapShape();
 	void setCapShape(int val);
+	// 固定尺寸区域：返回全局预设表里的第几个，0 是不固定。尺寸是截图要截到的像素
+	static const std::vector<std::pair<int, int>>& fixedSizePresets();
+	// 越界的下标按"不固定"对待，老配置 / 手改过的配置文件不至于把框选搞废
+	int getCapFixedIdx();
+	void setCapFixedIdx(int val);
+	// 第 idx 档的宽高，写到出参里；不固定（或 idx 越界）返回 false
+	static bool fixedSize(int idx, int& w, int& h);
 	// 滚动截图的方向：true = 横向（拼出来的图往右长），false = 竖向（默认）
 	bool getLongHorizontal();
 	void setLongHorizontal(bool val);

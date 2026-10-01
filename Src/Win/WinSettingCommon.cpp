@@ -283,6 +283,27 @@ void WinSettingCommon::initCapCtrls()
         applyShape(btn);
     });
 
+    // 固定尺寸区域：0 号预设是"不固定"
+    auto fixRow = makeRow(L"setting.capFixed");
+    auto fixBtn = fixRow->makeChild<Ling::Button>();
+    fixBtn->setHeight(28.f);
+    fixBtn->setWidth(100.f);
+    fixBtn->setBorder(1.f, 0xE0E0E0FF);
+    fixBtn->setHoverBg(0xFFFFFFFF);
+    auto applyFix = [](Ling::Button* btn) {
+        auto idx = Setting::get()->getCapFixedIdx();
+        int w{ 0 }, h{ 0 };
+        btn->setText(Setting::fixedSize(idx, w, h)
+            ? std::to_wstring(w) + L" × " + std::to_wstring(h)
+            : Lang::get(L"setting.delayOff"));
+    };
+    applyFix(fixBtn);
+    fixBtn->onClick.add([applyFix](Ling::Button* btn) {
+        auto& presets = Setting::fixedSizePresets();
+        Setting::get()->setCapFixedIdx((Setting::get()->getCapFixedIdx() + 1) % (int)presets.size());
+        applyFix(btn);
+    });
+
     auto cursorRow = makeRow(L"setting.includeCursor");
     auto cursorBtn = cursorRow->makeChild<Ling::Button>();
     cursorBtn->setFontFamily(L"icon");

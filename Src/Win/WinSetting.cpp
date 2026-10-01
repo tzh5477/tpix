@@ -20,8 +20,9 @@ WinSetting::WinSetting() :Ling::WinBase()
 	});
 	setTitle(Lang::get(L"setting.title"));
 	// 通用设置每一行是定高的（连分隔线 40），既不压缩也不滚动，
-	// 所以窗口高度得跟着行数走 —— 拦在底部的那几行点不到，等于没做
-	setSize(680, 760);
+	// 所以窗口高度得跟着行数走 —— 拦在底部的那几行点不到，等于没做。
+	// 加一行就把这个数 +40
+	setSize(680, 800);
 	setCenter();
 	createNativeWindow();
 }

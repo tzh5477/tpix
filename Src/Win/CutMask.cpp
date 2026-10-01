@@ -3,6 +3,7 @@
 #include <include/Ling.h>
 #include "CutMask.h"
 #include "../Util.h"
+#include "../Setting.h"
 using namespace Microsoft::WRL;
 
 CutMask::CutMask(Ling::WinBase* win) :win{ win }
@@ -20,8 +21,9 @@ CutMask::CutMask(Ling::WinBase* win) :win{ win }
 
 bool CutMask::highlight(POINT pos)
 {
-	// 手绘选区框出来之后就不再跟着窗口跑了：那会让刚画好的形状被整个拉歪
-	if (isPoly()) return false;
+	// 手绘选区框出来之后就不再跟着窗口跑了：那会让刚画好的形状被整个拉歪。
+	// 固定区域同理 —— 尺寸是钉死的，吸附只会把它撵成别的大小
+	if (isPoly() || fixedW > 0.f) return false;
 	for (auto& rect : winRect)
 	{
 		if (pos.x > rect.left && pos.y > rect.top && pos.x < rect.right && pos.y < rect.bottom) {
@@ -90,16 +92,45 @@ void CutMask::makeLayout()
 	layout->SetMaxHeight(layoutRect.bottom - layoutRect.top);
 }
 
+void CutMask::beginFixedSize()
+{
+	int w{ 0 }, h{ 0 };
+	if (Setting::fixedSize(Setting::get()->getCapFixedIdx(), w, h)) {
+		fixedW = (float)w;
+		fixedH = (float)h;
+		return;
+	}
+	fixedW = 0.f;
+	fixedH = 0.f;
+}
+
 void CutMask::startMakeRect(POINT pos)
 {
 	// 只在上一次是手绘时才清理：无脑清会把悬停吸附出来的整窗矩形一起抹掉，
 	// "点一下就截当前窗口"这条路就断了
 	if (isPoly()) clearPoly();
+	beginFixedSize();
+	// 固定区域：按下那一刻框就已经成形了，拖到哪算哪。这样"点一下出一张固定尺寸图"
+	// 也走得通 —— 否则不动鼠标根本不会有矩形
+	if (fixedW > 0.f && fixedH > 0.f) {
+		makeRect(pos);
+		return;
+	}
 	pressPos = pos;
 }
 
 void CutMask::makeRect(POINT pos)
 {
+	if (fixedW > 0.f && fixedH > 0.f) {
+		// 尺寸钉死，能动的只有左上角。往右 / 下越界就把左上角推回来，
+		// 而不是把框缩小 —— 缩了就不是"固定尺寸"了
+		const float left = std::clamp((float)pos.x, 0.f, std::max(0.f, win->w - fixedW));
+		const float top = std::clamp((float)pos.y, 0.f, std::max(0.f, win->h - fixedH));
+		maskRect = D2D1::RectF(left, top, left + fixedW, top + fixedH);
+		makeLayout();
+		win->refresh();
+		return;
+	}
 	auto [left, right] = std::minmax(pressPos.x, pos.x);
 	auto [top, bottom] = std::minmax(pressPos.y, pos.y);
 	maskRect.left = (float)left;

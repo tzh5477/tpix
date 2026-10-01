@@ -15,6 +15,9 @@ public:
 	bool highlight(POINT pos);
 	void startMakeRect(POINT pos);
 	void makeRect(POINT pos);
+	// 下一次拖框用什么尺寸。读设置里的「固定区域」那一项，startMakeRect 里取一次
+	// 定下来，免得配着配着中途换了尺寸让拖到一半的框跳一下
+	void beginFixedSize();
 	// 选区四边的延长线把窗口切成九块：中间是 Inside，外面八块各是一个方位。没框出选区时才是 None
 	MaskHit hitTest(POINT pos) const;
 	// 开始调整：记下方向和起始矩形。按的是边或角时，这一下就把那条边吸到光标处
@@ -64,6 +67,8 @@ private:
 	Microsoft::WRL::ComPtr<ID2D1PathGeometry> polyGeom;
 	// 采样间距：光标移动得再快，也别把路径点录得太密（构造里乘过 dpi，物理像素）
 	float polyStep{ 4.f };
+	// 固定区域模式的宽高（像素）。0 表示这一轮框的是自由矩形
+	float fixedW{ 0.f }, fixedH{ 0.f };
 	POINT pressPos{};
 	Ling::WinBase* win{ nullptr };
 	float paddingTop{ 2.f }, paddingMargin{3.f};

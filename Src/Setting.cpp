@@ -455,6 +455,40 @@ void Setting::setCapShape(int val)
 	save();
 }
 
+const std::vector<std::pair<int, int>>& Setting::fixedSizePresets()
+{
+	// 0 号留空代表"不固定"，与 getCapFixedIdx 的返回值对齐
+	static const std::vector<std::pair<int, int>> presets{
+		{ 0, 0 }, { 1920, 1080 }, { 1280, 720 }, { 800, 600 }, { 640, 480 }
+	};
+	return presets;
+}
+
+bool Setting::fixedSize(int idx, int& w, int& h)
+{
+	auto& presets = fixedSizePresets();
+	if (idx <= 0 || idx >= (int)presets.size()) return false;
+	w = presets[idx].first;
+	h = presets[idx].second;
+	return true;
+}
+
+int Setting::getCapFixedIdx()
+{
+	auto val = (int)getCapObj().GetNamedNumber(L"fixedIdx", 0.0);
+	const auto& presets = fixedSizePresets();
+	if (val < 0 || val >= (int)presets.size()) return 0;
+	return val;
+}
+
+void Setting::setCapFixedIdx(int val)
+{
+	const auto& presets = fixedSizePresets();
+	if (val < 0 || val >= (int)presets.size()) val = 0;
+	getCapObj().SetNamedValue(L"fixedIdx", JsonValue::CreateNumberValue((double)val));
+	save();
+}
+
 bool Setting::getIncludeCursor()
 {
 	return getCapObj().GetNamedBoolean(L"cursor", false);
