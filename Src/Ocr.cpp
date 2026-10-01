@@ -1,12 +1,13 @@
 ﻿#include "pch.h"
+#include "Ocr.h"
 #include <winrt/Windows.Media.Ocr.h>
 #include <winrt/Windows.Graphics.Imaging.h>
 #include <winrt/Windows.Globalization.h>
 #include <algorithm>
 
 using namespace winrt;
-using namespace Windows::Graphics::Imaging;
-using namespace Windows::Globalization;
+using namespace winrt::Windows::Graphics::Imaging;
+using namespace winrt::Windows::Globalization;
 // 不写 using namespace Windows::Media::Ocr：那个命名空间的名字也叫 Ocr，
 // 与本类同名，写全了省得将来有人看岔
 namespace wmo = winrt::Windows::Media::Ocr;
@@ -85,8 +86,8 @@ std::wstring Ocr::recognize(const int w, const int h, BYTE* data, const std::wst
 			uint32_t cap{ 0 };
 			if (FAILED(access->GetBuffer(&dst, &cap))) return {};
 			// 行距可能与 w*4 不等（对齐需要），所以按 Stride 一行一行拷
-			auto stride = (size_t)desc.Stride();
-			auto start = (size_t)desc.StartIndex();
+			auto stride = (size_t)desc.Stride;
+			auto start = (size_t)desc.StartIndex;
 			if (start + stride * (size_t)h > cap || stride < (size_t)w * 4) return {};
 			for (int y = 0; y < h; ++y)
 			{

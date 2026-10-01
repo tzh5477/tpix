@@ -77,7 +77,8 @@ void ShapeWatermark::paint(ID2D1DeviceContext* ctx)
 	auto rotation = win->getToolSub()->getWatermarkRotation();
 	// 屏幕绘制时外层是缩放变换、导出时是单位阵，进来是什么出去还是什么，
 	// 不能自己设回 Scale —— 导出图会被放大 scale 倍
-	auto prev = ctx->GetTransform();
+	D2D1_MATRIX_3X2_F prev{};
+	ctx->GetTransform(&prev);
 	if (win->getToolSub()->watermarkTile) {
 		// 平铺：沿水平方向铺满，行距给足一倍字高，密度靠字号自己调
 		constexpr float gapX{ 60.f }, gapY{ 40.f };

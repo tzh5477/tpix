@@ -1,6 +1,7 @@
 #include "pch.h"
 #include "History.h"
 #include "Canvas.h"
+#include "Tool/ToolSub.h"
 #include "Shape/ShapeBase.h"
 #include "Shape/ShapeRect.h"
 #include "Shape/ShapeEllipse.h"

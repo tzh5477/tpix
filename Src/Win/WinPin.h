@@ -2,6 +2,7 @@
 #include <include/Ling.h>
 #include <winrt/Windows.Data.Json.h>
 #include "../AnimImage.h"
+#include "../Canvas.h"
 
 class ToolMain;
 class ToolSub;

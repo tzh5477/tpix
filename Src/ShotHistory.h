@@ -50,6 +50,8 @@ public:
 private:
 	ShotHistory();
 	~ShotHistory();
+	// 唯一持有者是本类的静态 unique_ptr，允许它析构，别处仍然不能 delete
+	friend struct std::default_delete<ShotHistory>;
 	void load();
 	void save();
 	// 超过上限就从最旧那条开始删，连文件一起删

@@ -171,7 +171,8 @@ void WinBall::snapAndSave()
 	// 往离得近的那条竖边靠。球是常驻的，停在半路会一直压着底下的内容
 	auto toLeft = (x + static_cast<int>(w) / 2) < (wa.left + wa.right) / 2;
 	auto newX = toLeft ? wa.left : wa.right - static_cast<int>(w);
-	auto newY = std::clamp(y, wa.top, std::max(wa.top, wa.bottom - static_cast<int>(h)));
+	auto newY = std::clamp(y, static_cast<int>(wa.top),
+		static_cast<int>(std::max(wa.top, wa.bottom - static_cast<int>(h))));
 	setPosition(newX, newY);
 	Setting::get()->setToolNum(L"ball", L"x", static_cast<float>(newX));
 	Setting::get()->setToolNum(L"ball", L"y", static_cast<float>(newY));

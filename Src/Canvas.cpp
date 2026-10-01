@@ -1,8 +1,8 @@
 #include "pch.h"
 #include "Canvas.h"
 #include "History.h"
-#include "../Tool/ToolMain.h"
-#include "../Tool/ToolSub.h"
+#include "Tool/ToolMain.h"
+#include "Tool/ToolSub.h"
 
 // History 是 unique_ptr 成员，构造它要完整类型，析构它同样要 —— 都挤在 .cpp 里
 Canvas::Canvas(CanvasHost* host) : host{ host }, history{ std::make_unique<History>(this) }
