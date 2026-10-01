@@ -747,6 +747,11 @@ void WinCap::startGif()
     if (capVideo) capVideo->startGif();
 }
 
+void WinCap::setRecordPaused(bool on)
+{
+    if (capVideo) capVideo->setPaused(on);
+}
+
 std::wstring WinCap::stopRecord()
 {
     return capVideo ? capVideo->stop() : L"";

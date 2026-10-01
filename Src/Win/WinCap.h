@@ -48,6 +48,8 @@ public:
 	// ToolVideo，转给 capVideo
 	void startMp4(bool useSpeaker, bool useMic);
 	void startGif();
+	// 录制中暂停 / 继续，转给 CapVideo（工具条上的暂停按钮用）
+	void setRecordPaused(bool on);
 	std::wstring stopRecord();
 	// ToolLong，转给 capLong
 	// ToolLong 的摆放规则在 CapLong 手里，它 DPI 变了要重走一遍，从这里转进去

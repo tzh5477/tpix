@@ -18,6 +18,7 @@
 #include <mfapi.h>
 #include <mfreadwrite.h>
 #include <dshow.h>
+#include "ClickFx.hpp"
 #include <effects.h>
 #include <Wmcodecdsp.h>
 #include <setjmp.h>
@@ -630,6 +631,9 @@ public:
     int ConvertHDR = 2; // 0 no convert, 1 convert, 1 convert and go updown
     // 是否成功要到了"系统帮我转成 8 位"的桌面复制，见 Prepare
     bool SDRForced = false;
+    // 点击可视化的那一圈涟漪是跨帧状态（按一下要连着画几帧），不能每帧新建，
+    // 所以挂在采集器上
+    ClickFx::Ripples ripples;
     HRESULT CreateDirect3DDevice(IDXGIAdapter1* g)
     {
         HRESULT hr = S_OK;
@@ -715,7 +719,7 @@ public:
         return;
     }
 
-    bool Get(IDXGIResource* lDesktopResource,bool Curs,RECT* rcx = 0)
+    bool Get(IDXGIResource* lDesktopResource,bool Curs,RECT* rcx = 0, bool Clicks = false, float clickScale = 1.f)
     {
         // QI for ID3D11Texture2D
         CComPtr<ID3D11Texture2D> lAcquiredDesktopImage;
@@ -727,7 +731,8 @@ public:
         lDesktopResource = 0;
 
 
-        if (InHDR != DXGI_FORMAT_UNKNOWN || Curs == 0)
+        // HDR 是 64bpp，GDI 纹理画不了；既不带指针也不要点击可视化时直接拷，省一道 CPU-GPU
+        if (InHDR != DXGI_FORMAT_UNKNOWN || (Curs == 0 && !Clicks))
         {
             // No Cursor support
             context->CopyResource(lDestImage, lAcquiredDesktopImage);
@@ -748,18 +753,18 @@ public:
             CURSORINFO lCursorInfo = { 0 };
             lCursorInfo.cbSize = sizeof(lCursorInfo);
             auto lBoolres = GetCursorInfo(&lCursorInfo);
-            if (lBoolres == TRUE)
+            HDC  lHDC = nullptr;
+            if (SUCCEEDED(lIDXGISurface1->GetDC(FALSE, &lHDC)) && lHDC)
             {
-                if (lCursorInfo.flags == CURSOR_SHOWING && Curs)
+                if (lBoolres == TRUE && lCursorInfo.flags == CURSOR_SHOWING && Curs)
                 {
-                    // GetIconInfo 和 GetDC 都可能失败（自绘光标、远程桌面、GDI 被挂钩），
-                    // 失败时 iconInfo 和 lHDC 还是栈上的垃圾，照着往下用就是拿野句柄喂 GDI。
+                    // GetIconInfo 可能失败（自绘光标、远程桌面、GDI 被挂钩），
+                    // 失败时 iconInfo 还是栈上的垃圾，照着往下用就是拿野句柄喂 GDI
                     ICONINFO iconInfo{};
                     auto lGotIcon = GetIconInfo(lCursorInfo.hCursor, &iconInfo);
                     if (iconInfo.hbmMask) DeleteObject(iconInfo.hbmMask);
                     if (iconInfo.hbmColor) DeleteObject(iconInfo.hbmColor);
-                    HDC  lHDC = nullptr;
-                    if (lGotIcon && SUCCEEDED(lIDXGISurface1->GetDC(FALSE, &lHDC)) && lHDC)
+                    if (lGotIcon)
                     {
                         auto lCursorPosition = lCursorInfo.ptScreenPos;
                         DrawIconEx(
@@ -772,10 +777,17 @@ public:
                             0,
                             0,
                             DI_NORMAL | DI_DEFAULTSIZE);
-                        // ReleaseDC 只在 GetDC 拿到了 DC 时调
-                        lIDXGISurface1->ReleaseDC(nullptr);
                     }
                 }
+                // 点击可视化。与光标共用同一套坐标（连它在副屏上那个既有偏差一起），
+                // 所以两者在画面上永远是重合的
+                if (Clicks)
+                {
+                    ripples.pull();
+                    ripples.draw(lHDC, 0, 0, clickScale);
+                }
+                // ReleaseDC 只在 GetDC 拿到了 DC 时调
+                lIDXGISurface1->ReleaseDC(nullptr);
             }
 
             // Copy image into CPU access texture
@@ -1024,6 +1036,10 @@ struct DESKTOPCAPTUREPARAMS
     int SR = 44100;
     int ABR = 192;
     bool Cursor = true;
+    // 鼠标点击可视化：按下时在画面上扩一圈圆环。走 codebase 里另一份 ClickFx.hpp，
+    // 与 GIF 那条管线共用
+    bool ClickFx = false;
+    float ClickFxScale = 1.f;
     RECT rx = { 0,0,0,0 };
     HWND hWnd = 0;
     IDXGIAdapter1* ad = 0;
@@ -2129,7 +2145,13 @@ inline int DesktopCapture(DESKTOPCAPTUREPARAMS& dp)
             continue;
 
         if (dp.Pause)
+        {
+            // 暂停期间不写样本，但"上一帧的时刻"必须跟着现在走：
+            // 否则恢复后第一帧算出来的时长等于整段暂停（rtV 一次跳过去），
+            // 片子里就成了长长的一帧静止画面，有声音时音画还会被甩开同样的长度
+            last_frame_time_point = std::chrono::system_clock::now();
             continue;
+        }
 
         CComPtr<IDXGIResource> lDesktopResource;
         DXGI_OUTDUPL_FRAME_INFO lFrameInfo;
@@ -2169,7 +2191,8 @@ inline int DesktopCapture(DESKTOPCAPTUREPARAMS& dp)
 
             // take a time stamp here
             // Get the current time point
-            if (lDesktopResource && !cap.Get(lDesktopResource, dp.Cursor, dp.rx.right && dp.rx.bottom ? &dp.rx : 0))
+            if (lDesktopResource && !cap.Get(lDesktopResource, dp.Cursor, dp.rx.right && dp.rx.bottom ? &dp.rx : 0,
+                dp.ClickFx, dp.ClickFxScale))
                 break;
 
             if (isFirstFrame)

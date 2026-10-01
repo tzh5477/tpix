@@ -63,8 +63,8 @@ float ToolVideo::settingWidth() const
 
 float ToolVideo::recordingWidth() const
 {
-	// 左右内边距 + 计时 + 分隔符 + 丢弃/存文件/存剪切板
-	return timerW + spliterW + btnSize * 3;
+	// 左右内边距 + 计时 + 分隔符 + 暂停 + 分隔符 + 丢弃/存文件/存剪切板
+	return timerW + spliterW * 2 + btnSize * 4;
 }
 
 Ling::Node* ToolVideo::makeSpliter()
@@ -110,6 +110,7 @@ void ToolVideo::showSetting()
 	btnGif = nullptr;
 	btnSpeaker = nullptr;
 	btnMic = nullptr;
+	btnPause = nullptr;
 	timerLabel = nullptr;
 	// 按钮被销毁时 onLeave 不会触发，提示得手动收掉，否则它会一直挂在屏幕上
 	tip->hide();
@@ -167,6 +168,7 @@ void ToolVideo::showRecording()
 	btnGif = nullptr;
 	btnSpeaker = nullptr;
 	btnMic = nullptr;
+	btnPause = nullptr;
 	timerLabel = nullptr;
 	tip->hide();
 	body->removeAllChildren();
@@ -181,6 +183,22 @@ void ToolVideo::showRecording()
 
 	makeSpliter();
 
+	// 暂停。图标不用 icon 字体 —— 那套码位里没有确定的"暂停 / 继续"，
+	// 而 U+2016 与 U+25B6 在系统字体里必定有字形，于是这两个按钮走默认字体
+	btnPause = body->makeChild<Ling::Button>();
+	btnPause->setWidth(btnSize);
+	btnPause->setHeightPercent(100.f);
+	btnPause->setHoverBg(0xF2F2F2ff);
+	btnPause->setFontSize(13.f);
+	applyPauseStyle();
+	btnPause->onClick.add([this](Ling::Button*) {
+		isPaused = !isPaused;
+		win->setRecordPaused(isPaused);
+		applyPauseStyle();
+	});
+
+	makeSpliter();
+
 	// 丢弃 / 存文件 / 存剪切板，三条路都会停掉录制并结束整个流程
 	auto btnDiscard = makeIconBtn(L"\ue62d");
 	btnDiscard->onClick.add([this](Ling::Button*) { finishRecord(false); });
@@ -191,6 +209,23 @@ void ToolVideo::showRecording()
 	auto btnClipboard = makeIconBtn(L"\ue6ad");
 	btnClipboard->onClick.add([this](Ling::Button*) { finishRecord(true); });
 	tip->bind(btnClipboard, Lang::get(L"video.stopClipboard"));
+	// 换形态后宽度变了（多一个暂停按钮），重走一遍摆放规则，
+	// 否则工具条右边缘会伸出录制区那一截
+	win->layoutTool(this);
+}
+
+void ToolVideo::applyPauseStyle()
+{
+	if (!btnPause) return;
+	btnPause->setText(isPaused ? L"\u25B6" : L"\u2016");
+	// Tip::bind 是往 onEnter / onLeave 上挂回调，重绑一次就多一对，没有解绑接口
+	// —— 所以只在文案真的变了时才重绑，否则点二十次暂停就是四十个回调
+	auto text = Lang::get(isPaused ? L"video.resume" : L"video.pause");
+	if (text != pauseTip) {
+		pauseTip = std::move(text);
+		tip->bind(btnPause, pauseTip);
+	}
+	applyToggleStyle(btnPause, isPaused);
 }
 
 void ToolVideo::onFormatClick(int index)
@@ -221,6 +256,7 @@ void ToolVideo::applyFormatStyle()
 void ToolVideo::startRecord()
 {
 	isRecording = true;
+	isPaused = false;
 	totalSeconds = 0;
 	showRecording();
 	setTimer(1000, tickTimerId);
@@ -243,6 +279,8 @@ void ToolVideo::updateTimerText()
 void ToolVideo::onTimerCB(UINT id)
 {
 	if (id != tickTimerId) return;
+	// 暂停期间计时不走：录出来的视频里这一段本来就被跳过了，显示上得对得上
+	if (isPaused) return;
 	totalSeconds += 1;
 	updateTimerText();
 	const int maxSeconds = ((selectIndex == 1) ? 6 : 120) * 60;

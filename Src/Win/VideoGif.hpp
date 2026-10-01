@@ -6,6 +6,7 @@
 #include "gifski.h"
 #include "Util.h"
 #include "cgif/cgif.h"
+#include "ClickFx.hpp"
 //D:\sdk\gifski\target\release\gifski.lib
 //D:\sdk\gifski
 
@@ -14,6 +15,11 @@ namespace VideoGif {
     struct GifParam
     {
         std::atomic<bool> isFinish;
+        // 暂停期间不采样也不追加帧，时间戳自然就停在那儿（与 MP4 那条 Pause 一个意思）
+        std::atomic<bool> pause{ false };
+        // 鼠标点击可视化
+        bool clickFx{ false };
+        float clickFxScale{ 1.f };
         std::wstring path;
         int w;
         int h;
@@ -66,10 +72,23 @@ namespace VideoGif {
         BITMAPINFO bmi = { sizeof(BITMAPINFOHEADER), param->w, 0-param->h, 1, 32, BI_RGB, 0, 0, 0, 0, 0 };
         auto index{ 0 };
         const int frameIntervalMs = 1000 / param->fps;
+        // 点击可视化那一圈涟漪的状态挂在循环外面：它是跨帧的（按下之后要连着画几帧）
+        ClickFx::Ripples ripples;
         while (!param->isFinish) {
             auto tickStart = GetTickCount64();
+            if (param->pause) {
+                // 暂停时连采样都不做：采了不写就是白采。时间戳是按帧序号算的，
+                // 跳过的帧不占号，片长自然也就没把它算进去
+                Sleep(frameIntervalMs < 50 ? frameIntervalMs : 50);
+                continue;
+            }
             BitBlt(hMemDC, 0, 0, param->w, param->h, hScreenDC, param->x, param->y, SRCCOPY);
             drawCursor(hMemDC, param);
+            if (param->clickFx) {
+                ripples.pull();
+                // 这块画布的原点在屏幕上的 (param->x, param->y)，所以传它们的负值
+                ripples.draw(hMemDC, -param->x, -param->y, param->clickFxScale);
+            }
             GetDIBits(hMemDC, hBitmap, 0, param->h, (void*)bgra_buffer.data(), &bmi, DIB_RGB_COLORS);
             // BGRA → RGB，逐行转换到紧密排列的缓冲区
             for (int row = 0; row < param->h; row++) {

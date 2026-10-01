@@ -348,6 +348,9 @@
     <ClInclude Include="Win\cgif\cgif_raw.h">
       <Filter>头文件</Filter>
     </ClInclude>
+    <ClInclude Include="Win\ClickFx.hpp">
+      <Filter>头文件</Filter>
+    </ClInclude>
     <ClInclude Include="Win\CutMask.h">
       <Filter>头文件</Filter>
     </ClInclude>

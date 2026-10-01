@@ -26,6 +26,10 @@ public:
 	bool isRecording() const;
 	void startMp4(bool useSpeaker, bool useMic);
 	void startGif();
+	// 录制暂停。MP4 那头是库里本来就有的 Pause 标记：帧循环里跳过采帧与写样本，
+	// 并把时间基准拉到当前，恢复后第一帧才不会吃掉整段暂停。
+	// GIF 那头是跳过采样与追加帧，时间戳按帧序号算，天然跳过
+	void setPaused(bool on);
 	// 停止录制并返回录好的临时文件路径；没在录制时返回空串
 	std::wstring stop();
 	// Ctrl+S / Ctrl+C 转给工具条上的"存文件" / "存剪切板"；没在录制时返回 false

@@ -73,6 +73,9 @@ public:
 	void setCapFixedIdx(int val);
 	// 第 idx 档的宽高，写到出参里；不固定（或 idx 越界）返回 false
 	static bool fixedSize(int idx, int& w, int& h);
+	// 录屏时鼠标点击可视化（按下处扩一圈圆环）。默认关：它会把画面改掉，不该静默生效
+	bool getClickFx();
+	void setClickFx(bool val);
 	// 滚动截图的方向：true = 横向（拼出来的图往右长），false = 竖向（默认）
 	bool getLongHorizontal();
 	void setLongHorizontal(bool val);

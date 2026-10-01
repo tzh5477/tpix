@@ -304,6 +304,19 @@ void WinSettingCommon::initCapCtrls()
         applyFix(btn);
     });
 
+    auto fxRow = makeRow(L"setting.clickFx");
+    auto fxBtn = fxRow->makeChild<Ling::Button>();
+    fxBtn->setFontFamily(L"icon");
+    fxBtn->setHeightPercent(100.f);
+    fxBtn->setFontSize(18.f);
+    fxBtn->setWidth(60.f);
+    applySwitch(fxBtn, Setting::get()->getClickFx());
+    fxBtn->onClick.add([applySwitch](Ling::Button* btn) {
+        auto next = !Setting::get()->getClickFx();
+        Setting::get()->setClickFx(next);
+        applySwitch(btn, next);
+    });
+
     auto cursorRow = makeRow(L"setting.includeCursor");
     auto cursorBtn = cursorRow->makeChild<Ling::Button>();
     cursorBtn->setFontFamily(L"icon");

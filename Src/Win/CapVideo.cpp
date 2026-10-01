@@ -114,6 +114,8 @@ void CapVideo::startMp4(bool useSpeaker, bool useMic)
     auto& cutMask = win->cutMask;
     auto videoTempPath = Setting::get()->getDataPath();
     mp4Param = std::make_unique<VideoMp4::DESKTOPCAPTUREPARAMS>();
+    mp4Param->ClickFx = Setting::get()->getClickFx();
+    mp4Param->ClickFxScale = win->dpi;
     // 编码格式不在这里定，交给下面采集线程里那个"HEVC 不行就退 H.264"的循环
     // 录制区域先夹回桌面范围，再做对齐 —— 只会往里缩，不会越出桌面。
     // HEVC 编码器要求宽高是偶数，链路中间的 RGB32->NV12 转换还会按对齐后的 stride
@@ -199,6 +201,8 @@ void CapVideo::startGif()
     gifParam->y = (int)(win->y + cutMask->maskRect.top);
     gifParam->w = (int)(cutMask->maskRect.right - cutMask->maskRect.left);
     gifParam->h = (int)(cutMask->maskRect.bottom - cutMask->maskRect.top);
+    gifParam->clickFx = Setting::get()->getClickFx();
+    gifParam->clickFxScale = win->dpi;
     gifParam->path = videoTempPath.append(L"temp.gif").wstring();
     captureThread = std::jthread([this](std::stop_token st) {
         VideoGif::createGif(gifParam.get());
@@ -209,6 +213,13 @@ bool CapVideo::onSaveKey(bool toClipboard)
 {
     return tool ? tool->onSaveKey(toClipboard) : false;
 }
+
+void CapVideo::setPaused(bool on)
+{
+    if (mp4Param) mp4Param->Pause = on;
+    if (gifParam) gifParam->pause = on;
+}
+
 
 std::wstring CapVideo::stop()
 {

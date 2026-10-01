@@ -481,6 +481,17 @@ int Setting::getCapFixedIdx()
 	return val;
 }
 
+bool Setting::getClickFx()
+{
+	return getCapObj().GetNamedBoolean(L"clickFx", false);
+}
+
+void Setting::setClickFx(bool val)
+{
+	getCapObj().SetNamedValue(L"clickFx", JsonValue::CreateBooleanValue(val));
+	save();
+}
+
 void Setting::setCapFixedIdx(int val)
 {
 	const auto& presets = fixedSizePresets();

@@ -5,7 +5,7 @@ class WinCap;
 class Tip;
 // 录屏工具条。两种形态，切换时把 body 的子节点整批重建（同 ToolSub 的做法）：
 //   未录制：MP4 / GIF 二选一 + 系统声 / 麦克风开关 + 开始录制 + 退出
-//   录制中：计时文字 + 丢弃 / 存文件 / 存剪切板
+//   录制中：计时文字 + 暂停 / 继续 + 丢弃 / 存文件 / 存剪切板
 class ToolVideo : public Ling::WinBase
 {
 public:
@@ -30,6 +30,8 @@ private:
 	void applyFormatStyle();
 	// 选中/未选中两套配色，与 ToolSub、ToolMain 的选中效果保持一致
 	void applyToggleStyle(Ling::Button* btn, bool selected);
+	// 暂停按钮上写的是"点了会变成什么"，与录音机那类按钮一个习惯
+	void applyPauseStyle();
 	Ling::Button* makeIconBtn(const std::wstring& code);
 	Ling::Node* makeSpliter();
 	float settingWidth() const;
@@ -47,10 +49,13 @@ private:
 	Ling::Button* btnSpeaker{ nullptr };
 	Ling::Button* btnMic{ nullptr };
 	Ling::Label* timerLabel{ nullptr };
+	Ling::Button* btnPause{ nullptr };
+	// 暂停按钮当前绑的提示文案，见 applyPauseStyle
+	std::wstring pauseTip;
 	// 0 = MP4，1 = GIF
 	int selectIndex{ 0 };
 	int totalSeconds{ 0 };
-	bool selectSpeaker{ true }, selectMic{ false }, isRecording{ false };
+	bool selectSpeaker{ true }, selectMic{ false }, isRecording{ false }, isPaused{ false };
 	// 以下都是逻辑像素，交给 Ling 的 setter 时由其内部乘 dpi
 	static constexpr float btnSize{ 32.f };
 	static constexpr float formatW{ 42.f };
