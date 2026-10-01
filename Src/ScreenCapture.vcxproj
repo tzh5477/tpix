@@ -179,6 +179,7 @@
     <ClCompile Include="Shape\ShapeWatermark.cpp" />
     <ClCompile Include="Win\WinBall.cpp" />
     <ClCompile Include="Win\WinDelay.cpp" />
+    <ClCompile Include="Win\WinOverlay.cpp" />
     <ClCompile Include="Win\WinHistory.cpp" />
     <ClCompile Include="Win\WinOcr.cpp" />
     <ClCompile Include="Shape\ShapeArrow.cpp" />
@@ -265,6 +266,7 @@
     <ClInclude Include="ShotHistory.h" />
     <ClInclude Include="Win\WinBall.h" />
     <ClInclude Include="Win\WinDelay.h" />
+    <ClInclude Include="Win\WinOverlay.h" />
     <ClInclude Include="Win\WinHistory.h" />
     <ClInclude Include="Win\WinOcr.h" />
     <ClInclude Include="Shape\ShapeArrow.h" />

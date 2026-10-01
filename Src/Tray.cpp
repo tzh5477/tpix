@@ -6,6 +6,7 @@
 #include "Win/WinSetting.h"
 #include "Win/WinHistory.h"
 #include "Win/WinBall.h"
+#include "Win/WinOverlay.h"
 #include "PinSource.h"
 #include "Setting.h"
 
@@ -17,6 +18,9 @@ namespace {
 	static constexpr UINT pinClipMsg = 166;
 	static constexpr UINT pinFileMsg = 167;
 	static constexpr UINT ballMsg = 168;
+	static constexpr UINT rulerMsg = 169;
+	static constexpr UINT crosshairMsg = 170;
+	static constexpr UINT focusMsg = 171;
 }
 
 Tray::Tray()
@@ -60,6 +64,13 @@ void Tray::onTrayRightClick()
 	// 悬浮球开关用勾选态表示"当前开着"，不另写"显示 / 隐藏"两套文案
 	AppendMenu(menu, MF_STRING | (WinBall::hasBall() ? MF_CHECKED : MF_UNCHECKED),
 		ballMsg, Lang::get(L"tray.ball").data());
+	// 三个屏幕辅助层都是开关：开着的那一项打勾，再点一次就是关
+	AppendMenu(menu, MF_STRING | (WinOverlay::isOpen(OverlayMode::Ruler) ? MF_CHECKED : MF_UNCHECKED),
+		rulerMsg, Lang::get(L"tray.ruler").data());
+	AppendMenu(menu, MF_STRING | (WinOverlay::isOpen(OverlayMode::Crosshair) ? MF_CHECKED : MF_UNCHECKED),
+		crosshairMsg, Lang::get(L"tray.crosshair").data());
+	AppendMenu(menu, MF_STRING | (WinOverlay::isOpen(OverlayMode::Focus) ? MF_CHECKED : MF_UNCHECKED),
+		focusMsg, Lang::get(L"tray.focus").data());
 	AppendMenu(menu, MF_SEPARATOR, 0, nullptr);
 	AppendMenu(menu, MF_STRING, settingMsg, Lang::get(L"tray.setting").data());
 	AppendMenu(menu, MF_STRING, exitMsg, Lang::get(L"tray.exit").data());
@@ -87,6 +98,18 @@ void Tray::onTrayRightClick()
 			Setting::get()->setToolFlag(L"ball", L"show", true);
 			WinBall::init();
 		}
+	}
+	else if (menuId == rulerMsg)
+	{
+		WinOverlay::toggle(OverlayMode::Ruler);
+	}
+	else if (menuId == crosshairMsg)
+	{
+		WinOverlay::toggle(OverlayMode::Crosshair);
+	}
+	else if (menuId == focusMsg)
+	{
+		WinOverlay::toggle(OverlayMode::Focus);
 	}
 	else if (menuId == settingMsg)
 	{
