@@ -82,7 +82,7 @@ Src/
 见 `Doc/竞品能力差距分析.md` 第七章（A–H 分组）。**本轮范围以 7.4「本轮范围裁剪」为唯一依据**：
 已裁剪 D3 公式识别、D4 AI 翻译、macOS、E1 UI 元素级检测、F 组（FSCapture 方向编辑器）、G3/G4、H2/H4；H6 只做水印；**内置 OCR（G5）必做**。
 
-当前进行：**D 组 → E 组**。已完成并提交（dev 分支，按里程碑分次提交）：
+当前进行：**E 组 → G/H 组**。已完成并提交（dev 分支，按里程碑分次提交）：
 
 - A 组：A1 ToolCap 两行容器、A2 序号增强、A3 智能擦除、A4 文字旋转、A5 输出格式与自动保存
 - B 组：B1 WinPin 多实例（地基已具备）、B2 历史截图 + 剪贴板历史（ShotHistory / WinHistory）、B3 内置 OCR（Ocr / WinOcr，Windows.Media.Ocr）
@@ -94,6 +94,9 @@ Src/
 - D1：OCR 多语种（Ocr::languages + 结果窗口语言按钮 + 设置页默认语言）
 - E3：延时截图（WinDelay 倒计时窗口）、定时自动截图（App 里一条计时线程）
 - E4：包含鼠标指针（Util::snapshotCursor + captureScreen 的 withCursor）
+- E5：横向滚动截图（CapLong 支持滚动轴：转置灰度条带复用竖向匹配、`MOUSEEVENTF_HWHEEL`、
+  成图尺寸用 `resultW × resultH`、配置的那个方向滚不动自动换一次向）
+- H5：屏幕标尺 / 十字准线 / 屏幕聚焦（WinOverlay 一个铺满桌面的顶层窗口 + 托盘三项开关）
 - refactor(shape)（作者主导）：Canvas / CanvasHost 抽出画布宿主，ShapeRectBase / ShapeLineBase
   两个中间基类，马赛克与擦除拆成四变体；**Shape 层此后只认 Canvas，不认 WinPin**
 
@@ -101,14 +104,30 @@ Src/
 Alt+方向 = 贴到屏幕边；Ctrl+Alt+左右 = 搬到相邻显示器。
 
 待做：C5 的「Win+拖拽快速贴图」（需全局键盘钩子 + 全屏拖放层，风险较高，单独评估）、
-D2（表格识别，需 ONNX Runtime）、E2（手绘 / 固定尺寸区域 / 多窗口）、E5（横向滚动截图）、
-G1/G2（画中画 / 点击可视化 / 录制暂停 / 动作录制）、H1/H3/H5。
+D2（表格识别，需 ONNX Runtime + 模型文件）、E2（手绘 / 固定尺寸区域 / 多窗口）、
+G1/G2（画中画 / 点击可视化 / 录制暂停 / 动作录制）、H1（快捷键体系扩充）、
+H3（剪贴板历史已有，剩"自动粘贴到输入焦点"）。
 
 > 记一笔 E4 的坑：`App::takeScreenShot` 与 `Util::captureScreen` 曾经是两份 GDI 抓屏代码，
 > 现在统一走后者。以后新增"改抓屏行为"的能力，只改 `Util::captureScreen` 一处。
 
+> 记一笔 Ling 的坑：`WinBase` 的析构**不销毁 hwnd**，所以关窗口必须走 `close()`，
+> 不能 `unique_ptr.reset()` —— 后者会留下一个还在收定时器 / 鼠标消息的野窗口（use-after-free）。
+> 换窗口（关掉旧的开新的）要用 `pendingMode` 这类接力：`close()` → `onDestroy` 的延迟任务里再 `new`。
+
 ## 7. 验证
 
 本机具备 MSVC BuildTools 2022（`D:\ProgramFiles\Microsoft Visual Studio\2022\BuildTools`）与 Windows SDK 10.0.26100，
-但在受限沙箱里 `MSBuild.exe` / `cl.exe` 会被判定为 LOLBin 拦截，**无法在会话内完成编译验证**。
-作者在本地 Visual Studio 里打开 `ScreenCapture.slnx` 编译 x64 即可；新增文件记得同步 vcxproj。
+**编译是通的**（2026-10-01 由作者验证：编译通过并修掉了缺陷）。编译命令：
+
+```
+cmd /c "call \"D:\ProgramFiles\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat\" >nul && \"D:\ProgramFiles\Microsoft Visual Studio\2022\BuildTools\MSBuild\Current\Bin\MSBuild.exe\" \"<proj>\" /p:PlatformToolset=v143 /p:Configuration=Release /p:Platform=x64 /v:minimal /nologo"
+```
+
+- `<proj>` 取 `Src\ScreenCapture.vcxproj`（不必走 `.slnx`）。
+- 工程默认工具集是 `v145`（VS 2026），本机只有 VS 2022 的 `14.44`，所以**必须显式传 `/p:PlatformToolset=v143`**，否则报找不到工具集。
+- 产出在 `Src\x64\Release\`。
+
+> 注：AI 会话这一侧的工具策略仍会把 `MSBuild.exe` / `cmd.exe` 判为 LOLBin 拦截，
+> 因此上面的命令由**作者执行**；会话内只能做静态审查。
+> 静态审查撑不住的地方（链接期、运行期）务必在真机上跑一遍再收工。
