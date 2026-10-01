@@ -383,10 +383,48 @@ ComPtr<ID2D1Bitmap1> WinCap::getCutImg()
     prop.pixelFormat = screenImg->GetPixelFormat();
     prop.bitmapOptions = D2D1_BITMAP_OPTIONS_NONE;
     screenImg->GetDpi(&prop.dpiX, &prop.dpiY);
-    Ling::D2D::get()->deviceContext->CreateBitmap(D2D1::SizeU(cw, ch), nullptr, 0, &prop, cutImg.GetAddressOf());
+    auto dc = Ling::D2D::get()->deviceContext.Get();
+    // screenImg 是 ALPHA_MODE_IGNORE 的（抓屏数据本身没有 alpha），手绘要把多边形以外
+    // 抠成透明，结果位图就不能沿用这个格式，否则第 4 字节会被当场丢掉
+    const bool isPoly{ cutMask->isPoly() };
+    auto& fmt = prop.pixelFormat;
+    if (isPoly) fmt = D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED);
+    if (FAILED(dc->CreateBitmap(D2D1::SizeU(cw, ch), nullptr, 0, &prop, cutImg.GetAddressOf()))) return cutImg;
+    if (!isPoly) {
+        auto start = D2D1::Point2U(0, 0);
+        auto srcU = D2D1::RectU((UINT32)maskRect.left, (UINT32)maskRect.top, (UINT32)maskRect.right, (UINT32)maskRect.bottom);
+        if (FAILED(cutImg->CopyFromBitmap(&start, screenImg.Get(), &srcU))) cutImg.Reset();
+        return cutImg;
+    }
+    auto geom = cutMask->makePolyGeom((int)maskRect.left, (int)maskRect.top);
+    if (!geom) { cutImg.Reset(); return cutImg; }
+    // 与 WinPin::getImagePixels 同一套路：先画到一块 TARGET 位图上，
+    // layer 用来给几何当遮罩 —— 边缘抗锯齿也由它担了，自己不必再算覆盖度
+    D2D1_BITMAP_PROPERTIES1 targetProps{
+        .pixelFormat{ fmt }, .dpiX{ prop.dpiX }, .dpiY{ prop.dpiY },
+        .bitmapOptions{ D2D1_BITMAP_OPTIONS_TARGET }
+    };
+    ComPtr<ID2D1Bitmap1> masked;
+    auto hr = dc->CreateBitmap(D2D1::SizeU(cw, ch), nullptr, 0, &targetProps, masked.GetAddressOf());
+    if (FAILED(hr) || !masked) { cutImg.Reset(); return cutImg; }
+    // DrawBitmap 的源矩形是 DIP（两张图都是 96dpi，这里 DIP 就等于像素）；
+    // 用 left+cw 而不是 maskRect.right，省得两边各自截断宽出的 1px 被重采样
+    auto srcF = D2D1::RectF(maskRect.left, maskRect.top, maskRect.left + (float)cw, maskRect.top + (float)ch);
+    dc->SetTarget(masked.Get());
+    dc->SetTransform(D2D1::Matrix3x2F::Identity());
+    dc->BeginDraw();
+    dc->Clear(D2D1::ColorF(0, 0.f));
+    dc->PushLayer(D2D1::LayerParameters(D2D1::InfiniteRect(), geom.Get()), nullptr);
+    dc->DrawBitmap(screenImg.Get(), D2D1::RectF(0.f, 0.f, (float)cw, (float)ch), 1.0f,
+        D2D1_BITMAP_INTERPOLATION_MODE_NEAREST_NEIGHBOR, &srcF);
+    dc->PopLayer();
+    hr = dc->EndDraw();
+    // 解绑，下面 CopyFromBitmap 才能把它当 source 读。Canvas 用的是它自己从设备开出来的
+    // context（见 Ling Canvas::ensureSwapChain），与这里共享的这个 deviceContext 不是同一个，
+    // 所以动 target 碰不到窗口的 swap chain
+    dc->SetTarget(nullptr);
     auto start = D2D1::Point2U(0, 0);
-    auto rect = D2D1::RectU((UINT32)maskRect.left, (UINT32)maskRect.top, (UINT32)maskRect.right, (UINT32)maskRect.bottom);
-    cutImg->CopyFromBitmap(&start, screenImg.Get(), &rect);
+    if (FAILED(hr) || FAILED(cutImg->CopyFromBitmap(&start, masked.Get(), nullptr))) cutImg.Reset();
     return cutImg;
 }
 
@@ -418,7 +456,10 @@ void WinCap::onDown(POINT pos, bool isRight)
     }
     if (stage == CapStage::Select) {
         isPress = true;
-        cutMask->startMakeRect(pos);
+        // 手绘（自由多边形）选区：设置里选了它就是常态，临时想要，按住 Alt 拖一下也一样
+        isPolyDrag = Setting::get()->getCapShape() == 1 || (GetKeyState(VK_MENU) & 0x8000) != 0;
+        if (isPolyDrag) cutMask->startPoly(pos);
+        else cutMask->startMakeRect(pos);
     }
     else if (stage == CapStage::Adjust) {
         // 选区外面按下不是重新框选，而是按落点所在的那一块调对应的边或角
@@ -432,7 +473,8 @@ void WinCap::onMove(POINT pos)
 {
     if (stage == CapStage::Select) {
         if (isPress) {
-            cutMask->makeRect(pos);
+            if (isPolyDrag) cutMask->addPolyPoint(pos);
+            else cutMask->makeRect(pos);
         }
         else {
             cutMask->highlight(pos);
@@ -456,6 +498,10 @@ void WinCap::onUp(POINT pos, bool isRight)
 {
     if (stage == CapStage::Select) {
         isPress = false;
+        if (isPolyDrag) {
+            isPolyDrag = false;
+            cutMask->endPoly();
+        }
         // 只是点了一下，又没吸附到任何窗口，那就接着让用户框
         if (!cutMask->hasRect()) return;
         // 命令行指定了直奔某个阶段：它比下面 Ctrl 那条钉图的快捷路径更优先 ——
@@ -872,8 +918,13 @@ bool WinCap::getCutPixels(std::vector<BYTE>& pixels, int& cw, int& ch)
     const UINT32 cutW = (UINT32)(maskRect.right - maskRect.left);
     const UINT32 cutH = (UINT32)(maskRect.bottom - maskRect.top);
     if (cutW == 0 || cutH == 0) return false;
+    // 手绘要的是多边形以内那一块，像素只能从抠过形状的那张图上取；
+    // 矩形选区不值得为它多绕一道，照旧从底图直接拷
+    const bool isPoly{ cutMask->isPoly() };
+    auto img = isPoly ? getCutImg() : screenImg;
+    if (!img) return false;
     D2D1_BITMAP_PROPERTIES1 prop{
-        .pixelFormat{ screenImg->GetPixelFormat() },
+        .pixelFormat{ img->GetPixelFormat() },
         .dpiX{ 96.0f }, .dpiY{ 96.0f },
         .bitmapOptions{ D2D1_BITMAP_OPTIONS_CPU_READ | D2D1_BITMAP_OPTIONS_CANNOT_DRAW }
     };
@@ -881,8 +932,9 @@ bool WinCap::getCutPixels(std::vector<BYTE>& pixels, int& cw, int& ch)
     auto hr = Ling::D2D::get()->deviceContext->CreateBitmap(D2D1::SizeU(cutW, cutH), nullptr, 0, &prop, cpuBmp.GetAddressOf());
     if (FAILED(hr)) return false;
     auto start = D2D1::Point2U(0, 0);
+    // 抠过形状的那张尺寸就等于选区，整张拷过来；矩形的要从底图上裁
     auto rect = D2D1::RectU((UINT32)maskRect.left, (UINT32)maskRect.top, (UINT32)maskRect.left + cutW, (UINT32)maskRect.top + cutH);
-    if (FAILED(cpuBmp->CopyFromBitmap(&start, screenImg.Get(), &rect))) return false;
+    if (FAILED(cpuBmp->CopyFromBitmap(&start, img.Get(), isPoly ? nullptr : &rect))) return false;
     D2D1_MAPPED_RECT mapped{};
     if (FAILED(cpuBmp->Map(D2D1_MAP_OPTIONS_READ, &mapped))) return false;
     // mapped.pitch 按 GPU 行对齐，可能大于 cutW*4；剪切板和 WIC 都要求紧凑步长，逐行紧缩
@@ -893,8 +945,8 @@ bool WinCap::getCutPixels(std::vector<BYTE>& pixels, int& cw, int& ch)
         auto dst = pixels.data() + (size_t)row * rowBytes;
         CopyMemory(dst, mapped.bits + (size_t)row * mapped.pitch, rowBytes);
         // 底图是 GDI 抓来的，alpha 全 0（它自己是 ALPHA_MODE_IGNORE 所以无所谓），
-        // 但 PNG 和剪切板会当真，这里统一按不透明补上
-        for (UINT32 i = 3; i < rowBytes; i += 4) dst[i] = 255;
+        // 但 PNG 和剪切板会当真，这里统一按不透明补上。手绘那张的 alpha 正是要的，不能补
+        if (!isPoly) for (UINT32 i = 3; i < rowBytes; i += 4) dst[i] = 255;
     }
     cpuBmp->Unmap();
     cw = (int)cutW;

@@ -266,6 +266,23 @@ void WinSettingCommon::initCapCtrls()
         applyDelay(btn);
     });
 
+    // 框选形状。真要用的时候不必先来设置页改 —— 框选时按住 Alt 拖动就是手绘
+    auto shapeRow = makeRow(L"setting.capShape");
+    auto shapeBtn = shapeRow->makeChild<Ling::Button>();
+    shapeBtn->setHeight(28.f);
+    shapeBtn->setWidth(80.f);
+    shapeBtn->setBorder(1.f, 0xE0E0E0FF);
+    shapeBtn->setHoverBg(0xFFFFFFFF);
+    auto applyShape = [](Ling::Button* btn) {
+        btn->setText(Lang::get(Setting::get()->getCapShape() == 1
+            ? L"setting.polyShape" : L"setting.rectShape"));
+    };
+    applyShape(shapeBtn);
+    shapeBtn->onClick.add([applyShape](Ling::Button* btn) {
+        Setting::get()->setCapShape(Setting::get()->getCapShape() == 1 ? 0 : 1);
+        applyShape(btn);
+    });
+
     auto cursorRow = makeRow(L"setting.includeCursor");
     auto cursorBtn = cursorRow->makeChild<Ling::Button>();
     cursorBtn->setFontFamily(L"icon");

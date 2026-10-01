@@ -109,6 +109,9 @@ private:
 	Ling::Canvas* canvas{ nullptr };
 	POINT pixPos;
 	bool isPress{ false }, isClosed{ false }, isMouseTransparent{ false };
+	// 这一轮拖动是在画手绘选区（而不是拉矩形）。手绘不改拖动中的蒙层语义，
+	// 只决定 onMove / onUp 该调 CutMask 的哪一组方法
+	bool isPolyDrag{ false };
 	// onDpiChanged 与 onSizeChanged 之间的接力标记，见构造函数里的注释
 	bool dpiChanged{ false };
 	// 自己认双击用的上一次按下时间与位置。Ling 的窗口类没带 CS_DBLCLKS，

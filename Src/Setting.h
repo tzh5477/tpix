@@ -61,6 +61,9 @@ public:
 	void setAutoShotMin(int val);
 	bool getIncludeCursor();
 	void setIncludeCursor(bool val);
+	// 框选形状：0 = 矩形，1 = 手绘自由多边形（多边形以外的像素导出成透明）
+	int getCapShape();
+	void setCapShape(int val);
 	// 滚动截图的方向：true = 横向（拼出来的图往右长），false = 竖向（默认）
 	bool getLongHorizontal();
 	void setLongHorizontal(bool val);

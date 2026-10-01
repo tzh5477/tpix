@@ -442,6 +442,19 @@ void Setting::setAutoShotMin(int val)
 	save();
 }
 
+int Setting::getCapShape()
+{
+	// 0 = 矩形，1 = 手绘（自由多边形）
+	auto val = (int)getCapObj().GetNamedNumber(L"shape", 0.0);
+	return val == 1 ? 1 : 0;
+}
+
+void Setting::setCapShape(int val)
+{
+	getCapObj().SetNamedValue(L"shape", JsonValue::CreateNumberValue((double)(val == 1 ? 1 : 0)));
+	save();
+}
+
 bool Setting::getIncludeCursor()
 {
 	return getCapObj().GetNamedBoolean(L"cursor", false);
