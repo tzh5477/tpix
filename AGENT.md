@@ -121,6 +121,9 @@ Src/
   导入后要重来一遍的只有三类：热键、开机自启、语言
 - H3 后半：复制后自动粘贴 —— `Util::snapshotForeground / pasteToWindow`。
   前台窗口与指针快照必须在建窗之前取；粘贴发的是真键盘事件而不是 `WM_PASTE`
+- D2：表格识别 —— `Src/Table.h/.cpp`（slanet-plus 结构 + 系统 OCR 填字），OCR 结果窗口上
+  多一个「表格 / 文字」切换按钮，复制时走 `Util::setHtmlToClipboard`（CF_HTML + 纯文本两份）。
+  ORT 与模型怎么进来、前后处理为什么是这个数，见下面 D2 那节
 - C5 余项：全局鼠标（PixPin「Win+拖拽」）—— `GlobalMouse`，`WH_MOUSE_LL` 钩子 +
   一个铺满桌面的框选层。左键拖动贴图 / 中键拖动复制 / 右键拖动认文字并复制。
   框选期间吞掉鼠标消息，带一个 100ms 定时器兜底钩子被系统摘掉的那种情况。默认关
@@ -137,26 +140,37 @@ Alt+方向 = 贴到屏幕边；Ctrl+Alt+左右 = 搬到相邻显示器。
 5. ✅ ~~**H3 后半** 自动粘贴到输入焦点~~（已完成）
 6. ✅ ~~**C5 余项** Win+拖拽快速贴图~~（已完成，见「全局鼠标」）
 7. **G1 余项** 摄像头画中画（需另起 MediaFoundation 摄像头采集管线，单独评估）
-8. **D2** 表格识别 —— **最后做**。理由与依赖见下。
+8. ✅ ~~**D2** 表格识别~~（已完成，见下）
 
-> **D2 的技术选型（作者裁决）**：用 **RapidTable + ONNX Runtime**，不是上面那条
-> 「基于 `OcrLine::Words()` 的 BoundingRect 切表」的轻量路子。这意味着要引入 ORT
-> 运行时与 10–15MB 量级的模型文件，打包体积会明显变大（1MB 小巧定位本轮已明确忽略）。
->
-> **要落地的三件事（都还没有）**：
-> 1. **ORT 怎么进工程**：本项目没有包管理器，第三方依赖是按绝对路径挂的
->    （`D:\sdk\gifski`、`D:\project\Ling`），ORT 需要一个 `include/lib/dll` 三件套的
->    SDK 目录，并把运行时 dll 拷到输出目录。
-> 2. **模型文件**：RapidTable 的 SLANet 系列 onnx（约 10MB 级）。随包还是首次启动下载，
->    要作者拍板。
-> 3. **前后处理**：RapidTable 是 Python 项目，C++ 侧只有 ONNX 模型可用，
->    缩放 / 归一化的数值与输出 token 表必须按它的源码对齐，否则输出全是垃圾。
+### D2 表格识别（已完成）
 
-> **D2 为什么排最后**：当前内置 OCR 走的是 `Windows.Media.Ocr`（系统自带、零依赖），
-> 而不是文档 7.3 里建议的 RapidOCR/ONNX Runtime。若沿用这条路，表格识别可以基于
-> `OcrLine::Words()` 的 `BoundingRect` 做"行列对齐切表"，**不需要引入 ONNX Runtime，
-> 也不需要模型文件**，工作量从 XL 降到 M。是否要升级到 RapidTable（ORT + 10–15MB 模型）
-> 属于独立决策，放到最后再定，不阻塞前面任何一项。
+`Src/Table.h/.cpp` + `Util::setHtmlToClipboard` + `WinOcr` 上的「表格 / 文字」切换按钮。
+结构走 **slanet-plus**（RapidTable 的 ONNX 模型），格子里的字走系统 OCR。
+
+- **依赖**：ORT 1.30 已解到 `D:\sdk\onnxruntime`（`build\native\include` +
+  `runtimes\win-x64\native`），工程按 gifski 那套绝对路径挂法接进去，另外加了一条
+  PostBuildEvent 把 `onnxruntime*.dll` 拷到 `$(OutDir)` —— 它是动态库，不拷跑不起来。
+- **模型**：`slanet-plus.onnx`（7.4MB）**首次使用时**下到 `%appdata%\ScreenCapture`，
+  先写 `.downloading` 再改名（半截文件不能骗过下次的存在检查）。下不来就明说，不静默。
+- **前后处理（与 RapidTable 逐行对齐，别改）**：
+  - 缩放到 488×488 的 letterbox，长边缩到 488、**短边截断**（不四舍五入），右下**补归一化
+    之后的 0**（不是黑）—— 顺序反了结果就漂。双线性取的是 cv2 那套映射
+    `(dst+0.5)*src/dst-0.5`。
+  - 归一化 `/255` → 减 mean `[0.485,0.456,0.406]` → 除 std `[0.229,0.224,0.225]`，
+    逐通道套在 **BGR** 上（模型是拿 cv2 训的，换 RGB 反而不对）。排布 CHW。
+  - 输出两个：最后一维 8 的是格子框、50 的是结构概率（按维度认，不依赖输出名）。
+  - **格子框 = 归一化坐标 × max(h, w)**，直接就是原图像素坐标。这是 RapidTable 里
+    `_bbox_decode` + `rescale_cell_bboxes` 两步的等价写法（实测最大差 3e-5），
+    省掉 ratio / shape_list 那一串中间量。
+  - token 表在模型自定义元数据的 `character` 里（48 个，前后加 sos / eos = 50），
+    从模型里读而不是写死。格子的框在**开头那一帧**上（`<td` 或 `<td></td>`）。
+  - 合并单元格按占位摊平成规整矩阵（文字只在左上角那一格），所以输出里没有
+    rowspan / colspan 属性 —— 换来的是 HTML 与 TSV 行列对齐。
+- **填字**：整张图只认一次 `Ocr::recognizeWords`（词级带框），按中心点落格，比逐格裁开
+  去认快几十倍。中文之间不加空格、英文之间加。
+- **复制**：`Util::setHtmlToClipboard` 同时放 **CF_HTML**（Word / Excel 粘出真表）和
+  **CF_UNICODETEXT**（tab 分隔，记事本 / Excel 也认）。CF_HTML 是 UTF-8，
+  头里四个 10 位偏移先按 0 拼整段、量好位置再回填。
 
 > 记一笔 E4 的坑：`App::takeScreenShot` 与 `Util::captureScreen` 曾经是两份 GDI 抓屏代码，
 > 现在统一走后者。以后新增"改抓屏行为"的能力，只改 `Util::captureScreen` 一处。
@@ -191,7 +205,7 @@ cmd /c "call \"D:\ProgramFiles\Microsoft Visual Studio\2022\BuildTools\VC\Auxili
 export MSYS_NO_PATHCONV=1   # 关键：否则 Git Bash 会把 /nologo 这类开关当成路径改写
 MSVC="D:/ProgramFiles/Microsoft Visual Studio/2022/BuildTools/VC/Tools/MSVC/14.44.35207"
 SDK="C:/Program Files (x86)/Windows Kits/10/Include/10.0.26100.0"
-INCLUDE="$MSVC/include;$MSVC/atlmfc/include;$SDK/ucrt;$SDK/um;$SDK/shared;$SDK/winrt;$SDK/cppwinrt;D:/sdk/gifski;D:/project/Ling;<仓库>/Src" \
+INCLUDE="$MSVC/include;$MSVC/atlmfc/include;$SDK/ucrt;$SDK/um;$SDK/shared;$SDK/winrt;$SDK/cppwinrt;D:/sdk/gifski;D:/sdk/onnxruntime/build/native/include;D:/project/Ling;<仓库>/Src" \
 "$MSVC/bin/Hostx64/x64/cl.exe" /nologo /Zs /std:c++20 /EHsc /utf-8 \
   /DNOMINMAX /DWIN32_LEAN_AND_MEAN /DWIN32 /DNDEBUG /D_CONSOLE /D_UNICODE /DUNICODE /D_WIN64 \
   /Tp"Src/Win/CapVideo.cpp"

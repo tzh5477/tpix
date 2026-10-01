@@ -38,6 +38,44 @@ namespace {
 		}
 		return nullptr;
 	}
+
+	// 建位图 + 跑引擎。整张图只认一次，行和词都从这一个结果里取。
+	// 认不出来（没装语言包、参数不对、引擎内部抛了）返回空
+	wmo::OcrResult runEngine(const int w, const int h, BYTE* data, const std::wstring& langTag)
+	{
+		if (w <= 0 || h <= 0 || !data) return nullptr;
+		try {
+			auto engine = makeEngine(langTag);
+			if (!engine) return nullptr;
+			SoftwareBitmap bitmap(BitmapPixelFormat::Bgra8, w, h);
+			{
+				auto buffer = bitmap.LockBuffer(BitmapBufferAccessMode::Write);
+				auto desc = buffer.GetPlaneDescription(0);
+				auto ref = buffer.CreateReference();
+				auto access = ref.as<IMemoryBufferByteAccess>();
+				uint8_t* dst{ nullptr };
+				uint32_t cap{ 0 };
+				if (FAILED(access->GetBuffer(&dst, &cap))) return nullptr;
+				// 行距可能与 w*4 不等（对齐需要），所以按 Stride 一行一行拷
+				auto stride = (size_t)desc.Stride;
+				auto start = (size_t)desc.StartIndex;
+				if (start + stride * (size_t)h > cap || stride < (size_t)w * 4) return nullptr;
+				for (int y = 0; y < h; ++y)
+				{
+					auto srcRow = data + (size_t)y * w * 4;
+					auto dstRow = dst + start + (size_t)y * stride;
+					memcpy(dstRow, srcRow, (size_t)w * 4);
+					// OCR 引擎只认不透明的图。截图里 alpha 未必是 255，逐像素压成不透明，
+					// 否则半透明区域会被当成别的东西、整页结果都不对
+					for (int x = 3; x < w * 4; x += 4) dstRow[x] = 0xFF;
+				}
+			}
+			return engine.RecognizeAsync(bitmap).get();
+		}
+		catch (...) {
+			return nullptr;
+		}
+	}
 }
 
 bool Ocr::isAvailable()
@@ -72,43 +110,30 @@ std::vector<OcrLang> Ocr::languages()
 
 std::wstring Ocr::recognize(const int w, const int h, BYTE* data, const std::wstring& langTag)
 {
-	if (w <= 0 || h <= 0 || !data) return {};
-	try {
-		auto engine = makeEngine(langTag);
-		if (!engine) return {};
-		SoftwareBitmap bitmap(BitmapPixelFormat::Bgra8, w, h);
-		{
-			auto buffer = bitmap.LockBuffer(BitmapBufferAccessMode::Write);
-			auto desc = buffer.GetPlaneDescription(0);
-			auto ref = buffer.CreateReference();
-			auto access = ref.as<IMemoryBufferByteAccess>();
-			uint8_t* dst{ nullptr };
-			uint32_t cap{ 0 };
-			if (FAILED(access->GetBuffer(&dst, &cap))) return {};
-			// 行距可能与 w*4 不等（对齐需要），所以按 Stride 一行一行拷
-			auto stride = (size_t)desc.Stride;
-			auto start = (size_t)desc.StartIndex;
-			if (start + stride * (size_t)h > cap || stride < (size_t)w * 4) return {};
-			for (int y = 0; y < h; ++y)
-			{
-				auto srcRow = data + (size_t)y * w * 4;
-				auto dstRow = dst + start + (size_t)y * stride;
-				memcpy(dstRow, srcRow, (size_t)w * 4);
-				// OCR 引擎只认不透明的图。截图里 alpha 未必是 255，逐像素压成不透明，
-				// 否则半透明区域会被当成别的东西、整页结果都不对
-				for (int x = 3; x < w * 4; x += 4) dstRow[x] = 0xFF;
-			}
-		}
-		auto result = engine.RecognizeAsync(bitmap).get();
-		std::wstring text;
-		for (auto const& line : result.Lines())
-		{
-			if (!text.empty()) text += L"\n";
-			text += std::wstring_view{ line.Text() };
-		}
-		return text;
+	auto result = runEngine(w, h, data, langTag);
+	if (!result) return {};
+	std::wstring text;
+	for (auto const& line : result.Lines())
+	{
+		if (!text.empty()) text += L"\n";
+		text += std::wstring_view{ line.Text() };
 	}
-	catch (...) {
-		return {};
+	return text;
+}
+
+std::vector<OcrWord> Ocr::recognizeWords(const int w, const int h, BYTE* data, const std::wstring& langTag)
+{
+	std::vector<OcrWord> words;
+	auto result = runEngine(w, h, data, langTag);
+	if (!result) return words;
+	for (auto const& line : result.Lines())
+	{
+		for (auto const& word : line.Words())
+		{
+			auto rect = word.BoundingRect();
+			words.push_back({ std::wstring{ std::wstring_view{ word.Text() } },
+				rect.X, rect.Y, rect.Width, rect.Height });
+		}
 	}
+	return words;
 }

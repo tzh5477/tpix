@@ -117,7 +117,7 @@
       <PreprocessorDefinitions>NOMINMAX;WIN32_LEAN_AND_MEAN;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp20</LanguageStandard>
-      <AdditionalIncludeDirectories>D:\sdk\gifski;D:\project\Ling;$(ProjectDir);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>D:\sdk\gifski;D:\sdk\onnxruntime\build\native\include;D:\project\Ling;$(ProjectDir);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
       <PrecompiledHeader>Use</PrecompiledHeader>
       <PrecompiledHeaderFile>pch.h</PrecompiledHeaderFile>
@@ -127,13 +127,18 @@
     <Link>
       <SubSystem>Windows</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalLibraryDirectories>D:\project\Ling\x64\$(Configuration);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>dwmapi.lib;windowsapp.lib;comctl32.lib;imm32.lib;version.lib;mf.lib;mfreadwrite.lib;mfplat.lib;mfuuid.lib;ntdll.lib;Userenv.lib;Yoga.lib;Ling.lib;D:\sdk\gifski\target\release\gifski.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalLibraryDirectories>D:\project\Ling\x64\$(Configuration);D:\sdk\onnxruntime\runtimes\win-x64\native;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>dwmapi.lib;windowsapp.lib;comctl32.lib;imm32.lib;version.lib;mf.lib;mfreadwrite.lib;mfplat.lib;mfuuid.lib;ntdll.lib;Userenv.lib;Yoga.lib;Ling.lib;D:\sdk\gifski\target\release\gifski.lib;onnxruntime.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <Manifest>
       <EnableSegmentHeap>true</EnableSegmentHeap>
       <EnableDpiAwareness>PerMonitorHighDPIAware</EnableDpiAwareness>
     </Manifest>
+    <PostBuildEvent>
+      <!-- onnxruntime 是动态库，得跟 exe 放在一起才跑得起来 -->
+      <Command>copy /y "D:\sdk\onnxruntime\runtimes\win-x64\native\onnxruntime*.dll" "$(OutDir)"</Command>
+      <Message>拷贝 onnxruntime 运行时</Message>
+    </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <ClCompile>
@@ -144,7 +149,7 @@
       <PreprocessorDefinitions>NOMINMAX;WIN32_LEAN_AND_MEAN;NDEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <LanguageStandard>stdcpp20</LanguageStandard>
-      <AdditionalIncludeDirectories>D:\sdk\gifski;D:\project\Ling;$(ProjectDir);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>D:\sdk\gifski;D:\sdk\onnxruntime\build\native\include;D:\project\Ling;$(ProjectDir);%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
       <PrecompiledHeader>Use</PrecompiledHeader>
       <PrecompiledHeaderFile>pch.h</PrecompiledHeaderFile>
@@ -153,13 +158,18 @@
     <Link>
       <SubSystem>Windows</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalLibraryDirectories>D:\project\Ling\x64\$(Configuration);%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
-      <AdditionalDependencies>dwmapi.lib;windowsapp.lib;comctl32.lib;imm32.lib;version.lib;mf.lib;mfreadwrite.lib;mfplat.lib;mfuuid.lib;ntdll.lib;Userenv.lib;Yoga.lib;Ling.lib;D:\sdk\gifski\target\release\gifski.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalLibraryDirectories>D:\project\Ling\x64\$(Configuration);D:\sdk\onnxruntime\runtimes\win-x64\native;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>dwmapi.lib;windowsapp.lib;comctl32.lib;imm32.lib;version.lib;mf.lib;mfreadwrite.lib;mfplat.lib;mfuuid.lib;ntdll.lib;Userenv.lib;Yoga.lib;Ling.lib;D:\sdk\gifski\target\release\gifski.lib;onnxruntime.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <Manifest>
       <EnableSegmentHeap>true</EnableSegmentHeap>
       <EnableDpiAwareness>PerMonitorHighDPIAware</EnableDpiAwareness>
     </Manifest>
+    <PostBuildEvent>
+      <!-- onnxruntime 是动态库，得跟 exe 放在一起才跑得起来 -->
+      <Command>copy /y "D:\sdk\onnxruntime\runtimes\win-x64\native\onnxruntime*.dll" "$(OutDir)"</Command>
+      <Message>拷贝 onnxruntime 运行时</Message>
+    </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="App.cpp" />
@@ -175,6 +185,7 @@
     <ClCompile Include="Setting.cpp" />
     <ClCompile Include="AnimImage.cpp" />
     <ClCompile Include="Ocr.cpp" />
+    <ClCompile Include="Table.cpp" />
     <ClCompile Include="PinSource.cpp" />
     <ClCompile Include="ShotHistory.cpp" />
     <ClCompile Include="Shape\ShapeWatermark.cpp" />
@@ -265,6 +276,7 @@
     <ClInclude Include="Setting.h" />
     <ClInclude Include="AnimImage.h" />
     <ClInclude Include="Ocr.h" />
+    <ClInclude Include="Table.h" />
     <ClInclude Include="PinSource.h" />
     <ClInclude Include="ShotHistory.h" />
     <ClInclude Include="Win\WinBall.h" />

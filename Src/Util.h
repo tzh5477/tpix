@@ -46,6 +46,9 @@ public:
 	static void snapshotCursor();
 	// 把文件路径以 CF_HDROP 写进剪切板，粘贴到资源管理器/聊天窗口就是一个文件
 	static void addFileToClipboard(const std::wstring& filePath);
+	// 同时放两份上剪贴板：CF_HTML（Word / Excel 认，粘出来是一张真表）和纯文本
+	//（记事本这类只认后者）。text 一般给 html 里那些内容的 tab 分隔版，两厢对照着填
+	static void setHtmlToClipboard(const std::wstring& html, const std::wstring& text);
 	// 记下"此刻"前台那个窗口，自动粘贴要把焦点还给它。自己的窗口、桌面、任务栏都不算 ——
 	// 焦点还到这些地方等于什么都没做，这类一律记成 nullptr
 	static HWND snapshotForeground();

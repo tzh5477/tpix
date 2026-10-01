@@ -677,6 +677,65 @@ void Util::addFileToClipboard(const std::wstring& filePath)
 	CloseClipboard();
 }
 
+void Util::setHtmlToClipboard(const std::wstring& html, const std::wstring& text)
+{
+	if (html.empty()) return;
+	if (!OpenClipboard(nullptr)) return;
+	EmptyClipboard();
+	if (!text.empty()) {
+		auto h = GlobalAlloc(GMEM_MOVEABLE, (text.size() + 1) * sizeof(wchar_t));
+		if (h) {
+			auto p = static_cast<wchar_t*>(GlobalLock(h));
+			if (p) {
+				memcpy(p, text.data(), text.size() * sizeof(wchar_t));
+				p[text.size()] = L'\0';
+				GlobalUnlock(h);
+				if (!SetClipboardData(CF_UNICODETEXT, h)) GlobalFree(h);
+			}
+			else {
+				GlobalFree(h);
+			}
+		}
+	}
+	// CF_HTML 是一段带头的 UTF-8 文本，头里四个偏移都是 10 位数字 —— 长度固定，
+	// 所以可以先按 0 把整段拼出来、量出各段位置，再把数字回填进去
+	const std::string tpl =
+		"Version:0.9\r\n"
+		"StartHTML:0000000000\r\n"
+		"EndHTML:0000000000\r\n"
+		"StartFragment:0000000000\r\n"
+		"EndFragment:0000000000\r\n";
+	const std::string pre{ "<html><body>\r\n<!--StartFragment-->" };
+	const std::string post{ "<!--EndFragment-->\r\n</body></html>" };
+	const auto body = Ling::Util::convertToStr(html);
+	std::string all = tpl + pre + body + post;
+	auto put = [&](const std::string_view key, const size_t value) {
+		auto at = tpl.find(key) + key.size();
+		auto str = std::format("{:010}", value);
+		memcpy(all.data() + at, str.data(), str.size());
+	};
+	put("StartHTML:", tpl.size());
+	put("EndHTML:", all.size());
+	put("StartFragment:", tpl.size() + pre.size());
+	put("EndFragment:", tpl.size() + pre.size() + body.size());
+	if (auto cfHtml = RegisterClipboardFormatW(L"HTML Format"); cfHtml) {
+		auto h = GlobalAlloc(GMEM_MOVEABLE, all.size() + 1);
+		if (h) {
+			auto p = static_cast<char*>(GlobalLock(h));
+			if (p) {
+				memcpy(p, all.data(), all.size());
+				p[all.size()] = '\0';
+				GlobalUnlock(h);
+				if (!SetClipboardData(cfHtml, h)) GlobalFree(h);
+			}
+			else {
+				GlobalFree(h);
+			}
+		}
+	}
+	CloseClipboard();
+}
+
 bool Util::openWithImageReader(const int w, const int h, BYTE* data)
 {
 	auto exePath = findImageReader();

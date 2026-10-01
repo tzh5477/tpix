@@ -2,6 +2,7 @@
 #include <include/Ling.h>
 #include <vector>
 #include "../Ocr.h"
+#include "../Table.h"
 
 // OCR 结果窗口。建好就开一条工作线程去识别，识别完把文字填进多行文本框 ——
 // 识别一张满屏图可能要好几百毫秒，直接堵在 UI 线程上窗口会卡住不动。
@@ -16,6 +17,8 @@ private:
 	void onCreated() override;
 	void startRecognize();
 	void setResult(const std::wstring& text);
+	void setTable(const TableResult& table);
+	void applyTableBtn();
 	// 语言选择：0 是"跟随系统"，后面依次是 Ocr::languages() 里的每一项
 	int langIndex{ 0 };
 	std::wstring curLangTag() const;
@@ -24,6 +27,11 @@ private:
 	std::vector<BYTE> pixels;
 	int imgW{ 0 }, imgH{ 0 };
 	std::wstring result;
+	// 表格模式下的 HTML：框里显示的是 tab 分隔的文本，复制时才把它一起放上剪贴板，
+	// 这样粘到 Word / Excel 里是一张真表
+	std::wstring html;
+	bool tableMode{ false };
+	Ling::Button* tableBtn{ nullptr };
 	Ling::TextBox* box{ nullptr };
 	std::vector<OcrLang> langs;
 	Ling::Button* langBtn{ nullptr };
