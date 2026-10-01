@@ -65,6 +65,8 @@ void WinHistory::onCreated()
 	scroller->content->setFlexWrap(Ling::Wrap::Wrap);
 	scroller->content->setPadding(8.f, 8.f, 8.f, 8.f);
 	fillList();
+	// Esc 关窗，与其它弹出窗口一致（顶栏那个叉是鼠标路径，这是键盘路径）
+	onKeyDown.add([this](UINT key) { if (key == VK_ESCAPE) close(); });
 	show();
 }
 
@@ -102,6 +104,18 @@ void WinHistory::initTabs(Ling::Node* parent)
 		ShotHistory::get()->clear(curSource);
 		fillList();
 	});
+
+	// 关窗。窗口是 WS_POPUP、没有标题栏，顶栏不给个叉就没法用鼠标关了
+	auto closeBtn = parent->makeChild<Ling::Button>();
+	closeBtn->setText(L"\ue62d");
+	closeBtn->setFontFamily(L"icon");
+	closeBtn->setHeight(30.f);
+	closeBtn->setWidth(34.f);
+	closeBtn->setMarginLeft(8.f);
+	closeBtn->setBorder(1.f, 0xE0E0E0FF);
+	// 悬停转红底，与其它窗口的关闭按钮一致
+	closeBtn->setHoverBg(0xE81123FF);
+	closeBtn->onClick.add([this](Ling::Button*) { close(); });
 }
 
 void WinHistory::fillList()

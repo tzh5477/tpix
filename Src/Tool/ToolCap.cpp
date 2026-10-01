@@ -20,7 +20,7 @@ const std::vector<ToolCap::BtnDef> ToolCap::shapeBtns{
 };
 
 const std::vector<ToolCap::BtnDef> ToolCap::actionBtns{
-	{ L"mark",      L"\ue97f", L"cap.mark" },
+	{ L"pin",       L"\ue6a2", L"cap.pin" },
 	{ L"save",      L"\ue608", L"tool.save" },
 	{ L"clipboard", L"\ue6ad", L"tool.clipboard" },
 	{ L"close",     L"\ue62d", L"tool.close" },
@@ -115,11 +115,12 @@ void ToolCap::onClick(Ling::Button* btn)
 	else if (id == L"close") {
 		win->close();
 	}
-	else if (id == L"mark") {
+	else if (id == L"pin") {
+		// 贴图：直接进贴图窗口，不预选任何标注工具 —— 属性面板由窗口打开后自己挂上
 		win->startPin();
 	}
 	else {
-		// 剩下的都是标注工具：进贴图窗口并预选它，等于替用户点了图像标记 + 那个工具
+		// 剩下的都是标注工具：进贴图窗口并预选它，等于替用户点了贴图 + 那个工具
 		win->startPin(id);
 	}
 }

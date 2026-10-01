@@ -35,24 +35,23 @@ bool ShapeWatermark::makeLayout()
 	if (!win->getToolSub()) return false;
 	auto text = win->getToolSub()->watermarkText;
 	if (text.empty()) return false;
-	// 字号在工具条上是逻辑像素语义，shape 存的是底图像素，换算要乘 dpi
-	auto fontSize = win->getToolSub()->getSliderVal() * win->getDpi();
+	// getSliderVal 返回的已经是物理像素（内部乘过 dpi），这里再乘一次会变成 dpi² ——
+	// 150% 缩放下 24 号被算成 54，字被放大、平铺步长跟着变大，看着就是"稀得看不见字"
+	auto fontSize = win->getToolSub()->getSliderVal();
 	layout = Ling::D2D::makeTextLayout(text, fontSize);
 	if (!layout) return false;
 	DWRITE_TEXT_METRICS m{};
 	if (FAILED(layout->GetMetrics(&m))) return false;
 	textW = m.width;
 	textH = m.height;
-	// 透明度四档与颜色都在工具条上。alpha 按"用户选的颜色的 alpha × 档位"叠乘，
-	// 取白色 + 25% 档就是常见的浅灰水印，不必再单独做一个颜色通道
-	auto value = win->getToolSub()->getSelectedColorValue();
-	auto alpha = (float)(value & 0xFF) / 255.f * win->getToolSub()->getWatermarkOpacity();
-	D2D1_COLOR_F c{
-		((value >> 16) & 0xFF) / 255.f,
-		((value >> 8) & 0xFF) / 255.f,
-		(value & 0xFF) / 255.f,
-		alpha
-	};
+	// 透明度四档与颜色都在工具条上。alpha 取"档位"这一个值就够了 ——
+	// 色板里每种颜色自己的 alpha 恒是 0xFF，乘不乘没区别
+	auto alpha = win->getToolSub()->getWatermarkOpacity();
+	// 走 getSelectedColor 与其它标注同一条解码路径。原来这里手写移位把 0xRRGGBBAA 拆错位
+	// （每一路都少移 8 位，R 取成 G、B 取成 A），调色板的 alpha 又恒是 0xFF，
+	// 于是任何颜色都带满蓝：红色 0xCF1322FF 被解成 (19,34,255) —— 画出来就是蓝的
+	auto c = win->getToolSub()->getSelectedColor();
+	c.a = alpha;
 	if (FAILED(Ling::D2D::get()->deviceContext->CreateSolidColorBrush(c, brush.GetAddressOf()))) return false;
 	return true;
 }
@@ -80,10 +79,11 @@ void ShapeWatermark::paint(ID2D1DeviceContext* ctx)
 	D2D1_MATRIX_3X2_F prev{};
 	ctx->GetTransform(&prev);
 	if (win->getToolSub()->watermarkTile) {
-		// 平铺：沿水平方向铺满，行距给足一倍字高，密度靠字号自己调
-		constexpr float gapX{ 60.f }, gapY{ 40.f };
-		auto stepX = textW + gapX;
-		auto stepY = textH + gapY;
+		// 平铺：步长 = 文字尺寸 + 间距，间距按文字尺寸的比例给（档位在工具条上切），
+		// 小字自动密、大字自动疏 —— 早先写死 60/40 像素，配 10 号小字就是一片空白里的零星几个字
+		auto k = win->getToolSub()->getWatermarkGapRatio();
+		auto stepX = textW + textW * k;
+		auto stepY = textH + textH * k;
 		// 从负一个步长开始画，保证旋转之后边缘也不会露白
 		for (float y = -stepY; y < sz.height + stepY; y += stepY)
 		{

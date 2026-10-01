@@ -522,6 +522,9 @@ void WinPin::setOpacity(float v)
 
 void WinPin::setRounded(bool on)
 {
+	// 状态也记下来：持久化的 round 与 pin 面板的开关都读它，
+	// 只改外观不记账的话，圆角既存不进去、面板上也永远显示为关
+	isRounded = on;
 	body->setBorderRadius(on ? 8.f : 0.f);
 	refresh();
 }
@@ -537,10 +540,16 @@ void WinPin::setMouseThrough(bool on)
 {
 	// WS_EX_TRANSPARENT 让命中测试直接穿过去。开着的时候图上什么都点不到，
 	// 只能从工具条上关掉 —— 所以同样依赖"工具条是独立窗口"这一点
+	isThrough = on;
 	auto ex = GetWindowLongPtr(hwnd, GWL_EXSTYLE);
 	if (on) ex |= WS_EX_TRANSPARENT;
 	else ex &= ~WS_EX_TRANSPARENT;
 	SetWindowLongPtr(hwnd, GWL_EXSTYLE, ex);
+}
+
+bool WinPin::hasDrawTool() const
+{
+	return toolMain && !toolMain->curId.empty() && toolMain->curId != L"pin";
 }
 
 void WinPin::setPinTitle(const std::wstring& t)
@@ -799,7 +808,8 @@ void WinPin::onDown(POINT pos, BOOL isRight)
 	isMouseDown = true;
 	hasDragged = false;
 	SetCapture(hwnd);
-	if (toolMain->curId == L"") { //没选画笔，左键是拖窗口，拖的时候把工具条收起来
+	// 没选画笔，或只开着贴图属性面板（都画不了），左键是拖窗口，拖的时候把工具条收起来
+	if (!hasDrawTool()) {
 		toolMain->hide();
 		return;
 	}
@@ -833,7 +843,7 @@ void WinPin::onMove(POINT pos)
 	// 拖窗口用的是窗口坐标（pressPos 也是），只有交给 shape 的才换算成底图像素
 	auto imgPos = toImgPos(pos);
 	if (isMouseDown) {
-		if (toolMain->curId == L"") {
+		if (!hasDrawTool()) {
 			auto newX = x + pos.x - pressPos.x;
 			auto newY = y + pos.y - pressPos.y;
 			auto dx = newX - x, dy = newY - y;
@@ -851,7 +861,7 @@ void WinPin::onMove(POINT pos)
 	}
 	else
 	{
-		if (toolMain->curId == L"") return;
+		if (!hasDrawTool()) return;
 		int i{ (int)(drawing->history->shapes.size() - 1) };
 		for (; i >= 0; i--)
 		{
@@ -885,7 +895,7 @@ void WinPin::onUp(POINT pos, BOOL isRight)
 	drawing->shapeCur = nullptr;
 	// 这一下按下有没有新建出一个留得住的元素：紧接着来第二下凑成双击时要把它撤掉（见 onDown）
 	prevPressCreatedShape = false;
-	if (toolMain->curId == L"") {
+	if (!hasDrawTool()) {
 		// 没选画笔，这一下要么是拖完窗口（按新位置重排工具条），要么只是点了一下 ——
 		// 两种情况都把 ToolMain 显示出来：拖动期间它是藏着的，右键之后它也是藏着的，
 		// 左键点一下就是"我还要用工具条"。ToolSub 由 curId 驱动，这会儿仍然不该出来，
@@ -1270,7 +1280,8 @@ BOOL WinPin::setCursor()
 		onCursor(&handled);
 		if (handled) return TRUE;
 	}
-	if (toolMain->curId == L"") {
+	if (!hasDrawTool()) {
+		// 画不了的时候是拖窗手势，给十字箭头（含 pin 面板开着的时候）
 		SetCursor(LoadCursor(nullptr, IDC_SIZEALL));
 		return TRUE;
 	}

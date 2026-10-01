@@ -77,6 +77,11 @@ public:
 	void setMouseThrough(bool on);
 	void setPinTitle(const std::wstring& t);
 	const std::wstring& getPinTitle() const { return pinTitle; }
+	// pin 面板的三个开关读这里。都是"这张贴图自己的"实例态，不是全局配置 ——
+	// 穿透刻意不进持久化：落盘的贴图恢复后若还穿透，既看不见也点不着，像图丢了
+	bool getRounded() const { return isRounded; }
+	bool getLocked() const { return isLocked; }
+	bool getThrough() const { return isThrough; }
 	// 翻历史截图：step 正负表示往更早 / 更新翻一张（0 = 最新）。换底图会作废旧标注
 	void previewHistory(int step);
 	// 收成贴边细条 / 展开。悬停细条即展开，Ctrl+M 触发
@@ -104,6 +109,10 @@ private:
 	void onKey(UINT key);
 	void onTimerCB(UINT id);
 	void onClosed();
+	// 当前选中的是不是"能在图上画东西的"标注工具。curId 为空（什么都没选）与 curId 为
+	// pin（只开着贴图属性面板）都画不了 —— 这两种状态下左键该拖动贴图本身，
+	// 而不是当成画笔落笔，否则选过一次贴图属性后整张图就拖不动了
+	bool hasDrawTool() const;
 	BOOL setCursor() override;
 	// 离屏合成出最终图像的像素（BGRA、top-down、行步长紧凑为 size.width*4）。
 	// 只画底图和未撤销的 shape，不含蓝色边框和夹点。
@@ -183,6 +192,8 @@ private:
 	float opacity{ 1.f };
 	bool isRounded{ false };
 	bool isLocked{ false };
+	// 鼠标穿透。同 round / lock 是实例态，但不落盘（见上面 getter 的注释）
+	bool isThrough{ false };
 	std::wstring pinTitle;
 	Microsoft::WRL::ComPtr<IDWriteTextLayout> titleLayout;
 	// onDpiChanged 与 onSizeChanged 之间的接力标记，见构造函数里的注释

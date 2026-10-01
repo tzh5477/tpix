@@ -155,7 +155,9 @@ void CutMask::startPoly(POINT pos)
 	// 留着会在这几毫秒里被当成"当前选区"画出来（多半是刚悬停吸附到的整窗矩形）
 	maskRect = D2D1::RectF(0.f, 0.f, 0.f, 0.f);
 	poly.push_back(D2D1::Point2F((float)pos.x, (float)pos.y));
+	// 与 makeRect 保持一致：数据一变就得刷，否则按下到移动之间还挂着上一帧的画面
 	syncPoly();
+	win->refresh();
 }
 
 void CutMask::addPolyPoint(POINT pos)
@@ -167,6 +169,9 @@ void CutMask::addPolyPoint(POINT pos)
 	if (dx * dx + dy * dy < polyStep * polyStep) return;
 	poly.push_back(D2D1::Point2F((float)pos.x, (float)pos.y));
 	syncPoly();
+	// 拖拽中每加一个点就刷一次，边画边跟着鼠标走 —— 原来只在 endPoly 里刷，
+	// 结果松手才看得到路径，中间全程是空的
+	win->refresh();
 }
 
 void CutMask::endPoly()
