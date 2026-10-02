@@ -27,6 +27,11 @@ namespace {
     // 中间帧，滚动量被误判成 0，导致最后一截内容没接上、成图偏短。
     // 浏览器 / Electron 这类目标是动画式滚动，要给它留足时间
     constexpr int scrollSettleMs = 250;
+    // 两次滚轮之间的间隔。加上滚动动画的沉降等待，一整轮落在 500~800ms 这个区间里：
+    // 再快会抓到动画没走完的中间帧，拼图错行；再慢长页面要滚半天
+    constexpr int scrollIntervalMs = 350;
+    // 手动模式的抓屏间隔。不发滚轮，所以没有沉降等待要留，可以比自动那一路密一些
+    constexpr int manualPollMs = 300;
     // 抓到"帧在变但匹配不出滚动量"的帧时，多半是滚动动画还没停。此时先不急着发
     // 下一次滚轮，隔一会儿重新抓一帧等它停稳；最多连续等这么多次，避免一直卡住
     constexpr int settleRecheckMs = 250;
@@ -150,6 +155,9 @@ CapLong::CapLong(WinCap* win) : win(win)
         layoutTextStart->GetMetrics(&tm);
         startTextSize = { tm.width, tm.height };
     }
+    // 工具条一开始就摆出来：手动 / 自动那个开关要在点"开始"之前就够得着，
+    // 否则只能先滚一段再切，开头那截已经按自动的节奏拼好了
+    makeTool();
 }
 
 CapLong::~CapLong()
@@ -165,6 +173,10 @@ void CapLong::dispose()
 
 void CapLong::paint(ID2D1DeviceContext* ctx)
 {
+    if (isCrop) {
+        paintCrop(ctx);
+        return;
+    }
     paintImgPreview(ctx);
     if (isFinish) {
         auto borderRadius{ 4.f * win->dpi };
@@ -180,6 +192,37 @@ void CapLong::paint(ID2D1DeviceContext* ctx)
 
 void CapLong::setCursor()
 {
+    if (isCrop) {
+        // 光标落在剪裁框的哪一块：边 / 角给对应的双向箭头，内部给四向，其余给十字
+        POINT pos{};
+        GetCursorPos(&pos);
+        ScreenToClient(win->hwnd, &pos);
+        switch (cropMask->hitTest(pos))
+        {
+        case MaskHit::TopLeft:
+        case MaskHit::BottomRight:
+            SetCursor(LoadCursor(nullptr, IDC_SIZENWSE));
+            return;
+        case MaskHit::TopRight:
+        case MaskHit::BottomLeft:
+            SetCursor(LoadCursor(nullptr, IDC_SIZENESW));
+            return;
+        case MaskHit::Top:
+        case MaskHit::Bottom:
+            SetCursor(LoadCursor(nullptr, IDC_SIZENS));
+            return;
+        case MaskHit::Left:
+        case MaskHit::Right:
+            SetCursor(LoadCursor(nullptr, IDC_SIZEWE));
+            return;
+        case MaskHit::Inside:
+            SetCursor(LoadCursor(nullptr, IDC_SIZEALL));
+            return;
+        default:
+            SetCursor(LoadCursor(nullptr, IDC_CROSS));
+            return;
+        }
+    }
     if (!isFinish && isShowStartBtn) {
         // 开始按钮跟着光标走，藏掉系统光标免得两个东西叠在一起
         SetCursor(NULL);
@@ -189,8 +232,30 @@ void CapLong::setCursor()
     }
 }
 
+void CapLong::onDown(POINT pos, bool isRight)
+{
+    if (!isCrop) return;
+    if (isRight) {
+        cancelCrop();
+        return;
+    }
+    cropDragging = true;
+    // 已经有框了就是调它（startAdjust 自己会按落点认边认角），没有才是新框一道
+    cropAdjusting = cropMask->hasRect();
+    if (cropAdjusting) cropMask->startAdjust(pos);
+    else cropMask->startMakeRect(pos);
+    win->refresh();
+}
+
 void CapLong::onMove(POINT pos)
 {
+    if (isCrop) {
+        if (!cropDragging) return;
+        if (cropAdjusting) cropMask->adjust(pos);
+        else cropMask->makeRect(pos);
+        win->refresh();
+        return;
+    }
     if (isFinish) {
         if (isShowStartBtn) {
             isShowStartBtn = false;
@@ -214,11 +279,18 @@ void CapLong::onMove(POINT pos)
 
 void CapLong::onUp(POINT pos)
 {
+    if (isCrop) {
+        cropDragging = false;
+        cropAdjusting = false;
+        return;
+    }
     if (isScrolling || isFinish) return;
     if (isShowStartBtn) { //按下开始按钮
         isScrolling = true;
         win->hollowWin();
-        makeTool();
+        // 手动模式要让用户真的够得着滚动条：只把选区抠成洞的话，滚动条多半在选区外面，
+        // 那里仍盖着本窗口，鼠标根本落不到目标窗口上。整窗让出鼠标，工具条是独立窗口照旧可点
+        if (manual) win->setMouseTransparent(true);
         firstStep(); //首次截图
     }
 }
@@ -226,6 +298,13 @@ void CapLong::onUp(POINT pos)
 void CapLong::onTimerCB(UINT timerId)
 {
     if (timerId == scrollMsgId) {
+        if (manual) {
+            // 手动模式：不发滚轮，只按固定间隔抓一帧看内容变了没有。
+            // 滚动条怎么滚、滚多快全由用户决定，我们只负责把新出现的内容接上去
+            win->killTimer(scrollMsgId);
+            capStep();
+            return;
+        }
         POINT pt;
         GetCursorPos(&pt);
         auto tarHwnd = WindowFromPoint(pt);
@@ -412,7 +491,29 @@ void CapLong::flipDir()
     resultH = imgH;
     makeImgPreview();
     win->refresh();
-    win->setTimer(500, scrollMsgId);
+    armScroll();
+}
+
+void CapLong::armScroll()
+{
+    // 手动模式没有"滚轮沉降"要等，抓屏可以密一些；自动那一路要把沉降时间算进去
+    win->setTimer(manual ? manualPollMs : scrollIntervalMs, scrollMsgId);
+}
+
+// 手动模式下"这一帧没变化"是常态：用户可能正拖着滚动条、也可能停手在看。
+// 只有自动模式才靠它判触底（我们自己在发滚轮，滚不动就说明到底了）
+void CapLong::countDismiss()
+{
+    if (manual) {
+        armScroll();
+        return;    // 已自行续上，调用方直接返回
+    }
+    dismissTime++;
+    // 换方向要趁早：等满 maxDismissTime 再换，用户已经干等好几秒了
+    if (dismissTime > dirFlipAt && !dirFlipped) { flipDir(); return; }
+    if (dismissTime > maxDismissTime) { stopCap(true); return; }
+    armScroll();
+    return;
 }
 
 void CapLong::capStep()
@@ -423,10 +524,7 @@ void CapLong::capStep()
         changeStart = findChangeStart(data);
         if (changeStart == -1) {
             // 没有检测到变化，可能滚动未生效
-            dismissTime++;
-            if (dismissTime > dirFlipAt && !dirFlipped) { flipDir(); return; }
-            if (dismissTime > maxDismissTime) { stopCap(); return; }
-            win->setTimer(500, scrollMsgId);
+            countDismiss();
             return;
         }
         firstCheck = false;
@@ -443,21 +541,17 @@ void CapLong::capStep()
             }
         }
         settleRecheckCount = 0;
-        dismissTime++;
-        // 换方向要趁早：等满 maxDismissTime 再换，用户已经干等好几秒了
-        if (dismissTime > dirFlipAt && !dirFlipped) { flipDir(); return; }
-        if (dismissTime > maxDismissTime) { stopCap(); return; }
-        win->setTimer(500, scrollMsgId);
+        countDismiss();
         return;
     }
     dismissTime = 0;
     settleRecheckCount = 0;
     stitch(data, shift);
     img1 = data;
-    if (resultW > 36000 || resultH > 36000) { stopCap(); return; }
+    if (resultW > 36000 || resultH > 36000) { stopCap(true); return; }
     makeImgPreview();
     win->refresh();
-    win->setTimer(500, scrollMsgId); //准备下次滚动
+    armScroll(); //准备下次滚动
 }
 
 void CapLong::makeTool()
@@ -483,6 +577,16 @@ void CapLong::layoutTool()
     }
     pos.y = (LONG)(cutMask->maskRect.bottom - tool->h);
     ClientToScreen(win->hwnd, &pos);
+    // 上面那两条规则在全屏选区时都会算出屏幕外的坐标：右边放不下，换到左侧又必然是负数。
+    // 工具条连带它上方那条缩略图就整个跑到屏幕外 —— 既看不到进度，也点不到停止，
+    // 只能干等它自己滚到底。所以最后一律夹进所在显示器的工作区
+    RECT toolRect{ pos.x, pos.y, pos.x + (LONG)toolW, pos.y + (LONG)tool->h };
+    MONITORINFO mi{ sizeof(MONITORINFO) };
+    GetMonitorInfo(MonitorFromRect(&toolRect, MONITOR_DEFAULTTONEAREST), &mi);
+    pos.x = (std::max)(pos.x, mi.rcWork.left);
+    pos.y = (std::max)(pos.y, mi.rcWork.top);
+    pos.x = (std::min)(pos.x, mi.rcWork.right - (LONG)toolW);
+    pos.y = (std::min)(pos.y, mi.rcWork.bottom - (LONG)tool->h);
     tool->setPosition(pos.x, pos.y);
 }
 
@@ -498,19 +602,27 @@ void CapLong::paintImgPreview(ID2D1DeviceContext* ctx)
     ctx->DrawBitmap(imgPreview.Get(), destRect);
 }
 
-void CapLong::stopCap()
+// 收工。手动模式下整窗是让出鼠标的，这里要收回来，否则成图之后连工具条都点不到
+// （工具条是独立窗口、本来点得到，但剪裁要在图上框选，图必须重新接受鼠标）
+void CapLong::stopCap(bool reachedEnd)
 {
     isFinish = true;
-    makeStopText();
-    win->restoreWin();
     isScrolling = false;
     win->killTimer(scrollMsgId);
     win->killTimer(scrollEndMsgId);
+    win->restoreWin();
+    win->setMouseTransparent(false);
+    makeStopText(reachedEnd);
     win->refresh();
 }
 
-void CapLong::makeStopText()
+// 用户叫停的（ESC / 工具条按钮）不显示"已触底"—— 那句话只在真的滚到底时才成立
+void CapLong::makeStopText(bool reachedEnd)
 {
+    if (!reachedEnd) {
+        layoutTextEnd = nullptr;
+        return;
+    }
     if (resultW > 36000 || resultH > 36000) {
         layoutTextEnd = Ling::D2D::get()->makeTextLayout(
             Lang::get(horizontal ? L"long.tooWide" : L"long.tooLong"), 13 * win->dpi);
@@ -551,9 +663,130 @@ bool CapLong::saveToFile()
     return Util::saveToFile(path, resultW, resultH, imgData.data(), fmt);
 }
 
+void CapLong::toggleMode()
+{
+    if (isCrop) return;
+    manual = !manual;
+    // 拼接是按"前后两帧的内容"对齐的，与谁发的滚动无关，所以中途换模式不会把已拼好的
+    // 那一截弄坏。要跟着换的只有一件事：手动模式得把鼠标让给底下的窗口，用户才拖得动滚动条
+    if (isRunning()) win->setMouseTransparent(manual);
+    if (tool) tool->refreshMode();
+    win->refresh();
+}
+
+void CapLong::finish(bool toPin)
+{
+    if (isCrop) cancelCrop();
+    if (isRunning()) stopCap(false);
+    if (toPin && !imgData.empty()) pin();
+}
+
+void CapLong::startCrop()
+{
+    if (imgData.empty()) return;
+    // 还在滚就先收工：剪裁要的是一张静止的成图
+    if (isRunning()) stopCap(false);
+    isCrop = true;
+    cropDragging = false;
+    cropAdjusting = false;
+    cropMask = std::make_unique<CutMask>(win);
+    // 尺寸必须自由：截图那边的「固定区域」设置不能把剪裁框钉成别的大小
+    cropMask->ignoreFixedSize = true;
+    // 标签量的是窗口坐标，而用户关心的是剪完剩多少像素，摆出来只会误导，藏掉
+    cropMask->hideLabel = true;
+    makeCropImg();
+    makeCropTip();
+    win->refresh();
+}
+
+void CapLong::cancelCrop()
+{
+    if (!isCrop) return;
+    isCrop = false;
+    cropDragging = false;
+    cropAdjusting = false;
+    cropMask.reset();
+    cropImg.Reset();
+    layoutCropTip = nullptr;
+    win->refresh();
+}
+
+void CapLong::makeCropImg()
+{
+    cropImg.Reset();
+    D2D1_BITMAP_PROPERTIES1 props{
+        .pixelFormat{ D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED) },
+        .dpiX{ 96.f }, .dpiY{ 96.f }, .bitmapOptions{ D2D1_BITMAP_OPTIONS_NONE }
+    };
+    auto hr = Ling::D2D::get()->deviceContext->CreateBitmap(
+        D2D1::SizeU((UINT32)resultW, (UINT32)resultH), imgData.data(),
+        (UINT32)resultW * 4, props, cropImg.GetAddressOf());
+    if (FAILED(hr)) { cropImg.Reset(); return; }
+    // 整图缩到窗口里（只缩不放），居中。剪裁框是窗口坐标，换回成图像素全靠 cropScale
+    const float pad = 24.f * win->dpi;
+    cropScale = std::min((win->w - pad * 2.f) / (float)resultW, (win->h - pad * 2.f) / (float)resultH);
+    if (cropScale > 1.f) cropScale = 1.f;
+    const float drawW = (float)resultW * cropScale;
+    const float drawH = (float)resultH * cropScale;
+    const float left = (win->w - drawW) / 2.f;
+    const float top = (win->h - drawH) / 2.f;
+    cropDest = D2D1::RectF(left, top, left + drawW, top + drawH);
+}
+
+void CapLong::makeCropTip()
+{
+    layoutCropTip = Ling::D2D::get()->makeTextLayout(Lang::get(L"long.cropTip"), 13 * win->dpi);
+}
+
+void CapLong::paintCrop(ID2D1DeviceContext* ctx)
+{
+    auto dim = D2D1::ColorF(0x000000, 0.72f);
+    ctx->Clear(&dim);
+    if (cropImg) {
+        ctx->DrawBitmap(cropImg.Get(), cropDest, 1.f, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
+    }
+    cropMask->paint(ctx);
+    if (!layoutCropTip) return;
+    DWRITE_TEXT_METRICS tm{};
+    if (FAILED(layoutCropTip->GetMetrics(&tm))) return;
+    const float pad = 8.f * win->dpi;
+    D2D1_RECT_F bar{ win->w / 2.f - tm.width / 2.f - pad, pad,
+        win->w / 2.f + tm.width / 2.f + pad, pad + tm.height + pad * 2.f };
+    ctx->FillRectangle(bar, bgBrush.Get());
+    ctx->DrawTextLayout({ bar.left + pad, bar.top + pad },
+        layoutCropTip.Get(), textBrush.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
+}
+
+void CapLong::confirmCrop()
+{
+    if (!isCrop || !cropMask->hasRect()) return;
+    auto& r = cropMask->maskRect;
+    const int x0 = std::clamp((int)std::lround((r.left - cropDest.left) / cropScale), 0, resultW);
+    const int y0 = std::clamp((int)std::lround((r.top - cropDest.top) / cropScale), 0, resultH);
+    const int x1 = std::clamp((int)std::lround((r.right - cropDest.left) / cropScale), 0, resultW);
+    const int y1 = std::clamp((int)std::lround((r.bottom - cropDest.top) / cropScale), 0, resultH);
+    const int nw = x1 - x0, nh = y1 - y0;
+    if (nw <= 0 || nh <= 0) return;
+    const size_t rowBytes = (size_t)nw * 4;
+    std::vector<BYTE> out(rowBytes * nh);
+    for (int y = 0; y < nh; y++) {
+        CopyMemory(out.data() + (size_t)y * rowBytes,
+            imgData.data() + ((size_t)(y0 + y) * resultW + x0) * 4, rowBytes);
+    }
+    imgData = std::move(out);
+    resultW = nw;
+    resultH = nh;
+    cancelCrop();
+    // 剪完的图才是要拿去贴图 / 存盘的那张，缩略图重出一次
+    makeImgPreview();
+    win->refresh();
+}
+
 void CapLong::pin()
 {
     if (imgData.empty()) return;
+    if (isCrop) cancelCrop();
+    if (isRunning()) stopCap(false);
     // 居中放置在主显示器
     auto monitor = MonitorFromPoint({ 0, 0 }, MONITOR_DEFAULTTOPRIMARY);
     MONITORINFO mi{ sizeof(MONITORINFO) };

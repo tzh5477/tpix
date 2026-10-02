@@ -128,7 +128,10 @@ void WinCap::layout()
     if (!hideScreenImg) {
         ctx->DrawBitmap(screenImg.Get(), destRect);
     }
-    cutMask->paint(ctx);
+    // 剪裁阶段屏幕上画的是成图，原来那个屏幕选区的蒙层不该再出现
+    if (!capLong || !capLong->isCropping()) {
+        cutMask->paint(ctx);
+    }
     if (capLong) capLong->paint(ctx);
     paintPix(ctx);
     canvas->finishPaint();
@@ -286,6 +289,17 @@ void WinCap::onKey(UINT key)
         return cr;
     };
     if (key == VK_ESCAPE) {
+        // 剪裁中：ESC 是放弃这一刀，回到成图那一步（下面那次 ESC 才关窗）
+        if (capLong && capLong->isCropping()) {
+            capLong->cancelCrop();
+            return;
+        }
+        // 滚动中：ESC = 收工并贴图。图钉到桌面后这个窗口就没用了，
+        // 再按一次 ESC 关的是贴图窗口 —— 与"截图 -> 贴图 -> 退出"的手感一致
+        if (capLong && capLong->isRunning()) {
+            longFinishAndPin();
+            return;
+        }
         close();
     }
     else if (key == 'H' && (GetKeyState(VK_CONTROL) & 0x8000)) {
@@ -342,6 +356,8 @@ void WinCap::onKey(UINT key)
     // Enter 与 Ctrl+C 一个意思：把图存进剪切板。比 Ctrl+C 多管一个阶段 ——
     // 选区刚框好（Adjust）时也认，那会儿等于点了 ToolCap 上的复制按钮
     else if (key == VK_RETURN) {
+        // 剪裁中回车是"就剪这一块"，不是复制
+        if (longConfirmCrop()) return;
         copyCurrentStage();
     }
 }
@@ -461,6 +477,11 @@ void WinCap::releaseMouse()
 void WinCap::onDown(POINT pos, bool isRight)
 {
     if (isRight) {
+        // 剪裁中右键是"放弃这一刀、回到成图"，不是关窗
+        if (capLong && capLong->isCropping()) {
+            capLong->cancelCrop();
+            return;
+        }
         close();
         return;
     }
@@ -491,6 +512,10 @@ void WinCap::onDown(POINT pos, bool isRight)
         captureMouse();
         cutMask->startAdjust(pos);
         relayoutToolCap();
+    }
+    else if (stage == CapStage::Long && capLong) {
+        // 只有剪裁阶段要按下：滚动那会儿光标归被截的窗口，本窗口收不到按下
+        capLong->onDown(pos, isRight);
     }
 }
 
@@ -804,6 +829,40 @@ void WinCap::layoutLongTool()
 void WinCap::longPin()
 {
     if (capLong) capLong->pin();
+}
+
+void WinCap::toggleLongMode()
+{
+    if (capLong) capLong->toggleMode();
+}
+
+void WinCap::longStartCrop()
+{
+    if (capLong) capLong->startCrop();
+}
+
+bool WinCap::longConfirmCrop()
+{
+    if (!capLong || !capLong->isCropping()) return false;
+    capLong->confirmCrop();
+    return true;
+}
+
+void WinCap::longFinishAndPin()
+{
+    if (!capLong) return;
+    capLong->finish(true);
+    close();
+}
+
+bool WinCap::isLongManual() const
+{
+    return capLong && capLong->isManual();
+}
+
+bool WinCap::longHasImage() const
+{
+    return capLong && capLong->hasImage();
 }
 
 bool WinCap::longSaveToFile()

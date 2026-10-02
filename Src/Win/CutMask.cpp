@@ -94,6 +94,12 @@ void CutMask::makeLayout()
 
 void CutMask::beginFixedSize()
 {
+	// 剪裁长图复用本类，那里尺寸必须是自由的：设置里的「固定区域」是给截图用的
+	if (ignoreFixedSize) {
+		fixedW = 0.f;
+		fixedH = 0.f;
+		return;
+	}
 	int w{ 0 }, h{ 0 };
 	if (Setting::fixedSize(Setting::get()->getCapFixedIdx(), w, h)) {
 		fixedW = (float)w;

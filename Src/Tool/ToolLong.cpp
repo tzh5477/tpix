@@ -52,14 +52,37 @@ void ToolLong::onCreated()
 		btn->setFontFamily(L"icon");
 		btn->setFontSize(13.f);
 		btn->onClick.add([this](Ling::Button* btn) {onClick(btn);});
+		if (btnIds[i] == L"mode") btnMode = btn;
 		tip->bind(btn, Lang::get(std::format(L"tool.{}", btnIds[i])));
 	}
+	refreshMode();
 	show();
+}
+
+void ToolLong::refreshMode()
+{
+	if (!btnMode) return;
+	// 自动滚动是"开"那一档：切到手动就把图标拨到"关"
+	btnMode->setText(win->isLongManual() ? modeIconOff : modeIconOn);
 }
 
 void ToolLong::onClick(Ling::Button* btn)
 {
-	// 四个按钮都是"做完就收工"，做完动作后统一关掉整个滚动截图流程
+	// 模式开关与剪裁都不是"做完就收工"，切完留在原地继续
+	if (btn->id == L"mode") {
+		win->toggleLongMode();
+		return;
+	}
+	else if (btn->id == L"crop") {
+		win->longStartCrop();
+		return;
+	}
+	// 还没点"开始"时一张图都没有，这几个出口点了也是白点。与 Ctrl+S / Ctrl+C 那边的
+	// hasImage 判断是同一条规则，别让用户刚进长截图就把窗口点没了
+	if (btn->id == L"pin" || btn->id == L"save" || btn->id == L"clipboard" || btn->id == L"crop") {
+		if (!win->longHasImage()) return;
+	}
+	// 其余都是"做完就收工"：先停滚动，做完动作后统一关掉整个滚动截图流程
 	if (btn->id == L"pin") {
 		win->longPin();
 	}

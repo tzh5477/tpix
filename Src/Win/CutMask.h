@@ -45,6 +45,9 @@ public:
 	float strokeWidth{ 2.f };
 	// 选区定死之后（录屏 / 滚动截图）标签就没用了，而它可能压在选区内部被录进去
 	bool hideLabel{ false };
+	// 置上就不读「固定区域」那项设置。剪裁长图用的是同一套蒙层，那里尺寸必须自由，
+	// 不能让截图那边的固定尺寸设置把它钉成别的大小
+	bool ignoreFixedSize{ false };
 private:
 	void initWinRect();
 	// 尺寸标签只在 maskRect 变化时重建，不必每帧现建

@@ -57,6 +57,16 @@ public:
 	// ToolLong 的摆放规则在 CapLong 手里，它 DPI 变了要重走一遍，从这里转进去
 	void layoutLongTool();
 	void longPin();
+	// ToolLong 上的新增按钮：手动 / 自动开关、二次剪裁
+	void toggleLongMode();
+	void longStartCrop();
+	// 剪裁框确认（回车）。返回是否已经接手，好让调用方跳过原本的动作
+	bool longConfirmCrop();
+	// 长截图收工并贴图。ESC 走的就是这条：滚完即贴图，再按一次 ESC 由贴图窗口退出
+	void longFinishAndPin();
+	bool isLongManual() const;
+	// 长截图已经拼出图了没有。ToolLong 上那几个出口按钮靠它挡住"还没开始就点"
+	bool longHasImage() const;
 	// 用户在另存为对话框里取消时返回 false，此时图还在，不该收工
 	bool longSaveToFile();
 	void longCopyToClipboard();
