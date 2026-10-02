@@ -206,6 +206,8 @@ void ToolMain::selectTool(const std::wstring& id)
 	}
 	else if (curId == L"watermark") {
 		win->toolSub->showWatermarkTools();
+		// 选了水印工具就把水印铺上，不再要求用户去点一下截图区域
+		win->ensureWatermark();
 	}
 	else {
 		win->toolSub->hideTools();

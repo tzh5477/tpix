@@ -98,6 +98,9 @@ public:
 	// 本次按下之后光标有没有真的移动过。判"按下马上弹起"只认这个，
 	// 不去看各 shape 的几何 —— 那些成员的初值状态不一，不可靠
 	bool hasDragged{ false };
+	// 水印工具选中时把水印层铺上（没有才建）。整张图一层，所以不进"点击才落笔"那条路。
+	// ToolMain 切到水印工具时调（ToolMain.cpp 的 selectTool）
+	void ensureWatermark();
 private:
 	WinPin(int x, int y, int w, int h, const std::vector<BYTE>* data = nullptr,
 		const std::wstring& initToolId = L"");

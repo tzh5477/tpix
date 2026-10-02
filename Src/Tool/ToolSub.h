@@ -75,7 +75,8 @@ public:
 	int pinOpacity{ 0 };
 	// 水印。文字 / 平铺是状态本体；档位存下标，换算成透明度与角度的表在 .cpp 里
 	std::wstring watermarkText{ L"" };
-	bool watermarkTile{ false };
+	// 默认平铺：只落一块居中的水印，图一大就容易被当成"没生效"，平铺才是水印该有的样子
+	bool watermarkTile{ true };
 	// watermarkGap 是平铺间距档位（0 紧凑 / 1 标准 / 2 宽松），换算系数的表同样在 .cpp 里
 	int watermarkOpacity{ 0 }, watermarkRotate{ 0 }, watermarkGap{ 1 };
 	float getWatermarkOpacity() const;

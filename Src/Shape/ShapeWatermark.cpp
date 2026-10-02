@@ -26,6 +26,19 @@ void ShapeWatermark::setCursor()
 	SetCursor(LoadCursor(nullptr, IDC_ARROW));
 }
 
+void ShapeWatermark::mouseMove(const float x, const float y)
+{
+	// 水印是"铺满整张图的一层"，命中区就是整张底图。只有正在用水印工具时才认它 ——
+	// 否则选完水印再切到矩形，鼠标一动悬停就落在水印上：WinPin::onDown 认为"点在已有元素上"
+	// 转去选中它，矩形根本建不出来；调颜色 / 字号也全作用到它身上。
+	// 反过来，水印工具下它又必须吃悬停，否则这一层谁也没法选中、Delete 删不掉
+	if (win->getCurToolId() != L"watermark") {
+		hoverDraggerIndex = -1;
+		return;
+	}
+	hoverDraggerIndex = 0;
+}
+
 bool ShapeWatermark::makeLayout()
 {
 	layout.Reset();
@@ -80,14 +93,21 @@ void ShapeWatermark::paint(ID2D1DeviceContext* ctx)
 	ctx->GetTransform(&prev);
 	if (win->getToolSub()->watermarkTile) {
 		// 平铺：步长 = 文字尺寸 + 间距，间距按文字尺寸的比例给（档位在工具条上切），
-		// 小字自动密、大字自动疏 —— 早先写死 60/40 像素，配 10 号小字就是一片空白里的零星几个字
+		// 小字自动密、大字自动疏。步长按"没旋转"的文字尺寸算，密度因此与倾斜角度无关。
+		// 全空格量出来的宽高可能是 0，步长按 0 走会死循环，兜个底
 		auto k = win->getToolSub()->getWatermarkGapRatio();
-		auto stepX = textW + textW * k;
-		auto stepY = textH + textH * k;
-		// 从负一个步长开始画，保证旋转之后边缘也不会露白
-		for (float y = -stepY; y < sz.height + stepY; y += stepY)
+		auto stepX = std::max(textW * (1.f + k), 1.f);
+		auto stepY = std::max(textH * (1.f + k), 1.f);
+		// 斜着摆的文字，外接框比 textW×textH 大一圈（长边斜过去，右上那一角伸得最远）。
+		// 网格必须按外接框向外扩一圈再铺 —— 早先是从 (0,0) 铺到 (W,H)，斜放之后
+		// 右上角正好落在最后一行 / 最后一列的空当里，看着就是"右上方没打上水印"
+		auto rad{ rotation * 3.14159265358979323846f / 180.f };
+		auto hw{ (fabsf(cosf(rad)) * textW + fabsf(sinf(rad)) * textH) * 0.5f };
+		auto hh{ (fabsf(sinf(rad)) * textW + fabsf(cosf(rad)) * textH) * 0.5f };
+		// 文字以格点为中心画（见 drawOne），格子铺满 [-hw, W+hw] × [-hh, H+hh]
+		for (float y = -hh; y < sz.height + hh; y += stepY)
 		{
-			for (float x = -stepX; x < sz.width + stepX; x += stepX)
+			for (float x = -hw; x < sz.width + hw; x += stepX)
 			{
 				drawOne(ctx, x, y, rotation, prev);
 			}

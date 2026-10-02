@@ -6,6 +6,7 @@
 #include "../Shape/ShapeBase.h"
 #include "../Shape/ShapeText.h"
 #include "../Shape/ShapeNumber.h"
+#include "../Shape/ShapeWatermark.h"
 #include "WinPin.h"
 #include "WinCap.h"
 #include "History.h"
@@ -552,6 +553,21 @@ bool WinPin::hasDrawTool() const
 	return toolMain && !toolMain->curId.empty() && toolMain->curId != L"pin";
 }
 
+// 水印工具一点开就把水印铺满整张图，不用再点一下截图区域（ToolSub 上的文字 / 字号 / 间距
+// 改一处就重画一遍，它本来就是每次 paint 现读工具条）。
+// 水印是"整张图一层"的东西，已经有了就不再加第二层 —— 点它自己的按钮、还是从截图窗口上
+// 那个水印按钮直达进来，都只该有一层
+void WinPin::ensureWatermark()
+{
+	if (!drawing || !drawing->history) return;
+	for (auto& shape : drawing->history->shapes) {
+		if (dynamic_cast<ShapeWatermark*>(shape.get())) return;
+	}
+	auto sz = drawing->getImgSize();
+	drawing->history->createShape(L"watermark", (int)(sz.width / 2), (int)(sz.height / 2));
+	refresh();
+}
+
 void WinPin::updateNumberPreview(const POINT& imgPos)
 {
 	// 只在标号工具下预览，而且只预览"落在空白处"的那一下 —— 光标压在已有元素上时，
@@ -634,6 +650,12 @@ void WinPin::layoutTools()
 	}
 	else {
 		toolSub->hideTools();
+	}
+	// 换了工具就把选中态收掉：选中的那一笔是上一个工具留下的，留着它会让工具条上的
+	// 样式改动（WinPin::onToolStyleChanged）落到它身上。水印最典型 —— 它是铺满整张图的
+	// 一层，一直挂着选中态的话，后面随便调个颜色都作用在它身上
+	if (drawing && drawing->selected && drawing->selected->toolId != toolMain->curId) {
+		drawing->selected = nullptr;
 	}
 }
 

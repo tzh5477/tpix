@@ -93,9 +93,10 @@ namespace {
 	// 水印的透明度档位与旋转档位。透明度与 pin 那组共用一套档位
 const float watermarkOpacitySteps[]{ 1.f, 0.75f, 0.5f, 0.25f };
 const float watermarkRotateSteps[]{ 0.f, 30.f, 45.f, 60.f };
-// 平铺间距三档：间距 = 文字尺寸 × 这个系数。紧凑几乎相连、标准留四分之三个字、宽松空一倍半 ——
-// 写死像素值配小字号就是"整片空白里零星几个字"，按比例才随字号自动疏密
-const float watermarkGapSteps[]{ 0.25f, 0.75f, 1.5f };
+// 平铺间距三档：间距 = 文字尺寸 × 这个系数。紧凑几乎相连、标准留半格、宽松空一格 ——
+// 系数原来偏大（0.75 起步），一块 24 号字的水印一步就跨出去好几百像素，
+// 小图上只落得下一两块，看着就像"没铺满 / 根本没水印"
+const float watermarkGapSteps[]{ 0.2f, 0.5f, 1.f };
 }
 
 float ToolSub::getWatermarkOpacity() const
@@ -852,8 +853,10 @@ void ToolSub::showWatermarkTools()
 	for (int i = 0; i < 3; ++i) gapItems.push_back(Lang::get(std::format(L"tool.watermarkGap{}", i)));
 	makeSelectBtn(L"tool.watermarkGap", L"gap", &watermarkGap, gapItems,
 		[this]() { win->refresh(); });
-	makeTextToggle(Lang::get(L"tool.watermarkTile"), L"tool.watermarkTile", L"tile", false,
-		[this](bool) { win->refresh(); });
+	// 平铺开关：apply 里必须把成员写回去 —— 以前只 refresh 了一下，成员一直是初值 false，
+	// 于是"平铺"永远是关的、图上也永远只落一块水印
+	makeTextToggle(Lang::get(L"tool.watermarkTile"), L"tool.watermarkTile", L"tile", true,
+		[this](bool on) { watermarkTile = on; win->refresh(); });
 	initSlider();
 	initColorBtns();
 }

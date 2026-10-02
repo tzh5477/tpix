@@ -16,8 +16,9 @@ public:
 	bool isValidWithoutDrag() override { return true; };
 	void setCursor() override;
 	void mouseDown(const float x, const float y) override;
-	// 整张底图都是它的命中区：悬停即算选中（Delete 可删），拖动无效果
-	void mouseMove(const float x, const float y) override { hoverDraggerIndex = 0; }
+	// 只有水印工具下才吃悬停：别的工具下它不是"图上某一块"，而是整张图的背景层，
+	// 一旦参与命中就会把其它工具的每一下点击都截胡（见 .cpp 里的说明）
+	void mouseMove(const float x, const float y) override;
 private:
 	// 按当前样式建文字布局。返回 false 表示没有可画的东西（没写文字）
 	bool makeLayout();
