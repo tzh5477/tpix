@@ -260,7 +260,11 @@ void ShapeText::mouseMove(const float x, const float y)
 	auto half{ borderPadding / 2.f + win->getDpi() };//多给一个 dpi，让判定范围宽松点
 	if (lx >= rect.left - half && lx <= rect.right + half && ly >= rect.top - half && ly <= rect.bottom + half)
 	{
-		if (lx <= rect.left + half || lx >= rect.right - half || ly >= rect.top + half || ly >= rect.bottom - half) {
+		// 四条边带：挨着任一条边都算"要拖边框"。
+		// 注意上边那条 —— 这里以前笔误写成 ly >= rect.top + half，于是框内凡是
+		// ly 比 top+half 大的（也就是中间那大片）全被判成边框，点文字中间走的是
+		// "拖框"，永远进不了编辑态。表现就是"选中了文本却改不了它的内容"
+		if (lx <= rect.left + half || lx >= rect.right - half || ly <= rect.top + half || ly >= rect.bottom - half) {
 			hoverDraggerIndex = 8;
 		}
 		else {
