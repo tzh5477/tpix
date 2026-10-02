@@ -115,10 +115,10 @@ private:
 	// 只在改了样式真能看出来的那些工具条上建（水印单实例且每次 paint 现取样式，不建）
 	void makeApplyAllBtn();
 	// 样式切换按钮上示例用哪个序号：取图上最大的那个编号，没有序号时用 1
-	int getNumberSampleVal();
 	// 图上最大编号 + 1。这是「编号」输入框没存过配置时的起头值 ——
 	// 与没有这个输入框之前的行为一致
 	int getNextNumber();
+	int getNumberSampleVal();
 	// 「编号」输入框。它是固定宽度，宽度另算进 initSize 的 extraW
 	void initNumberBox();
 	// 字体按钮：按钮上显示当前字体名（长了截断），点开是系统字体全表

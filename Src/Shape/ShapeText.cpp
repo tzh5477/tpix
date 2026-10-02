@@ -379,6 +379,9 @@ void ShapeText::finishEdit()
 	win->setEditingShape(nullptr);
 	angle = editAngle;
 	makeTextLayout();
+	// 编辑期间框是从 TextBox 的实际尺寸同步来的，与 D2D 量出来的文字尺寸可能有零点几像素的差，
+	// 收工时以 layout 的度量为准重算一次，虚线框与命中判定才和画出来的文字严格对齐
+	fitRectToText();
 	win->refresh();
 	if (text.empty()) {
 		// 空文本不留痕：点一下没输入就走开，不该在 history 里攒一堆看不见的 shape。
@@ -391,15 +394,24 @@ void ShapeText::finishEdit()
 
 void ShapeText::applyStyle()
 {
-	if (!isEditing) return;
+	// 非编辑态也要生效：选中一段已经写完的文字再改工具条上的颜色 / 字号 / 字体，
+	// 改的就是它。以前这里只认编辑态，选中态改样式一点反应没有，
+	// 只能靠"再点进去重新编辑一次"把工具条的配置带进来
 	setAttr();
-	auto tb = win->getTextBox();
-	tb->setColor(Ling::Color(colorValue));
-	tb->setCaretColor(Ling::Color(colorValue));
-	tb->setFontSize(fontSize * win->getScale() / win->getDpi());
-	tb->setBold(isBold);
-	tb->setItalic(isItalic);
-	tb->setFontFamily(fontFamily);
+	makeTextLayout();
+	if (isEditing) {
+		auto tb = win->getTextBox();
+		tb->setColor(Ling::Color(colorValue));
+		tb->setCaretColor(Ling::Color(colorValue));
+		tb->setFontSize(fontSize * win->getScale() / win->getDpi());
+		tb->setBold(isBold);
+		tb->setItalic(isItalic);
+		tb->setFontFamily(fontFamily);
+	}
+	else {
+		// 字号变了框的大小就得跟着走，否则虚线框与文字对不上，命中判定也跟着偏
+		fitRectToText();
+	}
 	win->refresh();
 }
 

@@ -57,52 +57,35 @@ namespace {
 		std::wstring family;
 		std::wstring show;
 	};
-	// 从一组本地化名字里取第 idx 个。GetString 的 size 参数含结尾的 0，缓冲区要多留一个字符
-	std::wstring readFontName(IDWriteLocalizedStrings* names, UINT32 idx)
-	{
-		UINT32 len{ 0 };
-		if (FAILED(names->GetStringLength(idx, &len)) || len == 0) return {};
-		std::wstring buf(len + 1, L'\0');
-		if (FAILED(names->GetString(idx, buf.data(), len + 1))) return {};
-		buf.resize(len);
-		return buf;
-	}
-	std::wstring readFontLocaleName(IDWriteLocalizedStrings* names, const wchar_t* locale)
-	{
-		UINT32 idx{ 0 };
-		BOOL exists{ FALSE };
-		if (FAILED(names->FindLocaleName(locale, &idx, &exists)) || !exists) return {};
-		return readFontName(names, idx);
-	}
-	// 系统字体全表。枚举一次就存成静态表 —— 几百个族，每切一次文本工具都重建纯属浪费。
-	// 表的内容取决于机器上装了什么，同一台机器上不会变
-	const std::vector<FontItem>& systemFonts()
+	// 「字体」下拉里固定这十款：系统里装的族往往上百个，全列出来既翻不到底、九成也没人用。
+	// family 是喂给 DWrite 的英文族名（中英文名 DWrite 都认，但英文名在任何语言的系统上都一样），
+	// show 是界面上显示的名字。机器上没装的那几款在下面被剔掉 ——
+	// 留下的都是"选了真能生效"的，不会出现点完没反应
+	const std::vector<FontItem>& commonFonts()
 	{
 		static std::vector<FontItem> list;
 		if (!list.empty()) return list;
+		static const std::pair<const wchar_t*, const wchar_t*> table[]{
+			{ L"Microsoft YaHei", L"微软雅黑" },
+			{ L"SimSun",          L"宋体" },
+			{ L"SimHei",          L"黑体" },
+			{ L"KaiTi",           L"楷体" },
+			{ L"FangSong",        L"仿宋" },
+			{ L"DengXian",        L"等线" },
+			{ L"Arial",           L"Arial" },
+			{ L"Times New Roman", L"Times New Roman" },
+			{ L"Calibri",         L"Calibri" },
+			{ L"Consolas",        L"Consolas" },
+		};
 		auto factory = Ling::D2D::get()->dwriteFactory;
 		ComPtr<IDWriteFontCollection> collection;
 		if (!factory || FAILED(factory->GetSystemFontCollection(collection.GetAddressOf(), FALSE))) return list;
-		auto count = collection->GetFontFamilyCount();
-		list.reserve(count);
-		for (UINT32 i = 0; i < count; i++) {
-			ComPtr<IDWriteFontFamily> family;
-			if (FAILED(collection->GetFontFamily(i, family.GetAddressOf()))) continue;
-			ComPtr<IDWriteLocalizedStrings> names;
-			if (FAILED(family->GetFamilyNames(names.GetAddressOf()))) continue;
-			// 族名取 en-US 那份：SetFontFamilyName 认任意本地化名，但西文名在日志和配置里更好读。
-			// 显示名反过来，优先中文（"微软雅黑"比"Microsoft YaHei"好认），没有就用第一个
-			auto familyName = readFontLocaleName(names.Get(), L"en-us");
-			if (familyName.empty()) familyName = readFontName(names.Get(), 0);
-			auto showName = readFontLocaleName(names.Get(), L"zh-CN");
-			if (showName.empty()) showName = familyName;
-			// "@宋体" 那种竖排族名是同一个字体的另一份，收进来只会让列表多出一倍
-			if (familyName.empty() || familyName[0] == L'@' || showName.empty() || showName[0] == L'@') continue;
-			list.push_back({ familyName, showName });
+		for (auto& [family, show] : table) {
+			UINT32 idx{ 0 };
+			BOOL exists{ FALSE };
+			if (FAILED(collection->FindFamilyName(family, &idx, &exists)) || !exists) continue;
+			list.push_back({ family, show });
 		}
-		// 按显示名排一遍：中文按码位（常见字体刚好落在前面），西文按字母
-		std::sort(list.begin(), list.end(),
-			[](const FontItem& a, const FontItem& b) { return a.show < b.show; });
 		return list;
 	}
 	// 贴图不透明度的四档。index 落盘的是下标，百分比文本由 showPinTools 按这张表生成
@@ -325,7 +308,7 @@ const std::wstring& ToolSub::getFontFamily() const
 
 int ToolSub::fontIndexOf(const std::wstring& family) const
 {
-	auto& list = systemFonts();
+	auto& list = commonFonts();
 	for (size_t i = 0; i < list.size(); i++) {
 		if (list[i].family == family) return (int)i;
 	}
@@ -334,7 +317,7 @@ int ToolSub::fontIndexOf(const std::wstring& family) const
 
 void ToolSub::syncFontBtnText(Ling::Button* btn)
 {
-	auto& list = systemFonts();
+	auto& list = commonFonts();
 	auto idx = fontIndexOf(getFontFamily());
 	// 找不到就在列表里现查一遍显示名；机器上确实没这款字体（配置从别处搬来的）才退回族名本身
 	std::wstring show = idx >= 0 && idx < (int)list.size() ? list[idx].show : getFontFamily();
@@ -360,13 +343,13 @@ Ling::Button* ToolSub::makeFontBtn()
 	btn->onClick.add([this, btn](Ling::Button*) {
 		// 列表会盖住按钮，悬停提示先收掉（与其他下拉一致）
 		tip->hide();
-		auto& list = systemFonts();
+		auto& list = commonFonts();
 		std::vector<std::wstring> items;
 		items.reserve(list.size());
 		for (auto& font : list) items.push_back(font.show);
 		SelectPopup::show(this, btn, items, fontIndexOf(getFontFamily()),
 			[this, btn](int picked) {
-				auto& fonts = systemFonts();
+				auto& fonts = commonFonts();
 				if (picked < 0 || picked >= (int)fonts.size()) return;
 				fontFamily = fonts[picked].family;
 				Setting::get()->setToolStr(L"text", L"fontFamily", fontFamily);
@@ -377,7 +360,6 @@ Ling::Button* ToolSub::makeFontBtn()
 	});
 	return btn;
 }
-
 int ToolSub::getNextNumber()
 {
 	int maxVal{ 0 };
@@ -389,6 +371,7 @@ int ToolSub::getNextNumber()
 	}
 	return maxVal + 1;
 }
+
 
 void ToolSub::initNumberBox()
 {
