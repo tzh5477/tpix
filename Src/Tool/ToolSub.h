@@ -100,12 +100,6 @@ private:
 		int* index, const std::vector<std::wstring>& items,
 		std::function<void()> onPicked = nullptr,
 		bool useIconFont = false, bool refreshNumbers = true);
-	// 开 / 关两项的下拉列表。图标按钮（填充、粗体这类）和开关都用它：
-	// 两项都是图标字体里的勾与叉，跟按钮上显示的是同一套，不用另起一套"开 / 关"译名
-	static const std::vector<std::wstring>& onOffItems();
-	// 弹出一个开 / 关下拉，选中后翻转 flag、落盘、刷新配色。
-	// apply 是翻转之后要做的事（贴图那几个开关直接调 WinPin 的 setter）
-	void showOnOff(Ling::Button* btn, bool cur, std::function<void(bool)> apply);
 	// pin 面板用的文字开关：跟 makeToggleBtn 一样的两态配色，但按钮上写的是字（圆角 / 锁定 / 穿透）
 	// 而不是图标 —— 图标字体里没有锁、穿透这类符号，硬猜码位只会显示成方块。
 	// apply 由调用方给，开关翻转后直接调 WinPin 上对应的 setter

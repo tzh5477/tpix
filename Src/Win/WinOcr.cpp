@@ -98,13 +98,11 @@ void WinOcr::onCreated()
 	tableBtn->setWidth(90.f);
 	tableBtn->setBorder(1.f, 0xE0E0E0FF);
 	tableBtn->setHoverBg(0xF2F2F2FF);
-	tableBtn->onClick.add([this](Ling::Button* b) {
-		std::vector<std::wstring> items{ Lang::get(L"ocr.text"), Lang::get(L"ocr.table") };
-		SelectPopup::show(this, b, items, tableMode ? 1 : 0, [this](int idx) {
-			tableMode = idx == 1;
-			applyTableBtn();
-			startRecognize();
-		});
+	// 只有"整页文字 / 按格子出表"两种，单击即切换。按钮上的字由 applyTableBtn 跟着状态改
+	tableBtn->onClick.add([this](Ling::Button*) {
+		tableMode = !tableMode;
+		applyTableBtn();
+		startRecognize();
 	});
 	applyTableBtn();
 

@@ -523,15 +523,10 @@ void ToolSub::showPinTools()
 			};
 		syncText();
 		tip->bind(playBtn, Lang::get(L"tool.pinPlayTip"));
-		playBtn->onClick.add([this, playBtn, syncText](Ling::Button*) {
-			// 两项就是"播 / 停"，直接选到想要的那个状态，不用先看清现在是哪个再点
-			std::vector<std::wstring> items{ Lang::get(L"tool.pinPlay"), Lang::get(L"tool.pinPause") };
-			SelectPopup::show(this, playBtn, items, win->isAnimPlaying() ? 0 : 1,
-				[this, syncText](int idx) {
-					if (idx == (win->isAnimPlaying() ? 0 : 1)) return;   // 已经就是这个状态
-					win->toggleAnim();
-					syncText();
-				});
+		playBtn->onClick.add([this, syncText](Ling::Button*) {
+			// 只有播 / 停两种状态，点一下就是切换；按钮上的字同步成"再点会变成什么"
+			win->toggleAnim();
+			syncText();
 			});
 	}
 	// 标题：写什么显示什么，清空即隐藏。失焦才生效，边打边刷没必要
@@ -692,6 +687,8 @@ void ToolSub::applyToggleStyle(Ling::Button* btn, bool selected)
 	}
 }
 
+// 开 / 关只有两种状态，按钮本身（底色）已经把它表示清楚了，单击直接翻转。
+// 不弹下拉：两项的列表要用户"点开、看清、再点一次"，比直接翻转多两步
 Ling::Button* ToolSub::makeToggleBtn(const std::wstring& text, bool* flag, const std::wstring& tipKey, const std::wstring& cfgKey)
 {
 	// 上次退出前的状态在配置文件里，先取回来盖掉内存里那份（成员的初值只是"从没设置过"时的默认）
@@ -707,30 +704,12 @@ Ling::Button* ToolSub::makeToggleBtn(const std::wstring& text, bool* flag, const
 	// flag 指向 ToolSub 的成员，生命周期与 this 相同，btn 也挂在 this 的节点树上，捕获裸指针安全。
 	// cfgKey 按值捕获：调用方传进来的是临时量
 	btn->onClick.add([this, flag, cfgKey](Ling::Button* b) {
-		showOnOff(b, *flag, [this, flag, cfgKey, b](bool next) {
-			*flag = next;
-			applyToggleStyle(b, next);
-			Setting::get()->setToolFlag(curToolId, cfgKey, next);
-			win->onToolStyleChanged();
-		});
+		*flag = !*flag;
+		applyToggleStyle(b, *flag);
+		Setting::get()->setToolFlag(curToolId, cfgKey, *flag);
+		win->onToolStyleChanged();
 	});
 	return btn;
-}
-
-const std::vector<std::wstring>& ToolSub::onOffItems()
-{
-	// 图标字体里的叉与勾，与设置页的开关按钮用的是同一对码位。
-	// 关在前开在后，下标正好能当 bool 用
-	static const std::vector<std::wstring> items{ L"\ue687", L"\ue688" };
-	return items;
-}
-
-void ToolSub::showOnOff(Ling::Button* btn, bool cur, std::function<void(bool)> apply)
-{
-	// 列表可能翻到按钮上方，那时它正好压在悬停提示的位置上，先把提示收掉
-	tip->hide();
-	SelectPopup::show(this, btn, onOffItems(), cur ? 1 : 0,
-		[apply](int index) { apply(index == 1); }, L"icon");
 }
 
 Ling::Button* ToolSub::makeSelectBtn(const std::wstring& tipKey, const std::wstring& cfgKey,
@@ -785,12 +764,10 @@ Ling::Button* ToolSub::makeTextToggle(const std::wstring& text, const std::wstri
 	apply(on);
 	tip->bind(btn, Lang::get(tipKey));
 	btn->onClick.add([this, cfgKey, apply](Ling::Button* b) {
-		showOnOff(b, Setting::get()->getToolFlag(curToolId, cfgKey, false),
-			[this, cfgKey, apply, b](bool next) {
-				Setting::get()->setToolFlag(curToolId, cfgKey, next);
-				applyToggleStyle(b, next);
-				apply(next);
-			});
+		bool next = !Setting::get()->getToolFlag(curToolId, cfgKey, false);
+		Setting::get()->setToolFlag(curToolId, cfgKey, next);
+		applyToggleStyle(b, next);
+		apply(next);
 	});
 	return btn;
 }
@@ -810,10 +787,9 @@ Ling::Button* ToolSub::makeStateToggle(const std::wstring& text, const std::wstr
 	applyToggleStyle(btn, read());
 	tip->bind(btn, Lang::get(tipKey));
 	btn->onClick.add([this, read, apply](Ling::Button* b) {
-		showOnOff(b, read(), [this, apply, b](bool next) {
-			applyToggleStyle(b, next);
-			apply(next);
-		});
+		bool next = !read();
+		applyToggleStyle(b, next);
+		apply(next);
 	});
 	return btn;
 }

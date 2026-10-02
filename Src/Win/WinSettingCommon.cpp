@@ -12,10 +12,6 @@
 #include "WinHistory.h"
 
 namespace {
-    // 开 / 关两项：图标字体里的叉与勾，和开关按钮上显示的是同一对码位，
-    // 所以不用另起一套「开 / 关」译名。关在前开在后，下标正好能当 bool 用
-    const std::vector<std::wstring> onOffItems{ L"\ue687", L"\ue688" };
-
     // 选目录对话框。返回 false 表示用户取消或调用失败，out 不动
     bool pickFolder(HWND hwnd, std::wstring& out)
     {
@@ -108,13 +104,11 @@ void WinSettingCommon::initAutoStartCtrls()
     btn->setWidth(60.f);
     setAutoStartBtn(btn);
 
+    // 开 / 关只有两种状态，按钮上的图标（勾 / 叉）与配色已经表示清楚了，单击直接翻转
     btn->onClick.add([this](Ling::Button* b) {
-        SelectPopup::show(win, b, onOffItems, Setting::get()->getAutoStart() ? 1 : 0,
-            [this, b](int idx) {
-                Setting::get()->setAutoStart(idx == 1);
-                // 写注册表可能失败，按钮上显示的是真正读回来的状态，不是刚想设的那个
-                setAutoStartBtn(b);
-            }, L"icon");
+        Setting::get()->setAutoStart(!Setting::get()->getAutoStart());
+        // 写注册表可能失败，按钮上显示的是真正读回来的状态，不是刚想设的那个
+        setAutoStartBtn(b);
     });
 
     auto border = makeChild<Ling::Node>();
@@ -282,6 +276,17 @@ Ling::Button* WinSettingCommon::makeSelectBtn(Ling::Node* row, float width,
     btn->setBorder(1.f, 0xE0E0E0FF);
     btn->setHoverBg(0xFFFFFFFF);
     btn->setText(items[cur]);
+    // 两项的（框选形状 / 滚动截图方向）单击即在两项间切换：按钮上的字就是当前那一项，
+    // 再弹一个只有两项的列表让用户"点开、看清、再点一次"是多余的一步。
+    // cur 用 mutable 的闭包副本记着 —— 这个按钮只建一次，副本就是它的当前状态
+    if (items.size() == 2) {
+        btn->onClick.add([btn, items, onPick, cur](Ling::Button*) mutable {
+            cur = 1 - cur;
+            btn->setText(items[cur]);
+            onPick(cur);
+        });
+        return btn;
+    }
     // items 按值进闭包：选完要拿它把按钮上的字换掉，而那时列表已经收了、调用方也不再持有它
     btn->onClick.add([this, btn, items, onPick](Ling::Button*) {
         SelectPopup::show(win, btn, items, -1, [btn, items, onPick](int idx) {
@@ -306,12 +311,11 @@ Ling::Button* WinSettingCommon::makeSwitchBtn(Ling::Node* row,
         btn->setHoverColor(on ? 0x597ef7ff : 0x666666FF);
     };
     apply(read());
-    btn->onClick.add([this, btn, read, write, apply](Ling::Button*) {
-        SelectPopup::show(win, btn, onOffItems, read() ? 1 : 0,
-            [write, apply](int idx) {
-                apply(idx == 1);
-                write(idx == 1);
-            }, L"icon");
+    // 同上：按钮本身已经显示出开关状态，单击即翻转，不必再弹一个两项列表
+    btn->onClick.add([read, write, apply](Ling::Button*) {
+        bool next = !read();
+        apply(next);
+        write(next);
     });
     return btn;
 }
