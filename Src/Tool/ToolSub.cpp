@@ -729,6 +729,19 @@ Ling::Button* ToolSub::makeSelectBtn(const std::wstring& tipKey, const std::wstr
 	btn->setBg(0);
 	btn->setHoverBg(0xF2F2F2ff);
 	tip->bind(btn, Lang::get(tipKey));
+	// 两项的（目前只有箭头样式）单击即在两项间切换：按钮上的图标就是当前是哪一项，
+	// 再弹一个只有两项的列表让用户"点开、看清、再点一次"，比直接切多两步
+	if (items.size() == 2) {
+		btn->onClick.add([this, index, items, cfgKey, btn, onPicked, refreshNumbers](Ling::Button*) {
+			*index = 1 - *index;
+			Setting::get()->setToolNum(curToolId, cfgKey, (float)*index);
+			btn->setText(items[*index]);
+			// 已经画在图上的序号跟着换样子，而不是等下一次新建才生效
+			if (refreshNumbers) win->refreshNumberShapes();
+			if (onPicked) onPicked();
+		});
+		return btn;
+	}
 	// index 与 items 捕获到 lambda 里，按钮重建时会跟着 contentNode 一起销毁，
 	// 而 ToolSub 与 WinPin 同生命周期，index 指向的成员不会先没
 	btn->onClick.add([this, index, items, cfgKey, btn, onPicked, refreshNumbers, useIconFont](Ling::Button*) {
