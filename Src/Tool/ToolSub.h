@@ -28,11 +28,17 @@ public:
 	// 文本当前的字体族名（DWrite 认的名字）。工具条还没建过字体按钮时给默认的微软雅黑 ——
 	// ShapeText 在文本工具下取它，空串会让 DWrite 退回默认字体，不如直接给个明确的
 	const std::wstring& getFontFamily() const;
-	// 给新建的序号取一个编号，并把「下一个」自增回填到输入框与配置里。
+	// 给新建的序号取一个编号，并把「下一个」自增回填到输入框。
 	// 工具条没开着也照记不误 —— 编号的进度不能依赖面板是否可见
 	int takeNumberVal();
-	// 写「下一个序号」的值（输入框与配置同步）
+	// 看一眼下一个编号是多少，不推进计数。标号工具在鼠标 hover 时预览它（见 WinPin::onMove）
+	int peekNumberVal() const { return numberNext; }
+	// 写「下一个序号」的值（输入框同步）
 	void setNumberVal(int val);
+	// 图上的编号集合变了（删掉一个序号、用 +/- 顺移过）之后调它：把「下一个编号」对齐到
+	// 图上最大号 + 1。最大的那个号被删掉时，框里要退回去而不是接着往下数，
+	// 否则下一笔会跳过刚空出来的号。用户手改过的编号不动（见 numberManual）
+	void syncNumberVal();
 
 	void hideTools();
 	bool hasContent();
@@ -115,9 +121,6 @@ private:
 	// 只在改了样式真能看出来的那些工具条上建（水印单实例且每次 paint 现取样式，不建）
 	void makeApplyAllBtn();
 	// 样式切换按钮上示例用哪个序号：取图上最大的那个编号，没有序号时用 1
-	// 图上最大编号 + 1。这是「编号」输入框没存过配置时的起头值 ——
-	// 与没有这个输入框之前的行为一致
-	int getNextNumber();
 	int getNumberSampleVal();
 	// 「编号」输入框。它是固定宽度，宽度另算进 initSize 的 extraW
 	void initNumberBox();
@@ -176,8 +179,12 @@ private:
 	int sizeBtnCount{ 0 };
 	bool sizeWithColors{ false };
 	float sizeExtraW{ 0.f };
-	// 下一个序号的编号。默认 1（首次运行），之后由 takeNumberVal 自增并落盘
+	// 下一个序号的编号。每次开始标号都回到 1，之后跟着图上最大号 + 1 走（syncNumberVal），
+	// 用户也可以在输入框里改成别的数（那一份只活在这一轮标号里）
 	int numberNext{ 1 };
+	// 这一轮的编号被用户手改过。改过之后就锁住不再跟着图上最大号走 ——
+	// 他填 11 就是要从 11 起跳，中间删掉一个号不该把这个意图冲掉
+	bool numberManual{ false };
 	// 「编号」输入框。切工具时随 contentNode 一起销毁，beginTool 里必须置空，
 	// 否则 setNumberVal 会往一个已经删掉的控件上写
 	Ling::TextBox* numberBox{ nullptr };

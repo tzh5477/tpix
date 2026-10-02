@@ -56,7 +56,7 @@ namespace {
 	}
 }
 
-ShapeNumber::ShapeNumber(Canvas* win) :ShapeBase(win), draggers{
+ShapeNumber::ShapeNumber(Canvas* win, bool preview) :ShapeBase(win), draggers{
 	D2D1::RectF(0,0,0,0),
 	D2D1::RectF(0,0,0,0),
 	D2D1::RectF(0,0,0,0) },
@@ -64,9 +64,14 @@ ShapeNumber::ShapeNumber(Canvas* win) :ShapeBase(win), draggers{
 	// 拖拽/滚轮改过之后会回写给滑块（见 ToolSub::setShapeSliderVal），所以后面新建的序号沿用同一大小，
 	// 关掉应用再打开也还是这个大小 —— 值存在 config.json 的 toolPin.number.radius 里
 	r{ win->getToolSub()->getSliderVal() },
-	// 编号取自工具条上那个输入框，取完就自增并落盘 —— 所以第一笔是 1、第二笔是 2，
-	// 连删几个再画也不会重号。想从别的数起，直接改输入框（见 ToolSub::takeNumberVal）
-	val{ win->getToolSub()->takeNumberVal() }
+	// 编号取自工具条上那个输入框，取完就自增并回填 —— 所以第一笔是 1、第二笔是 2。
+	// 想从别的数起，直接改输入框（见 ToolSub::numberNext），而每次重新进入标号工具都会回到 1。
+	// preview 那个实例不领号：它还没落下，推进计数会让真正落下的那一笔跳号
+	val{ preview ? win->getToolSub()->peekNumberVal() : win->getToolSub()->takeNumberVal() },
+	// 描述文本默认落在圆圈的右下方：转折点比圆心低 0.9r，引线就有了一段看得见的斜线。
+	// 与圆心同高的话那一段会退化成一条直线，跟"折线引线"就不是一个样子了
+	descDx{ r + descGap() },
+	descDy{ r * 0.9f }
 {
 	auto toolSub = win->getToolSub();
 	auto d2d = Ling::D2D::get();
@@ -77,6 +82,17 @@ ShapeNumber::ShapeNumber(Canvas* win) :ShapeBase(win), draggers{
 
 ShapeNumber::~ShapeNumber()
 {
+}
+
+// 鼠标还没落笔时，把"将要落下的那个编号"画在光标处。样式取工具条当前那一份，
+// 所以它就是最终效果的预演；不落进 history、也不推进计数（见 ctor 的 preview）
+void ShapeNumber::previewAt(const float x, const float y, const int previewVal)
+{
+	val = previewVal;
+	cx = x;
+	cy = y;
+	// applyStyle 会把颜色 / 外圈取一遍再按新位置重建几何与文字，一次到位
+	applyStyle();
 }
 
 std::wstring ShapeNumber::serializeVal(const int val, const NumStyle style)
@@ -111,7 +127,8 @@ void ShapeNumber::applyStyle()
 
 std::wstring ShapeNumber::displayText()
 {
-	return customText.empty() ? serializeVal(val, numStyle) : customText;
+	// 圆圈里只放编号本身。描述文本另排一份 layout 摆在圆圈外面（见 paintDesc）
+	return serializeVal(val, numStyle);
 }
 
 // 把序号排到 2r × 2r 的方框里居中，字号取 r（直径的一半），刚好填满圆
@@ -125,6 +142,10 @@ void ShapeNumber::makeTextLayout()
 	layoutText->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
 	layoutText->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
 	layoutText->SetFontSize(r, { 0, (UINT32)text.length() });
+	// 描述文本：它排在圆圈外面，宽度不设限（画多宽由文字自己决定，横线按它的实际宽度画），
+	// 字号与编号同大。空描述就没有这一份
+	layoutDesc.Reset();
+	if (!customText.empty()) layoutDesc = Ling::D2D::makeTextLayout(customText, r);
 }
 
 void ShapeNumber::paint(ID2D1DeviceContext* ctx)
@@ -144,82 +165,177 @@ void ShapeNumber::paint(ID2D1DeviceContext* ctx)
 	}
 	ctx->DrawTextLayout({ cx - r,cy - r }, layoutText.Get(),
 		hasFill ? brushText.Get() : brush.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
+	paintDesc(ctx);
+}
+
+// 描述文本的引线：圆周 -> 斜线 -> 转折点 -> 横线（文字压在横线上）。
+// 以前是一条直线从圆周直接连到文字末端，线正好从文字身上穿过去，字和线糊在一起
+void ShapeNumber::paintDesc(ID2D1DeviceContext* ctx)
+{
+	if (!layoutDesc) return;
+	// 编辑中整段引线都不画：文字此刻由 TextBox 自己那一层画，引线还挂在老位置上
+	// 会从输入框底下穿过去，看着像把输入框划了一道（用户要求：编辑完才显示折线）
+	if (isEditing) return;
+	DWRITE_TEXT_METRICS metrics{};
+	layoutDesc->GetMetrics(&metrics);
+	auto joint = descJoint();
+	auto textX{ descTextX(metrics.width) };
+	auto farX{ descLineFar(metrics.width) };
+	// 斜线的起点取圆周上朝着转折点的那一点，线因此从圆边出发、不会插进圈里
+	auto dx{ joint.x - cx }, dy{ joint.y - cy };
+	auto len{ sqrtf(dx * dx + dy * dy) };
+	D2D1_POINT_2F from{ cx, cy };
+	if (len > 0.001f) {
+		from.x += dx / len * r;
+		from.y += dy / len * r;
+	}
+	ctx->DrawLine(from, joint, brush.Get(), win->getDpi());
+	ctx->DrawLine(joint, D2D1::Point2F(farX, joint.y), brush.Get(), win->getDpi());
+	ctx->DrawTextLayout({ textX, joint.y - metrics.height }, layoutDesc.Get(), brush.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
+}
+
+float ShapeNumber::descTextX(float textW) const
+{
+	// 落点在圆心右侧：文字排在转折点右边；拖到左侧就整段翻过去，连横线一起镜像
+	return descDx >= 0.f ? cx + descDx + descLead() : cx + descDx - descLead() - textW;
+}
+
+float ShapeNumber::descLineFar(float textW) const
+{
+	// 横线末端从文字再往外伸一个 descLead：文字两侧都压在线上，看着才像"压在一条引线上"
+	return descDx >= 0.f ? descTextX(textW) + textW + descLead() : descTextX(textW) - descLead();
+}
+
+D2D1_POINT_2F ShapeNumber::descTextPos() const
+{
+	DWRITE_TEXT_METRICS metrics{};
+	if (layoutDesc) layoutDesc->GetMetrics(&metrics);
+	// 还没写描述（第一次按 A）时量不到高度，按字号估一行 —— 否则输入框会落在比文字
+	// 低一行的地方，敲下第一个字才跳到最终位置
+	else metrics.height = r;
+	return D2D1::Point2F(descTextX(metrics.width), descJoint().y - metrics.height);
+}
+
+D2D1_RECT_F ShapeNumber::descHandleRect() const
+{
+	auto half{ draggerSize / 2 };
+	auto joint = descJoint();
+	// 抓手摆在转折点上：那儿既不在文字里、也不在圈里，任何长度 / 任何一侧都点得到
+	return D2D1::RectF(joint.x - half, joint.y - half, joint.x + half, joint.y + half);
+}
+
+D2D1_RECT_F ShapeNumber::descTextRect() const
+{
+	DWRITE_TEXT_METRICS metrics{};
+	if (layoutDesc) layoutDesc->GetMetrics(&metrics);
+	auto pos = descTextPos();
+	// 四周各放 2px 余量：贴着字形边缘点很难一次点中
+	return D2D1::RectF(pos.x - 2.f, pos.y - 2.f, pos.x + metrics.width + 2.f, pos.y + metrics.height + 2.f);
 }
 
 void ShapeNumber::paintDragger(ID2D1DeviceContext* ctx)
 {
 	if (isWheel) return;
-	// 无尾的样式没有"指向"可言，tip / mid 那两个控制点也就不该出现 —— 只剩圆心能拖
-	for (size_t i = 0; i < draggers.size(); i++)
-	{
-		if (i > 0 && !hasTail()) break;
+	// 圆心那个控制点不画：它正好压在数字上，选中时把编号挡得看不清。
+	// 徽章本身照样能拖 —— 命中判定还在 draggers[0] 上（见 mouseMove），
+	// 选中与否由圆圈外那几个动作按钮显示
+	if (hasTail()) {
+		// 无尾的样式没有"指向"可言（见 hasTail），只有带尾的才有那两个控制点。
 		// 选中的填白、悬停的留空：光标掠过一串元素时能分出改样式会作用到谁。
 		// 先填后描：描边是压在矩形边线中线上的，先描再填会把内半边盖掉，线看着只剩外半截
-		if (win->selected == this) ctx->FillRectangle(draggers[i], brushDraggerFill.Get());
-		ctx->DrawRectangle(draggers[i], brushDragger.Get(), win->getDpi());
+		for (size_t i = 1; i <= 2; i++) {
+			if (win->selected == this) ctx->FillRectangle(draggers[i], brushDraggerFill.Get());
+			ctx->DrawRectangle(draggers[i], brushDragger.Get(), win->getDpi());
+		}
 	}
-	// 编号的 + / − 两个小按钮。paintDragger 只会为选中或悬停的序号调用（见 WinPin::layout），
+	// 描述文本落点的控制点：没写描述就没有可拖的东西
+	if (layoutDesc) {
+		auto handle = descHandleRect();
+		if (win->selected == this) ctx->FillRectangle(handle, brushDraggerFill.Get());
+		ctx->DrawRectangle(handle, brushDragger.Get(), win->getDpi());
+	}
+	// 圆圈外那四个动作按钮。paintDragger 只会为选中或悬停的序号调用（见 WinPin::layout），
 	// 所以走到这儿就说明该显示它们
-	paintValueBtn(ctx, valuePlus, true);
-	paintValueBtn(ctx, valueMinus, false);
+	paintOpBtn(ctx, valuePlus, OpBtn::Plus);
+	paintOpBtn(ctx, valueMinus, OpBtn::Minus);
+	paintOpBtn(ctx, valueRemove, OpBtn::Remove);
+	paintOpBtn(ctx, valueText, OpBtn::Text);
 }
 
 void ShapeNumber::updateValueBtns()
 {
-	// 恒在徽章左边、与圆心同高，不跟着 angle 转 —— 它们是"点这里改编号"的按钮，
-	// 不是指向图上的某个位置，转了反而不知道该点哪儿。半径取 0.45r：
-	// 再大就把旁边的标注压住了，再小又点不准
+	// 四个按钮摆在圆圈外的四个斜角上，恒不跟着 angle 转 —— 它们是"点这里改这个号"的动作，
+	// 不是指向图上的某个位置，转了反而不知道该点哪儿（pixpin 也是这么摆的）。
+	// 半径取 0.45r：再大就把旁边的标注压住了，再小又点不准
 	auto btnR{ r * 0.45f };
 	auto gap{ btnR * 0.5f };
-	// 从右往左排：+ 挨着徽章，− 再往左一个直径
-	auto plusX{ cx - r - gap - btnR };
-	auto minusX{ plusX - btnR * 2.f - gap };
-	valuePlus = D2D1::RectF(plusX - btnR, cy - btnR, plusX + btnR, cy + btnR);
-	valueMinus = D2D1::RectF(minusX - btnR, cy - btnR, minusX + btnR, cy + btnR);
+	auto box = [btnR](float px, float py) {
+		return D2D1::RectF(px - btnR, py - btnR, px + btnR, py + btnR);
+	};
+	// 中心到按钮中心的距离：斜向走 (r + btnR + gap) 正好让按钮贴在圆周外
+	auto d{ (r + btnR + gap) * 0.70710678f };
+	valuePlus = box(cx - d, cy - d);      // 左上：编号 +1
+	valueMinus = box(cx - d, cy + d);     // 左下：编号 −1
+	valueRemove = box(cx + d, cy - d);    // 右上：删掉这个编号
+	valueText = box(cx + d, cy + d);      // 右下：加一段描述文本
 }
 
-void ShapeNumber::paintValueBtn(ID2D1DeviceContext* ctx, const D2D1_RECT_F& box, bool plus)
+void ShapeNumber::paintOpBtn(ID2D1DeviceContext* ctx, const D2D1_RECT_F& box, OpBtn kind)
 {
 	auto c = D2D1::Point2F((box.left + box.right) / 2.f, (box.top + box.bottom) / 2.f);
 	auto rad{ (box.right - box.left) / 2.f };
 	// 先垫一层白圆再描边：按钮是直接压在底图上的，没有这层会和底图糊在一起
 	ctx->FillEllipse(D2D1::Ellipse(c, rad, rad), brushDraggerFill.Get());
 	ctx->DrawEllipse(D2D1::Ellipse(c, rad, rad), brushDragger.Get(), win->getDpi());
-	// 横线恒有，+ 再加一条竖线。线宽取控制点那个尺度
+	// 线宽取控制点那个尺度。+ / − / × 都在圆里用线画，只有 A 是字形
 	auto arm{ rad * 0.55f };
 	auto stroke{ draggerSize * 0.15f };
-	ctx->DrawLine({ c.x - arm, c.y }, { c.x + arm, c.y }, brushDragger.Get(), stroke);
-	if (plus) ctx->DrawLine({ c.x, c.y - arm }, { c.x, c.y + arm }, brushDragger.Get(), stroke);
+	if (kind == OpBtn::Text) {
+		// 字号取按钮直径的 0.7，字形不随半径变就复用上一份
+		auto fontSize{ rad * 1.4f };
+		if (!layoutBtnText || btnTextSize != fontSize) {
+			btnTextSize = fontSize;
+			layoutBtnText = Ling::D2D::makeTextLayout(L"A", fontSize, rad * 2, rad * 2);
+			layoutBtnText->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+			layoutBtnText->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+		}
+		ctx->DrawTextLayout({ c.x - rad, c.y - rad }, layoutBtnText.Get(), brushDragger.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
+		return;
+	}
+	if (kind == OpBtn::Plus || kind == OpBtn::Minus) {
+		// 横线恒有，+ 再加一条竖线
+		ctx->DrawLine({ c.x - arm, c.y }, { c.x + arm, c.y }, brushDragger.Get(), stroke);
+		if (kind == OpBtn::Plus) ctx->DrawLine({ c.x, c.y - arm }, { c.x, c.y + arm }, brushDragger.Get(), stroke);
+	}
+	else {
+		// × 就是"+"转 45 度，即两条斜线
+		auto k{ arm * 0.70710678f };
+		ctx->DrawLine({ c.x - k, c.y - k }, { c.x + k, c.y + k }, brushDragger.Get(), stroke);
+		ctx->DrawLine({ c.x - k, c.y + k }, { c.x + k, c.y - k }, brushDragger.Get(), stroke);
+	}
 }
 
+// 编号加减：本号走一格，比它大的编号全部跟着走一格。
+// 于是"在中间插一个号 / 撤掉一个号"之后，后面的编号仍是一段连续的 —— 与 pixpin 一致。
+// 不能用"撞号就顶"那套写法：减号方向上顶来顶去还是原来的组合，等于空转
 void ShapeNumber::bumpVal(int delta)
 {
 	auto next = val + delta;
 	if (next < 1) return;
-	setValAndPush(next);
-	// 级联会动到别的序号的数字，它们的 layout 也得重建
+	auto from = val;
 	for (auto& shape : win->history->shapes)
 	{
 		auto number = dynamic_cast<ShapeNumber*>(shape.get());
-		if (number && !number->isUndo) number->makeTextLayout();
+		if (!number || number->isUndo) continue;
+		if (number == this) number->val = next;
+		else if (number->val > from) number->val += delta;
+		// 编号变了，文字跟着重排（后面的编号在这个循环里也是一个个就地改完再排的）
+		number->makeTextLayout();
 	}
+	// 顺移会动到"最大的那个号"：往下减时最大号也跟着退一格，工具条上那个待用编号要跟着退，
+	// 否则下一笔会跳过刚空出来的号（见 ToolSub::syncNumberVal）
+	win->getToolSub()->syncNumberVal();
 	win->refresh();
-}
-
-void ShapeNumber::setValAndPush(const int newVal)
-{
-	val = newVal;
-	ShapeNumber* conflict{ nullptr };
-	for (auto& shape : win->history->shapes)
-	{
-		auto number = dynamic_cast<ShapeNumber*>(shape.get());
-		if (number && number != this && !number->isUndo && number->val == val) {
-			conflict = number;
-			break;
-		}
-	}
-	// 撞号的那个顶到新值的下一位；它再撞上别的就继续顶，直到全表不重号
-	if (conflict) conflict->setValAndPush(newVal + 1);
 }
 
 void ShapeNumber::onKey(UINT key)
@@ -239,8 +355,17 @@ void ShapeNumber::onKey(UINT key)
 
 void ShapeNumber::mouseDrag(const float x, const float y)
 {
-	// 加减按钮是一下就见效的动作，没有可拖的东西
-	if (hoverDraggerIndex == 3 || hoverDraggerIndex == 4) return;
+	// 描述文本的落点可以随便拖：横线从圆周指向它，文字仍压在横线上（见 paintDesc）。
+	// 几何不依赖它，所以不用重排，画的时候按新偏移现算
+	if (hoverDraggerIndex == HitDesc) {
+		descDx += x - pressX;
+		descDy += y - pressY;
+		pressX = x;
+		pressY = y;
+		return;
+	}
+	// 动作按钮是一下就见效的动作，没有可拖的东西
+	if (hoverDraggerIndex >= HitPlus) return;
 	if (hoverDraggerIndex == 0) {
 		auto spanX{ x - pressX };
 		auto spanY{ y - pressY };
@@ -269,10 +394,22 @@ void ShapeNumber::mouseDrag(const float x, const float y)
 
 void ShapeNumber::mouseDown(const float x, const float y)
 {
-	// 加减按钮按下即改编号，不进拖拽：它没有"拖大拖小"的语义，
-	// 一旦走进下面那条分支就会把 pressX/pressY 记下来，鼠标一动编号按钮跟着飘
-	if (hoverDraggerIndex == 3 || hoverDraggerIndex == 4) {
-		bumpVal(hoverDraggerIndex == 3 ? 1 : -1);
+	// 四个动作按钮按下即生效，不进拖拽：它们没有"拖大拖小"的语义，
+	// 一旦走进下面那条分支就会把 pressX/pressY 记下来，鼠标一动按钮跟着飘。
+	// 描述文本的落点是可拖的（HitDesc），要放它过去记按下点
+	if (hoverDraggerIndex >= HitPlus && hoverDraggerIndex != HitDesc) {
+		switch (hoverDraggerIndex) {
+		case HitPlus: bumpVal(1); break;
+		case HitMinus: bumpVal(-1); break;
+		case HitRemove:
+			// 不能在这儿直接删 —— 本函数正是从这个 shape 自己的回调里调进来的，
+			// 删了后面还要用 this。排到消息队列下一轮回调里删（同 ShapeText::finishEdit）
+			Ling::App::get()->dq.TryEnqueue([w = win, self = this]() {
+				w->history->removeShape(self);
+			});
+			break;
+		case HitText: startEdit(); break;
+		}
 		return;
 	}
 	if (hoverDraggerIndex == -1) { //首次创建
@@ -313,15 +450,32 @@ void ShapeNumber::mouseUp(const float x, const float y)
 void ShapeNumber::mouseMove(const float x, const float y)
 {
 	hoverDraggerIndex = -1;
-	// 加减按钮在徽章外面，先判它们；没命中再看那几个控制点。
+	// 动作按钮与描述落点都在圆圈外面，先判它们；没命中再看那几个几何控制点。
 	// tip / mid 只有带尾的样式才有（见 hasTail），无尾时它们不参与命中
 	if (isInRect(valuePlus, x, y))
 	{
-		hoverDraggerIndex = 3;
+		hoverDraggerIndex = HitPlus;
 	}
 	else if (isInRect(valueMinus, x, y))
 	{
-		hoverDraggerIndex = 4;
+		hoverDraggerIndex = HitMinus;
+	}
+	else if (isInRect(valueRemove, x, y))
+	{
+		hoverDraggerIndex = HitRemove;
+	}
+	else if (isInRect(valueText, x, y))
+	{
+		hoverDraggerIndex = HitText;
+	}
+	else if (layoutDesc && isInRect(descTextRect(), x, y))
+	{
+		// 点描述文字本身就是"改这段话"：与按 A / F2 同一条路
+		hoverDraggerIndex = HitText;
+	}
+	else if (layoutDesc && isInRect(descHandleRect(), x, y))
+	{
+		hoverDraggerIndex = HitDesc;
 	}
 	else if (isInRect(draggers[0], x, y))
 	{
@@ -360,8 +514,8 @@ void ShapeNumber::mouseWheel(const float x, const float y, const short delta)
 
 void ShapeNumber::setCursor()
 {
-	// 加减按钮是"点一下"的，给手型；其余控制点都是"拖"的，给四向箭头
-	if (hoverDraggerIndex == 3 || hoverDraggerIndex == 4) {
+	// 动作按钮是"点一下"的，给手型；其余控制点都是"拖"的，给四向箭头
+	if (hoverDraggerIndex >= HitPlus) {
 		SetCursor(LoadCursor(nullptr, IDC_HAND));
 	}
 	else if (hoverDraggerIndex >= 0) {
@@ -466,9 +620,11 @@ void ShapeNumber::startEdit()
 	auto tb = win->getTextBox();
 	auto d = win->getDpi();
 	auto s = win->getScale();
-	// tb 的位置与字号收逻辑像素，而 cx/cy/r 都是底图上的物理像素，中间隔着缩放与 dpi 两个换算
-	tb->setPosition(Ling::Edge::Left, (cx - r) * s / d);
-	tb->setPosition(Ling::Edge::Top, (cy - r) * s / d);
+	// tb 的位置与字号收逻辑像素，而 cx/cy/r 都是底图上的物理像素，中间隔着缩放与 dpi 两个换算。
+	// 框就落在描述文本该出现的地方（圆圈右侧那条横线的末端），敲进去的字与收工后画出来的位置一致
+	auto pos = descTextPos();
+	tb->setPosition(Ling::Edge::Left, pos.x * s / d);
+	tb->setPosition(Ling::Edge::Top, pos.y * s / d);
 	tb->setFontSize(r * s / d);
 	tb->setColor(Ling::Color(colorValue));
 	tb->setCaretColor(Ling::Color(colorValue));

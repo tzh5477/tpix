@@ -360,24 +360,13 @@ Ling::Button* ToolSub::makeFontBtn()
 	});
 	return btn;
 }
-int ToolSub::getNextNumber()
-{
-	int maxVal{ 0 };
-	for (auto& shape : win->getHistory()->shapes) {
-		auto number = dynamic_cast<ShapeNumber*>(shape.get());
-		if (number && !number->isUndo && number->val > maxVal) {
-			maxVal = number->val;
-		}
-	}
-	return maxVal + 1;
-}
-
 
 void ToolSub::initNumberBox()
 {
-	// 没存过配置就从「图上最大编号 + 1」起头，与没有这个输入框之前的行为一致。
-	// 存过就一直用存的那个往下数（用户手工改过开始值的情形）
-	numberNext = std::clamp((int)Setting::get()->getToolNum(L"number", L"next", (float)getNextNumber()), 1, 9999);
+	// 每次进入标号工具都从 1 起。以前这里是"接着上一次的号往下数"，于是新开一轮标号
+	// 会莫名其妙从 7 开始；想从别的数起，直接改这个输入框 —— 那一份只活在这一轮里
+	numberNext = 1;
+	numberManual = false;
 	auto box = contentNode->makeChild<Ling::TextBox>();
 	box->setHeight(btnSize - 2.5);
 	box->setWidth(numberBoxW);
@@ -399,6 +388,8 @@ void ToolSub::initNumberBox()
 			numberBoxSilent = false;
 			return;
 		}
+		// 这是用户手改的：从此锁住，不再跟着图上最大号回写（见 syncNumberVal）
+		numberManual = true;
 		setNumberVal(parsed);
 	});
 }
@@ -406,15 +397,28 @@ void ToolSub::initNumberBox()
 int ToolSub::takeNumberVal()
 {
 	auto val = numberNext > 0 ? numberNext : 1;
+	// 领走一个号之后就不再算"手改值"了：接着按图上最大号 + 1 往下走
+	numberManual = false;
 	setNumberVal(val + 1);
 	return val;
+}
+
+void ToolSub::syncNumberVal()
+{
+	// 手改过就不动它：他填 11 就是要从 11 起跳
+	if (numberManual) return;
+	int maxVal{ 0 };
+	for (auto& shape : win->getHistory()->shapes) {
+		auto number = dynamic_cast<ShapeNumber*>(shape.get());
+		if (number && !number->isUndo && number->val > maxVal) maxVal = number->val;
+	}
+	setNumberVal(maxVal + 1);
 }
 
 void ToolSub::setNumberVal(int val)
 {
 	numberNext = std::clamp(val, 1, 9999);
-	Setting::get()->setToolNum(L"number", L"next", (float)numberNext);
-	// 输入框可能没建（当前不是序号工具），此时只更新成员与配置
+	// 输入框可能没建（当前不是序号工具），此时只更新成员
 	if (!numberBox) return;
 	// setText 也会触发 onTextChanged，回填时要挡掉，否则会被当成用户改的再解析一遍
 	numberBoxSilent = true;

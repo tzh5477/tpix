@@ -151,6 +151,9 @@ void History::removeShape(ShapeBase* target)
 			canvas->shapeHover = nullptr;
             canvas->selected = nullptr;
             shapes.erase(it);
+            // 删掉的可能是当前最大的那个编号，工具条上那个待用编号要跟着退回上一格 ——
+            // 否则下一笔会跳过刚空出来的号（见 ToolSub::syncNumberVal）
+            if (auto toolSub = canvas->getToolSub()) toolSub->syncNumberVal();
             canvas->refresh();
             return;
         }

@@ -552,6 +552,29 @@ bool WinPin::hasDrawTool() const
 	return toolMain && !toolMain->curId.empty() && toolMain->curId != L"pin";
 }
 
+void WinPin::updateNumberPreview(const POINT& imgPos)
+{
+	// 只在标号工具下预览，而且只预览"落在空白处"的那一下 —— 光标压在已有元素上时，
+	// 这一下是选中它（见 onDown），预览一个将要落下的号会误导
+	auto sz = drawing->getImgSize();
+	if (toolMain->curId != L"number" || imgPos.x < 0 || imgPos.y < 0
+		|| imgPos.x >= (LONG)sz.width || imgPos.y >= (LONG)sz.height) {
+		hideNumberPreview();
+		return;
+	}
+	if (!numberPreview) numberPreview = std::make_unique<ShapeNumber>(drawing.get(), true);
+	numberPreview->previewAt((float)imgPos.x, (float)imgPos.y, toolSub->peekNumberVal());
+	numberPreviewOn = true;
+	refresh();
+}
+
+void WinPin::hideNumberPreview()
+{
+	if (!numberPreviewOn) return;
+	numberPreviewOn = false;
+	refresh();
+}
+
 void WinPin::setPinTitle(const std::wstring& t)
 {
 	pinTitle = t;
@@ -710,6 +733,11 @@ void WinPin::layout()
 			shape->paint(ctx);
 		}
 	}
+	// 标号工具的 hover 预览压在标注上面：它是"马上要落下的这一笔"，本来就不该被别的元素盖住。
+	// 缩略图 / 细条态下不画 —— 那时候的变换与光标位置对不上
+	if (numberPreviewOn && numberPreview && !isThumb && !isMinimized) {
+		numberPreview->paint(ctx);
+	}
 	// 手柄是"这里能拖动"的提示，所以悬停的那个要画；选中的那个画得更重（实心），
 	// 好让人看得出改样式会作用到谁。两者同时指着一个元素时只画一次
 	if (!isMouseDown) {
@@ -759,6 +787,9 @@ void WinPin::onDown(POINT pos, BOOL isRight)
 	// 编辑文本时，落在文本框里的点击整个交给 TextBox（它自己订阅了窗口的鼠标事件）。
 	// 这里不能抢先 SetCapture / 置 isMouseDown，否则拖选文本会被当成拖 shape。
 	if (editingShape && textBox && textBox->isPosIn(pos)) return;
+	// 图上有一下真实的点击了：预览的那个"将要落下的号"该让位给真的那一笔
+	// （右键收起工具条、双击导出也一样，这会儿图上不该再飘着一个影子）
+	hideNumberPreview();
 	if (isRight) {
 		// 右键在"有工具条"和"只剩图"这两个状态之间来回切。
 		// 藏着的时候（上一次右键收起来的）就把它请回来。位置先重排一遍：
@@ -861,7 +892,11 @@ void WinPin::onMove(POINT pos)
 	}
 	else
 	{
-		if (!hasDrawTool()) return;
+		if (!hasDrawTool()) {
+			// 画笔被收起来了（右键 / 关掉工具），预览也要跟着收
+			hideNumberPreview();
+			return;
+		}
 		int i{ (int)(drawing->history->shapes.size() - 1) };
 		for (; i >= 0; i--)
 		{
@@ -874,12 +909,15 @@ void WinPin::onMove(POINT pos)
 					setTimer(800, 100);
 					refresh();
 				}
+				// 落在已有元素上，这一下是选中它：没有"将要落下的号"可预览
+				hideNumberPreview();
 				return;
 			}
 		}
 		if (drawing->shapeHover) {
 			drawing->shapeHover = nullptr;
 		}
+		updateNumberPreview(imgPos);
 	}
 }
 
@@ -1291,6 +1329,11 @@ BOOL WinPin::setCursor()
 	}
 	if (toolMain->curId == L"text") {
 		SetCursor(LoadCursor(nullptr, IDC_IBEAM));
+	}
+	else if (toolMain->curId == L"number") {
+		// 标号落笔前会在光标处画一个"将要落下的编号"预览，十字光标正好压在它身上、
+		// 把编号挡得看不清 —— 改回普通箭头，预览就是这一步唯一的位置提示
+		SetCursor(LoadCursor(nullptr, IDC_ARROW));
 	}
 	else {
 		SetCursor(LoadCursor(nullptr, IDC_CROSS));

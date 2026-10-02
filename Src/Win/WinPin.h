@@ -8,6 +8,7 @@ class ToolMain;
 class ToolSub;
 class ShapeBase;
 class ShapeText;
+class ShapeNumber;
 class History;
 class Canvas;
 class WinPin : public Ling::WinBase, public CanvasHost
@@ -113,6 +114,10 @@ private:
 	// pin（只开着贴图属性面板）都画不了 —— 这两种状态下左键该拖动贴图本身，
 	// 而不是当成画笔落笔，否则选过一次贴图属性后整张图就拖不动了
 	bool hasDrawTool() const;
+	// 标号工具的 hover 预览。鼠标还停在图上时，先在光标处画一个"将要落下的编号"，
+	// 落笔之前就看得见号是多少（参考 pixpin）。预览实例不进 history、也不占号
+	void updateNumberPreview(const POINT& imgPos);
+	void hideNumberPreview();
 	BOOL setCursor() override;
 	// 离屏合成出最终图像的像素（BGRA、top-down、行步长紧凑为 size.width*4）。
 	// 只画底图和未撤销的 shape，不含蓝色边框和夹点。
@@ -181,6 +186,11 @@ private:
 	// 鼠标事件、以及所有键盘事件都归 TextBox，WinPin 自己的那套要让路。
 	Ling::TextBox* textBox{ nullptr };
 	ShapeBase* editingShape{ nullptr };
+	// 标号工具的 hover 预览。它是独立的一份 ShapeNumber，既不进 history 也不占号 ——
+	// 放进 history 会被 undo / 导出 / 各种全量遍历当成一个真的标注。
+	// 只在鼠标停在图上、且没落在别的元素上时显示（见 updateNumberPreview）
+	std::unique_ptr<ShapeNumber> numberPreview;
+	bool numberPreviewOn{ false };
 	Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> borderBrush;
 	// 右上角的倍数提示。非空即显示，缩放停手一会儿由定时器清掉
 	Microsoft::WRL::ComPtr<IDWriteTextLayout> scaleTip;

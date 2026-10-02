@@ -14,7 +14,7 @@ public:
 	virtual void mouseUp(const float x, const float y) {};
 	virtual void mouseWheel(const float x, const float y, const short delta) {};
 	virtual void setCursor() {};
-	// 选中态下的按键。目前只有序号用它（+/- 改编号、F2 编辑序号里的文字）
+	// 选中态下的按键。目前只有序号用它（+/- 改编号、F2 编辑追加的描述文本）
 	virtual void onKey(UINT key) {};
 	// 编辑态收尾。Canvas 导出图片前、History 删掉 shape 前都会调，
 	// 只有会进编辑态的元素（ShapeText / ShapeNumber）实现，其余留空
