@@ -466,6 +466,15 @@ void ShapeNumber::mouseUp(const float x, const float y)
 	draggers[2].bottom = mid.y + half;
 }
 
+bool ShapeNumber::hitInside(const float x, const float y) const
+{
+	// 编号文字排在 2r×2r 的方框里（见 makeTextLayout），外圈也正好是这个方框的内切圆 ——
+	// 所以这一个方框同时是"文字的范围"和"圈的范围"。再往外让半个控制点，
+	// 鼠标压在圈线上也该算数
+	auto pad{ draggerSize * 0.5f };
+	return x >= cx - r - pad && x <= cx + r + pad && y >= cy - r - pad && y <= cy + r + pad;
+}
+
 void ShapeNumber::mouseMove(const float x, const float y)
 {
 	hoverDraggerIndex = -1;
@@ -496,7 +505,9 @@ void ShapeNumber::mouseMove(const float x, const float y)
 	{
 		hoverDraggerIndex = HitDesc;
 	}
-	else if (isInRect(draggers[0], x, y))
+	// 圈 / 方块内部整片都算命中：直接问 hitInside，不再只认圆心那一个小方框 ——
+	// 圈画得挺大却非得点正中心才选得中的问题就在这儿
+	else if (hitInside(x, y))
 	{
 		hoverDraggerIndex = 0;
 	}

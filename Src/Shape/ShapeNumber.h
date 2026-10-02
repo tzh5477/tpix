@@ -82,6 +82,9 @@ private:
 	// 见 startEdit 里的说明 —— 只留输入框本身的话，开启编辑的那一下点击会被
 	// TextBox 当成"点在框外"，刚打开的编辑器当场就被关掉
 	D2D1_RECT_F editHitRect() const;
+	// 圈 / 方块内部是否命中。以前只有圆心那个小方框算数，圈画得挺大却非得点正中心
+	// 才选得中（用户反馈"很难选中历史标号"）
+	bool hitInside(const float x, const float y) const;
 	// 圆心到转折点的默认距离
 	float descGap() const { return r * 0.35f; }
 	// 转折点到文字、以及横线末端伸出去的那一段余量
