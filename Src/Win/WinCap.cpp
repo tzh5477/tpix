@@ -439,6 +439,25 @@ LRESULT WinCap::onHitTest(const POINT pos)
     return HTCLIENT;
 }
 
+void WinCap::refreshNow()
+{
+    if (!hwnd) return;
+    refresh();
+    UpdateWindow(hwnd);
+}
+
+void WinCap::captureMouse()
+{
+    if (!hwnd || GetCapture() == hwnd) return;
+    SetCapture(hwnd);
+}
+
+void WinCap::releaseMouse()
+{
+    if (!hwnd || GetCapture() != hwnd) return;
+    ReleaseCapture();
+}
+
 void WinCap::onDown(POINT pos, bool isRight)
 {
     if (isRight) {
@@ -460,6 +479,7 @@ void WinCap::onDown(POINT pos, bool isRight)
     }
     if (stage == CapStage::Select) {
         isPress = true;
+        captureMouse();
         // 手绘（自由多边形）选区：设置里选了它就是常态，临时想要，按住 Alt 拖一下也一样
         isPolyDrag = Setting::get()->getCapShape() == 1 || (GetKeyState(VK_MENU) & 0x8000) != 0;
         if (isPolyDrag) cutMask->startPoly(pos);
@@ -468,6 +488,7 @@ void WinCap::onDown(POINT pos, bool isRight)
     else if (stage == CapStage::Adjust) {
         // 选区外面按下不是重新框选，而是按落点所在的那一块调对应的边或角
         isPress = true;
+        captureMouse();
         cutMask->startAdjust(pos);
         relayoutToolCap();
     }
@@ -479,12 +500,14 @@ void WinCap::onMove(POINT pos)
         if (isPress) {
             if (isPolyDrag) cutMask->addPolyPoint(pos);
             else cutMask->makeRect(pos);
+            // 拖动中当场出帧：靠 WM_PAINT 排队的话它会被后来的鼠标消息一直挤到后面
+            refreshNow();
         }
         else {
             cutMask->highlight(pos);
             getPixImg(pos);
             setPixPos(pos);
-            refresh();
+            refreshNow();
         }
     }
     else if (stage == CapStage::Adjust) {
@@ -492,6 +515,7 @@ void WinCap::onMove(POINT pos)
         cutMask->adjust(pos);
         // 选区变了，工具条跟着走位
         relayoutToolCap();
+        refreshNow();
     }
     else if (stage == CapStage::Long && capLong) {
         capLong->onMove(pos);
@@ -500,6 +524,7 @@ void WinCap::onMove(POINT pos)
 
 void WinCap::onUp(POINT pos, bool isRight)
 {
+    releaseMouse();
     if (stage == CapStage::Select) {
         isPress = false;
         if (isPolyDrag) {
@@ -661,6 +686,9 @@ void WinCap::layoutTool(Ling::WinBase* tool)
     // 兜底：不越出所在显示器工作区
     if (toolX < mi.rcWork.left) toolX = mi.rcWork.left;
     if (toolX + toolW > mi.rcWork.right) toolX = mi.rcWork.right - toolW;
+    // 位置没变就别动它：调选区时本函数每个鼠标事件都跑一遍，而 SetWindowPos 是同步打进
+    // 窗口管理器的，白调一次就是白等一次。拖上边 / 左边时工具条挂在右下角，压根不该动
+    if (tool->x == toolX && tool->y == toolY) return;
     tool->setPosition(toolX, toolY);
 }
 
@@ -697,6 +725,9 @@ void WinCap::layoutToolSide(Ling::WinBase* tool)
     if (toolY + toolH > mi.rcWork.bottom) toolY = mi.rcWork.bottom - toolH;
     if (toolX < mi.rcWork.left) toolX = mi.rcWork.left;
     if (toolX + toolW > mi.rcWork.right) toolX = mi.rcWork.right - toolW;
+    // 同 layoutTool：位置没变就不惊动窗口管理器。这条竖排工具条挂在选区右边、
+    // 顶边与选区对齐，拖选区左右两边时它每个鼠标事件都要挪一次，是拖动中开销最大的一处
+    if (tool->x == toolX && tool->y == toolY) return;
     tool->setPosition(toolX, toolY);
 }
 

@@ -80,6 +80,15 @@ private:
 	void onDown(POINT pos, bool isRight);
 	void onMove(POINT pos);
 	void onUp(POINT pos, bool isRight);
+	// 拖框 / 调选区期间用：InvalidateRect 之后紧接着 UpdateWindow，把这一帧当场逼出来。
+	// WM_PAINT 在 GetMessage 里的优先级排在鼠标输入之后，鼠标一动就又先来一条 WM_MOUSEMOVE，
+	// 于是连续拖动时 WM_PAINT 一直排不上号，选区要等鼠标停住才更新 —— 就是那个"迟滞感"。
+	// UpdateWindow 绕开排队直接发 WM_PAINT，每个鼠标事件一帧，既不积压也不滞后
+	void refreshNow();
+	// 拖动期间抓住鼠标：光标掠过挂在选区边上的工具条时，WM_MOUSEMOVE 会进工具条而不是本窗口，
+	// 选区就卡在原地不动了，等光标离开工具条才猛地跳过来 —— 顿挫感的一半来自这里
+	void captureMouse();
+	void releaseMouse();
 	void onClosed();
 	void makeToolCap();
 	// 两个工具条（下方横排 + 右侧竖排）一起按当前选区重新定位。
