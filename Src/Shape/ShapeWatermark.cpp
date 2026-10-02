@@ -82,9 +82,8 @@ void ShapeWatermark::drawOne(ID2D1DeviceContext* ctx, float x, float y, float ro
 void ShapeWatermark::paint(ID2D1DeviceContext* ctx)
 {
 	if (!makeLayout()) return;
-	// 不走 win->getImgSize()，直接问底图要尺寸 —— 平铺范围就是整张底图
-	if (!win->screenImg) return;
-	auto sz = win->screenImg->GetSize();
+	// 直接问底图要像素尺寸（不是 GetSize —— 那个按位图自身 dpi 折过）。平铺范围就是整张底图
+	auto sz = win->getImgSize();
 	if (sz.width == 0 || sz.height == 0) return;
 	auto rotation = win->getToolSub()->getWatermarkRotation();
 	// 屏幕绘制时外层是缩放变换、导出时是单位阵，进来是什么出去还是什么，
@@ -92,24 +91,38 @@ void ShapeWatermark::paint(ID2D1DeviceContext* ctx)
 	D2D1_MATRIX_3X2_F prev{};
 	ctx->GetTransform(&prev);
 	if (win->getToolSub()->watermarkTile) {
-		// 平铺：步长 = 文字尺寸 + 间距，间距按文字尺寸的比例给（档位在工具条上切），
-		// 小字自动密、大字自动疏。步长按"没旋转"的文字尺寸算，密度因此与倾斜角度无关。
-		// 全空格量出来的宽高可能是 0，步长按 0 走会死循环，兜个底
+		// 平铺：网格建在"文字自己的坐标系"里 —— u 沿文字方向、v 垂直文字方向。
+		// 这样留出的空隙是顺着文字斜的（看着就是正常的行距），整张图处处疏密一致。
+		// 早先这里是横平竖直的网格配斜着画的文字：斜文字的外接框与正交网格对不上，
+		// 列与列之间会空出一条从头通到底的白带、最右一列还可能整列够不到右边 ——
+		// "倾斜角度下水印显示不全、右上角没有水印"就是这么来的。
+		// 间距按文字尺寸的比例给（档位在工具条上切），小字自动密、大字自动疏
 		auto k = win->getToolSub()->getWatermarkGapRatio();
-		auto stepX = std::max(textW * (1.f + k), 1.f);
-		auto stepY = std::max(textH * (1.f + k), 1.f);
-		// 斜着摆的文字，外接框比 textW×textH 大一圈（长边斜过去，右上那一角伸得最远）。
-		// 网格必须按外接框向外扩一圈再铺 —— 早先是从 (0,0) 铺到 (W,H)，斜放之后
-		// 右上角正好落在最后一行 / 最后一列的空当里，看着就是"右上方没打上水印"
+		auto stepU = std::max(textW * (1.f + k), 1.f);   // 沿文字方向
+		auto stepV = std::max(textH * (1.f + k), 1.f);   // 垂直文字方向
 		auto rad{ rotation * 3.14159265358979323846f / 180.f };
-		auto hw{ (fabsf(cosf(rad)) * textW + fabsf(sinf(rad)) * textH) * 0.5f };
-		auto hh{ (fabsf(sinf(rad)) * textW + fabsf(cosf(rad)) * textH) * 0.5f };
-		// 文字以格点为中心画（见 drawOne），格子铺满 [-hw, W+hw] × [-hh, H+hh]
-		for (float y = -hh; y < sz.height + hh; y += stepY)
+		auto cosR{ cosf(rad) }, sinR{ sinf(rad) };
+		// 把图的四个角换算到 (u,v) 取范围：四个角都在里面，格点再各向外扩一格，
+		// 四只角就一定被文字压着 —— 不会有哪个角落空着
+		float uMin{ 0.f }, uMax{ 0.f }, vMin{ 0.f }, vMax{ 0.f };
+		bool first{ true };
+		for (auto& p : { D2D1::Point2F(0.f, 0.f), D2D1::Point2F((float)sz.width, 0.f),
+			D2D1::Point2F(0.f, (float)sz.height), D2D1::Point2F((float)sz.width, (float)sz.height) })
 		{
-			for (float x = -hw; x < sz.width + hw; x += stepX)
+			auto u{ p.x * cosR + p.y * sinR };
+			auto v{ -p.x * sinR + p.y * cosR };
+			if (first) { uMin = uMax = u; vMin = vMax = v; first = false; }
+			else {
+				uMin = std::min(uMin, u); uMax = std::max(uMax, u);
+				vMin = std::min(vMin, v); vMax = std::max(vMax, v);
+			}
+		}
+		for (float v = vMin - stepV; v <= vMax + stepV; v += stepV)
+		{
+			for (float u = uMin - stepU; u <= uMax + stepU; u += stepU)
 			{
-				drawOne(ctx, x, y, rotation, prev);
+				// 回到画布坐标：p = u·(cos, sin) + v·(−sin, cos)
+				drawOne(ctx, u * cosR - v * sinR, u * sinR + v * cosR, rotation, prev);
 			}
 		}
 	}
@@ -124,8 +137,8 @@ void ShapeWatermark::paintDragger(ID2D1DeviceContext* ctx)
 {
 	// 与其他元素的夹点不同：水印的"选中框"就是整张底图（平铺时尤其如此），
 	// 画一圈边框表示它整体可选中，不做八向夹点 —— 拖动水印没有意义
-	if (!win->screenImg) return;
-	auto sz = win->screenImg->GetSize();
+	auto sz = win->getImgSize();
+	if (sz.width == 0 || sz.height == 0) return;
 	// 外层变换保持不变：屏幕上跟着缩放走，导出时就是单位阵
-	ctx->DrawRectangle(D2D1::RectF(0.f, 0.f, sz.width, sz.height), brushDragger.Get(), 1.f);
+	ctx->DrawRectangle(D2D1::RectF(0.f, 0.f, (float)sz.width, (float)sz.height), brushDragger.Get(), 1.f);
 }
