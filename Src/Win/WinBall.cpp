@@ -429,7 +429,7 @@ void WinBall::runAction(const std::wstring& id)
 	else if (id == L"ruler") WinOverlay::toggle(OverlayMode::Ruler);
 	else if (id == L"crosshair") WinOverlay::toggle(OverlayMode::Crosshair);
 	else if (id == L"focus") WinOverlay::toggle(OverlayMode::Focus);
-	else if (id == L"setting") WinSetting::init();
+	else if (id == L"setting") Ling::App::get()->dq.TryEnqueue([]() { WinSetting::init(); });
 	else if (id == L"hide") hideSelf();
 }
 
@@ -461,7 +461,7 @@ void WinBall::showBallMenu()
 	AppendMenu(menu, MF_STRING, menuSetting, Lang::get(L"ball.setting").data());
 	AppendMenu(menu, MF_STRING, menuHide, Lang::get(L"ball.hide").data());
 	auto id = Ling::App::get()->popupMenu(menu);
-	if (id == menuSetting) WinSetting::init();
+	if (id == menuSetting) Ling::App::get()->dq.TryEnqueue([]() { WinSetting::init(); });
 	else if (id == menuHide) hideSelf();
 }
 

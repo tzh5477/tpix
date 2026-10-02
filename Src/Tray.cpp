@@ -106,7 +106,9 @@ void Tray::onTrayRightClick()
 	}
 	else if (menuId == settingMsg)
 	{
-		WinSetting::init();
+		// 菜单刚收，这会儿还压在托盘的消息派发里。隔一拍再建窗口 ——
+		// 与 WinSettingCommon 里"切语言 / 导入配置后重开设置"是同一个做法
+		Ling::App::get()->dq.TryEnqueue([]() { WinSetting::init(); });
 	}
 	else if (menuId == exitMsg)
 	{

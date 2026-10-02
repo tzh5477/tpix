@@ -43,10 +43,20 @@ void WinSetting::init()
 	// 已经开着就拉到前台，不建第二个。原来是"关掉旧的再建新的"，那样会和上面那个
 	// 延迟释放撞车：排在队列里的 reset 跑起来时放掉的是刚建好的这一个
 	if (winSetting) {
-		SetForegroundWindow(winSetting->hwnd);
-		return;
+		// 句柄还在才谈"拉到前台"。对象还活着、窗口却已经没了的情况（销毁的收尾没跑到，
+		// 或窗口被别的路径收起来过），SetForegroundWindow 会落在一个失效句柄上，
+		// 表现就是"点了设置完全没反应"—— 那就丢掉重建，保证点一次有一次响应
+		if (winSetting->hwnd && IsWindow(winSetting->hwnd)) {
+			winSetting->show();
+			SetForegroundWindow(winSetting->hwnd);
+			return;
+		}
+		winSetting.reset();
 	}
 	winSetting.reset(new WinSetting());
+	// 从托盘 / 悬浮球的菜单里点进来时，前台还在菜单那一侧：新窗口 show 出来有可能
+	// 落到别的窗口后面，看着就是"没弹窗"。明确再拉一次到最前
+	if (winSetting->hwnd) SetForegroundWindow(winSetting->hwnd);
 }
 
 void WinSetting::dispose()
