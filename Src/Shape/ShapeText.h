@@ -31,6 +31,8 @@ public:
 	void finishEditing() override { finishEdit(); }
 	// ToolSub 上的颜色/字号/粗斜体变了，编辑中的话立即生效
 	void applyStyle() override;
+	// 右上角关闭按钮要用：文本的外接矩形就是那圈虚线框
+	bool getShapeBounds(D2D1_RECT_F& out) const override;
 public:
 	bool isEditing{ false };
 private:

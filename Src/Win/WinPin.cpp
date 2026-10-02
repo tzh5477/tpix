@@ -769,6 +769,11 @@ void WinPin::layout()
 		if (drawing->shapeHover) {
 			drawing->shapeHover->paintDragger(ctx);
 		}
+		// 选中元素右上角的关闭按钮。只给"当前选中"的那一个画：鼠标掠过一串元素时
+		// 每个都冒一个 ×，反而看不出改样式 / 删除会作用到谁
+		if (drawing->selected) {
+			drawing->selected->paintCloseBtn(ctx);
+		}
 	}
 	// 蓝边框和倍数提示属于窗口装饰，不跟着图缩放：变换收回来，按窗口坐标画。
 	// 边框也因此从"底图矩形"改成"窗口矩形"，任何倍数下都是 2*dpi 粗
@@ -854,6 +859,17 @@ void WinPin::onDown(POINT pos, BOOL isRight)
 		if (prevPressCreatedShape) drawing->history->undo();
 		copyToClipboard();
 		return;
+	}
+	// 选中元素右上角的关闭按钮：点它就是删掉。要赶在下面 SetCapture / 建新元素之前 ——
+	// 这个按钮摆在外接矩形之外，不拦的话这一下会被当成"点空白"，反手又落一个新元素。
+	// 也赶在"给正在编辑的那个收尾"之前：编辑器开着时这个 × 同样该点得动
+	{
+		auto hitPos = toImgPos(pos);
+		if (drawing->selected && drawing->selected->hitCloseBtn((float)hitPos.x, (float)hitPos.y)) {
+			// 走 History 的统一删除口子：它会先把可能开着的编辑器收尾，再删、再刷新
+			drawing->history->removeActiveShape();
+			return;
+		}
 	}
 	// 点在文本框外：先把正在编辑的那一个收尾，再往下派发。
 	// 必须赶在这儿做，不能等 TextBox 自己那一层 —— TextBox 的 onMouseDown 订阅比本窗口晚

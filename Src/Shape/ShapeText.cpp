@@ -443,3 +443,9 @@ void ShapeText::setAttr()
 	fontFamily = toolSub->getFontFamily();
 	Ling::D2D::get()->deviceContext->CreateSolidColorBrush(color, textBrush.ReleaseAndGetAddressOf());
 }
+
+bool ShapeText::getShapeBounds(D2D1_RECT_F& out) const
+{
+	out = rect;
+	return true;
+}

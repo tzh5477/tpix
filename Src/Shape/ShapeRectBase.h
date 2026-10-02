@@ -21,6 +21,8 @@ public:
 	void mouseUp(const float x, const float y) override;
 	void mouseMove(const float x, const float y) override;
 	void setCursor() override;
+	// 右上角关闭按钮要用：矩形族的外接矩形就是 rect
+	bool getShapeBounds(D2D1_RECT_F& out) const override;
 protected:
 	// 命中八向手柄。命中就定下索引直接返回
 	void hitDraggers(const float x, const float y);

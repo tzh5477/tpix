@@ -19,6 +19,12 @@ ShapeRectBase::~ShapeRectBase()
 {
 }
 
+bool ShapeRectBase::getShapeBounds(D2D1_RECT_F& out) const
+{
+	out = rect;
+	return true;
+}
+
 void ShapeRectBase::paintDragger(ID2D1DeviceContext* ctx)
 {
 	for (auto& dragger : draggers)

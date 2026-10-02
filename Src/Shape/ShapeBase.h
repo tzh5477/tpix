@@ -25,6 +25,15 @@ public:
 	// 单击本身就是正常用法的元素（number 落徽章、text 进编辑）覆盖它返回 true
 	virtual bool isValidWithoutDrag() { return false; };
 	bool isInRect(const D2D1_RECT_F rect, const float x, const float y);
+	// 元素在底图坐标系里的外接矩形。用来摆右上角那个关闭按钮 ——
+	// 默认返回 false（水印铺满整图、折线族那几笔用户说不用加），派生类按需覆写
+	virtual bool getShapeBounds(D2D1_RECT_F& out) const { return false; }
+	// 右上角关闭按钮的方框（底图坐标）。没有外接矩形的元素返回一个空框
+	D2D1_RECT_F closeBtnRect() const;
+	// 点是否落在关闭按钮上
+	bool hitCloseBtn(const float x, const float y);
+	// 画关闭按钮：白底圆 + 浅蓝边 + 一个 ×。样式与那些控制点成套
+	void paintCloseBtn(ID2D1DeviceContext* ctx);
 public:
 	// 所属画布。窗口尺寸、DPI、底图、工具条样式、刷新全从这里出 ——
 	// shape 不认识窗口，换一个画布宿主这层照旧能挂上去
