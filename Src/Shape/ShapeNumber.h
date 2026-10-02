@@ -78,6 +78,10 @@ private:
 	D2D1_RECT_F descHandleRect() const;
 	// 描述文字的外接方框（画布像素）。点它就进编辑 —— 用户不必非得找到 A 按钮
 	D2D1_RECT_F descTextRect() const;
+	// 编辑器刚弹出来那一下的命中矩形（画布像素）：整个序号连同描述那块一起框进来。
+	// 见 startEdit 里的说明 —— 只留输入框本身的话，开启编辑的那一下点击会被
+	// TextBox 当成"点在框外"，刚打开的编辑器当场就被关掉
+	D2D1_RECT_F editHitRect() const;
 	// 圆心到转折点的默认距离
 	float descGap() const { return r * 0.35f; }
 	// 转折点到文字、以及横线末端伸出去的那一段余量

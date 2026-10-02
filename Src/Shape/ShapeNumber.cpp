@@ -233,6 +233,25 @@ D2D1_RECT_F ShapeNumber::descTextRect() const
 	return D2D1::RectF(pos.x - 2.f, pos.y - 2.f, pos.x + metrics.width + 2.f, pos.y + metrics.height + 2.f);
 }
 
+D2D1_RECT_F ShapeNumber::editHitRect() const
+{
+	// 四个动作按钮伸到圆心外 (r + btnR + gap)·√2/2 + btnR ≈ 1.64r，取 1.8r 再留一点余量。
+	// 开启编辑的那一下点击落在 A 按钮上（圆圈的右下角），必须落在命中区里
+	auto rad{ r * 1.8f + draggerSize };
+	D2D1_RECT_F box{ cx - rad, cy - rad, cx + rad, cy + rad };
+	// 输入框那一块也算进来：它才是编辑器真正待的地方，两处一起框住就万无一失
+	DWRITE_TEXT_METRICS metrics{};
+	if (layoutDesc) layoutDesc->GetMetrics(&metrics);
+	else metrics.height = r;
+	auto pos = descTextPos();
+	auto right{ pos.x + metrics.width }, bottom{ pos.y + metrics.height };
+	if (pos.x < box.left) box.left = pos.x;
+	if (pos.y < box.top) box.top = pos.y;
+	if (right > box.right) box.right = right;
+	if (bottom > box.bottom) box.bottom = bottom;
+	return box;
+}
+
 void ShapeNumber::paintDragger(ID2D1DeviceContext* ctx)
 {
 	if (isWheel) return;
@@ -629,6 +648,16 @@ void ShapeNumber::startEdit()
 	tb->setColor(Ling::Color(colorValue));
 	tb->setCaretColor(Ling::Color(colorValue));
 	tb->setText(customText);
+	// 命中矩形先按"整个序号 + 描述那一块"铺开。开编辑的是 A 按钮那一下点击，它在圆圈边上，
+	// 而输入框按所见即所得摆在描述文字的位置 —— 两块并不重叠。命中区要是只算输入框本身，
+	// 这一下点击的 TextBox::onDown（它订阅得比 WinPin 晚，排在整套派发之后）就会按"点在框外"
+	// 把刚打开的编辑器当场关掉，表现正是"单击 A 没反应"。
+	// 下一帧 yoga 会照 setPosition 把 x/y/w/h 覆盖回真实位置，所以这只是给这一下点击用的
+	auto hit = editHitRect();
+	tb->x = hit.left * s;
+	tb->y = hit.top * s;
+	tb->w = (hit.right - hit.left) * s;
+	tb->h = (hit.bottom - hit.top) * s;
 	tb->show();
 	// 订阅放在 setText 之后：setText 自己也会触发 onTextChanged，不用理那一次
 	textChangedTok = tb->onTextChanged.add([this](Ling::TextBox*, const std::wstring& val) {

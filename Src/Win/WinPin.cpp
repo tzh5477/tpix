@@ -855,6 +855,16 @@ void WinPin::onDown(POINT pos, BOOL isRight)
 		copyToClipboard();
 		return;
 	}
+	// 点在文本框外：先把正在编辑的那一个收尾，再往下派发。
+	// 必须赶在这儿做，不能等 TextBox 自己那一层 —— TextBox 的 onMouseDown 订阅比本窗口晚
+	// （它是懒建的），它那一下失焦排在下面这一整套派发之后：等它跑起来时新的一笔已经建好、
+	// 新的编辑也已经开了，两个 finishEdit 叠着跑，会把刚写的描述文字一起冲掉
+	//（表现就是"单击 A 没反应"，而且上一个序号的描述还会被清空）
+	if (editingShape) {
+		editingShape->finishEditing();
+		// 这一下只是"关掉编辑器"：落在空白处就到此为止，不该顺手再落一个新元素
+		if (!drawing->shapeHover) return;
+	}
 	// 记的是按下点在窗口内的偏移（客户区坐标），拖动时用它把抓住的那一点保持在光标下
 	pressPos.x = pos.x;
 	pressPos.y = pos.y;
@@ -1080,10 +1090,12 @@ void WinPin::onKey(UINT key)
 	if (isLocked) return;
 	// 编辑文本时所有按键都归 TextBox：否则 Ctrl+C 复制的是截图、回车会保存并关窗、
 	// Delete 删掉的是整个 shape、ESC 直接把窗口关了。ESC 结束编辑由 TextBox 自己处理。
+	// 这一句必须排在派发之前 —— 序号拿到 F2 会去开它自己那份描述编辑框，而共用的那个
+	// TextBox 上还挂着当前这一个的订阅，两个编辑叠在一起就会把正在写的文字冲掉
+	if (editingShape) return;
 	// 选中某个元素时先把按键交给它：序号用 +/- 改编号、F2 编辑序号里的文字。
 	// 这几个键不与下面的全局快捷键冲突，所以不用抢返回值
 	if (drawing->shapeHover) drawing->shapeHover->onKey(key);
-	if (editingShape) return;
 	bool ctrl = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
 	bool alt = (GetKeyState(VK_MENU) & 0x8000) != 0;
 	// Ctrl+Alt+左右：搬到相邻显示器；Alt+方向：贴到当前显示器的那条边。
