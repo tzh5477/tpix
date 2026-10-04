@@ -90,19 +90,14 @@ namespace {
 	}
 	// 贴图不透明度的四档。index 落盘的是下标，百分比文本由 showPinTools 按这张表生成
 	const float pinOpacitySteps[]{ 1.f, 0.75f, 0.5f, 0.25f };
-	// 水印的透明度档位与旋转档位。透明度与 pin 那组共用一套档位
-const float watermarkOpacitySteps[]{ 1.f, 0.75f, 0.5f, 0.25f };
+	// 水印的旋转档位（角度只有在平铺下才有意义）
 const float watermarkRotateSteps[]{ 0.f, 30.f, 45.f, 60.f };
-// 平铺间距三档：间距 = 文字尺寸 × 这个系数。紧凑几乎相连、标准留半格、宽松空一格 ——
-// 系数原来偏大（0.75 起步），一块 24 号字的水印一步就跨出去好几百像素，
-// 小图上只落得下一两块，看着就像"没铺满 / 根本没水印"
-const float watermarkGapSteps[]{ 0.2f, 0.5f, 1.f };
 }
 
 float ToolSub::getWatermarkOpacity() const
 {
-	auto i = std::clamp(watermarkOpacity, 0, 3);
-	return watermarkOpacitySteps[i];
+	// 滑块给的是整数百分比，画的时候要 0~1
+	return std::clamp(watermarkAlpha, 5, 100) / 100.f;
 }
 
 float ToolSub::getWatermarkRotation() const
@@ -113,8 +108,9 @@ float ToolSub::getWatermarkRotation() const
 
 float ToolSub::getWatermarkGapRatio() const
 {
-	auto i = std::clamp(watermarkGap, 0, 2);
-	return watermarkGapSteps[i];
+	// 间距是"文字尺寸的几成"：滑块 0~100 映射到 0~2 倍 —— 100 时两格之间空出两个文字宽，
+	// 默认 25（即 0.5 倍）与原「标准」档一致
+	return std::clamp(watermarkGapPct, 0, 100) / 100.f * 2.f;
 }
 
 ToolSub::ToolSub(WinPin* win) :Ling::WinBase(), win(win)
@@ -164,15 +160,16 @@ void ToolSub::onCreated()
 	// 显示出来后横向跟着鼠标走（同 2.4.25）；离开滑块只收自己这一个提示，
 	// 不能无条件 hide()：颜色按钮的 onLeave 排在这个回调后面，会把它刚显示出来的提示误关掉。
 	onMouseMove.add([this](POINT pos) {
-		if (!slider) return;
-		if (slider->isPosIn(pos)) {
-			// 显示的是鼠标底下那个位置的值，不是当前值 —— 光标只是在滑轨上路过时 value 并没变
-			tip->showAt(slider, static_cast<float>(x + pos.x), y + slider->y + Tip::anchorInset * dpi,
-				std::format(L"{}", static_cast<int>(std::round(slider->getValueAt(static_cast<float>(pos.x))))));
+		// 本工具条上可能有多个滑块（水印那不透明度 / 大小 / 间距三个并排），挨个判
+		for (auto* s : sliders) {
+			if (s->isPosIn(pos)) {
+				// 显示的是鼠标底下那个位置的值，不是当前值 —— 光标只是在滑轨上路过时 value 并没变
+				tip->showAt(s, static_cast<float>(x + pos.x), y + s->y + Tip::anchorInset * dpi,
+					std::format(L"{}", static_cast<int>(std::round(s->getValueAt(static_cast<float>(pos.x))))));
+				return;
+			}
 		}
-		else {
-			tip->hide(slider);
-		}
+		for (auto* s : sliders) tip->hide(s);
 	});
 }
 
@@ -187,6 +184,7 @@ void ToolSub::beginTool(const std::wstring& id)
 	contentNode->removeAllChildren();
 	// 滑块与编号输入框一并作废：不是每个面板都建它们，留着就是悬垂指针
 	slider = nullptr;
+	sliders.clear();
 	numberBox = nullptr;
 	numberBoxSilent = false;
 	// 同上：水印的旋转按钮也只在水印面板里存在
@@ -816,13 +814,21 @@ void ToolSub::makeApplyAllBtn()
 void ToolSub::showWatermarkTools()
 {
 	beginTool(L"watermark");
-	// 四枚按钮：位置 / 旋转 / 透明度 / 间距（+ 一个通用滑块）
-	initSize(4, true, true, 150.f);
+	// 两个按钮（位置 / 旋转）+ 三个滑块（不透明度 / 大小 / 间距）+ 色板。
+	// extraW 里要算上文字输入框与它左右各一次的间距 —— initSize 只按滑块数算间距，输入框的得自己加
+	initSize(2, true, true, 150.f + sliderMargin * 2, 3);
 	auto setting = Setting::get();
 	// 文字从配置读回：水印十有八九每张截图都写同一句，不该每次都重打
 	watermarkText = setting->getToolStr(L"watermark", L"text", L"");
 	// 位置也读回并夹一遍：配置可能是旧版写的（那时还没有这个键），也可能被手工改坏
 	watermarkPos = std::clamp((int)setting->getToolNum(L"watermark", L"pos", 0.f), 0, 7);
+	// 角度、不透明度、间距都是滑块 / 下拉给的连续量，同样从配置读回并夹紧 ——
+	// 这几个值会直接喂给 D2D（透明度的 alpha、平铺步长），越界要么看不见要么慢得离谱
+	watermarkRotate = std::clamp((int)setting->getToolNum(L"watermark", L"rotate", 0.f), 0, 3);
+	watermarkAlpha = std::clamp((int)setting->getToolNum(L"watermark", L"alpha", 25.f), 5, 100);
+	// 间距的键名换成 gapPct：老配置里的 gap 是"三档下标"（0~2），沿用同名会被读成 0~2%
+	// ——那样平铺密得糊成一片。换个键名，老配置自然退回默认的 25%
+	watermarkGapPct = std::clamp((int)setting->getToolNum(L"watermark", L"gapPct", 25.f), 0, 100);
 	// 文字输入框的宽度已在 initSize 里预留（extraW），放最前面
 	auto textBox = contentNode->makeChild<Ling::TextBox>();
 	textBox->setHeight(btnSize - 2.5);
@@ -873,19 +879,27 @@ void ToolSub::showWatermarkTools()
 			});
 	}
 	syncWatermarkRotateBtn();
-	// 水印是画的时候现读工具条状态的，档位一变就得刷一下才看得见
-	std::vector<std::wstring> opacityItems;
-	for (auto v : watermarkOpacitySteps) {
-		opacityItems.push_back(std::format(L"{}%", (int)std::lround(v * 100)));
-	}
-	makeSelectBtn(L"tool.watermarkOpacity", L"opacity", &watermarkOpacity, opacityItems,
-		[this]() { win->refresh(); });
-	// 平铺间距三档：布局是 paint 时现算的，跟透明度 / 旋转一样换档就得刷
-	std::vector<std::wstring> gapItems;
-	for (int i = 0; i < 3; ++i) gapItems.push_back(Lang::get(std::format(L"tool.watermarkGap{}", i)));
-	makeSelectBtn(L"tool.watermarkGap", L"gap", &watermarkGap, gapItems,
-		[this]() { win->refresh(); });
-	initSlider();
+	// 不透明度 / 大小 / 间距：三个横向滑块并排。原来这里是「25%」「标准」两个档位下拉 ——
+	// 三档五档之间只能跳，想微调没法微调；水印这几个量恰恰是要反复试的
+	makeSlider(5.f, 100.f, (float)watermarkAlpha, [this](float val) {
+		watermarkAlpha = (int)std::lround(val);
+		Setting::get()->setToolNum(curToolId, L"alpha", val);
+		win->refresh();
+		});
+	// 大小沿用这个工具在 config.json 里的 fontSize；值域同样查 .cpp 里那张表（beginTool 已填好）
+	slider = makeSlider(sliderMin, sliderMax, sliderVal, [this](float val) {
+		sliderVal = val;
+		Setting::get()->setToolNum(curToolId, curSliderKey, val);
+		// 正在编辑的文本要立刻跟着变字号
+		win->onToolStyleChanged();
+		// 与 initSlider 的唯一区别：水印不是选中态元素，没选中任何东西时也得重画才看得见
+		win->refresh();
+		});
+	makeSlider(0.f, 100.f, (float)watermarkGapPct, [this](float val) {
+		watermarkGapPct = (int)std::lround(val);
+		Setting::get()->setToolNum(curToolId, L"gapPct", val);
+		win->refresh();
+		});
 	initColorBtns();
 }
 
@@ -900,30 +914,39 @@ void ToolSub::syncWatermarkRotateBtn()
 	watermarkRotBtn->setHoverBg(on ? 0xF2F2F2ff : 0);
 }
 
-void ToolSub::initSlider()
+Ling::Slider* ToolSub::makeSlider(float min, float max, float val, std::function<void(float)> onChange)
 {
-	slider = contentNode->makeChild<Ling::Slider>();
+	auto s = contentNode->makeChild<Ling::Slider>();
 	// 尺寸从字段来，别写字面量：initSize 按同样的字段算窗口宽度，
 	// 两边各写一份的话改了一处就会宽度不匹配（flex 会把误差压在按钮和滑块上）。
-	slider->setWidth(sliderSize);
-	slider->setMarginLeft(sliderMargin);
-	slider->setMarginRight(sliderMargin);
-	slider->setHeightPercent(100.f);
-	// 值域与当前值都从字段来：切换工具时滑块会被销毁重建，靠 beginTool 把配置里那份带过来。
-	// setValue 排在 onValueChanged 之前，加载配置这一下不会反过来又写一次盘
-	slider->setRange(sliderMin, sliderMax);
-	slider->setValue(sliderVal);
-	slider->setStep(1.f);
-	slider->onValueChanged.add([this](Ling::Slider*, float val) {
+	s->setWidth(sliderSize);
+	s->setMarginLeft(sliderMargin);
+	s->setMarginRight(sliderMargin);
+	s->setHeightPercent(100.f);
+	// setValue 排在 onValueChanged 之前：加载配置这一下不会反过来又写一次盘
+	s->setRange(min, max);
+	s->setValue(val);
+	s->setStep(1.f);
+	s->onValueChanged.add([onChange](Ling::Slider*, float v) {
+		if (onChange) onChange(v);
+		});
+	s->setThumbColor(0x888888FF);
+	s->setHoverThumbColor(0x888888FF);
+	s->setTrackColor(0x888888FF);
+	s->setFillColor(0x888888FF);
+	sliders.push_back(s);
+	return s;
+}
+
+void ToolSub::initSlider()
+{
+	// 值域与当前值都从字段来：切换工具时滑块会被销毁重建，靠 beginTool 把配置里那份带过来
+	slider = makeSlider(sliderMin, sliderMax, sliderVal, [this](float val) {
 		sliderVal = val;
 		Setting::get()->setToolNum(curToolId, curSliderKey, val);
 		// 正在编辑的文本要立刻跟着变字号，不然得点完再看效果
 		win->onToolStyleChanged();
-	});
-	slider->setThumbColor(0x888888FF);
-	slider->setHoverThumbColor(0x888888FF);
-	slider->setTrackColor(0x888888FF);
-	slider->setFillColor(0x888888FF);
+		});
 }
 
 float ToolSub::toPx(float logical) const
@@ -943,16 +966,18 @@ float ToolSub::getDesiredHeight()
 // 宽度 = 工具按钮 + 颜色按钮 + 滑块（含左右 margin）。
 // 之前这里漏算了滑块的真实宽度，宽工具栏靠 10 个 flexGrow 按钮把误差摊薄了看不出来，
 // 而 mosaic/eraser 只有 1 个按钮，误差全压在这个按钮和滑块上，看起来就像被压缩了。
-void ToolSub::initSize(int btnCount, bool withColors, bool centerOnBtn, float extraW)
+void ToolSub::initSize(int btnCount, bool withColors, bool centerOnBtn, float extraW, int sliderCount)
 {
 	hasTools = true;
 	this->centerOnBtn = centerOnBtn;
 	sizeBtnCount = btnCount;
 	sizeWithColors = withColors;
 	sizeExtraW = extraW;
+	sizeSliderCount = std::max(1, sliderCount);
 	auto count = btnCount + (withColors ? static_cast<int>(colors.size()) : 0);
 	// 宽度只按内容算，边框画在内容之内（与 ToolMain 一致，那边宽度也只累加按钮）。
-	auto pxW = toPx(btnSize) * count + toPx(sliderSize) + toPx(sliderMargin) * 2 + toPx(extraW);
+	auto pxW = toPx(btnSize) * count + toPx(sliderSize) * sizeSliderCount
+		+ toPx(sliderMargin) * 2 * sizeSliderCount + toPx(extraW);
 	// setSize 收逻辑像素、内部再乘 dpi，所以这里把算好的物理宽高除回去
 	setSize(pxW / dpi, getDesiredHeight() / dpi);
 }
@@ -960,7 +985,7 @@ void ToolSub::initSize(int btnCount, bool withColors, bool centerOnBtn, float ex
 void ToolSub::refreshSize()
 {
 	if (!hasTools) return;   //没内容时窗口是藏着的，等下次 show*Tools 自然会按新 dpi 算
-	initSize(sizeBtnCount, sizeWithColors, centerOnBtn, sizeExtraW);
+	initSize(sizeBtnCount, sizeWithColors, centerOnBtn, sizeExtraW, sizeSliderCount);
 }
 
 D2D1_COLOR_F ToolSub::getSelectedColor() const

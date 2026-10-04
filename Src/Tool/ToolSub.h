@@ -78,8 +78,9 @@ public:
 	// 水印位置：0 平铺 / 1 右下角 / 2 左下角 / 3 右上角 / 4 左上角 / 5 顶部居中 / 6 底部居中 / 7 居中。
 	// 顺序与 ShapeWatermark::WmPos 一一对应，也是「位置」下拉里的顺序（要落盘，别随手调）
 	int watermarkPos{ 0 };
-	// watermarkGap 是平铺间距档位（0 紧凑 / 1 标准 / 2 宽松），换算系数的表同样在 .cpp 里
-	int watermarkOpacity{ 0 }, watermarkRotate{ 0 }, watermarkGap{ 1 };
+	// watermarkAlpha 是水印不透明度（5~100 %），watermarkGapPct 是平铺间距（0~100 %，换算系数的表在 .cpp）
+	int watermarkRotate{ 0 };
+	int watermarkAlpha{ 25 }, watermarkGapPct{ 25 };
 	float getWatermarkOpacity() const;
 	float getWatermarkRotation() const;
 	float getWatermarkGapRatio() const;
@@ -92,6 +93,9 @@ private:
 	void onColorSelect(Ling::Button* btn);
 	void initColorBtns();
 	void initSlider();
+	// 建一个横向滑块。值域 / 当前值都由调用方给（水印的不透明度、间距、大小都要用，
+	// 而每工具一份的那套字段只有"大小"这一项），建好之后登记进 sliders 好让悬停提示找到它
+	Ling::Slider* makeSlider(float min, float max, float val, std::function<void(float)> onChange);
 	// 水印的「旋转」按钮：非平铺时置灰并让它点了也不动 —— 角度只对平铺有意义。
 	// 位置一变（下拉里选的）就要重画一次按钮上的字与配色，所以单独抽出来
 	void syncWatermarkRotateBtn();
@@ -142,8 +146,10 @@ private:
 	void beginTool(const std::wstring& id);
 	// 按内容算出窗口尺寸并应用。btnCount 只数工具按钮，不含颜色按钮。
 	// centerOnBtn 为 true 时窗口居中对齐到 ToolMain 上选中的那个按钮，否则与 ToolMain 左对齐。
-	// extraW 给文字输入框这类"宽度不是一格按钮"的控件预留
-	void initSize(int btnCount, bool withColors, bool centerOnBtn = false, float extraW = 0.f);
+	// extraW 给文字输入框这类"宽度不是一格按钮"的控件预留。
+	// sliderCount 是要摆几个滑块：水印那一排不透明度 / 大小 / 间距三个并排，别的工具都是一个
+	void initSize(int btnCount, bool withColors, bool centerOnBtn = false, float extraW = 0.f,
+		int sliderCount = 1);
 	// 内容不变、只是 dpi 变了：按上次 initSize 的入参重算一遍尺寸
 	void refreshSize();
 	// 逻辑像素 → 物理像素
@@ -154,6 +160,8 @@ private:
 	// 当前的滑块。切换工具时会被销毁重建，重建后由 initSlider 重新赋值。
 	// 存下来是为了在窗口的 onMouseMove 里判断鼠标是否在它上面，好显示数值提示。
 	Ling::Slider* slider{ nullptr };
+	// 本工具条上摆着的所有滑块（水印有三个）。悬停提示要挨个判，切工具时随内容一起作废
+	std::vector<Ling::Slider*> sliders;
 	// 水印「旋转」按钮。与 slider 同理：切工具时随 contentNode 一起销毁，beginTool 里必须置空，
 	// 否则位置下拉回调里的 syncWatermarkRotateBtn 会往一个已删掉的按钮上写字
 	Ling::Button* watermarkRotBtn{ nullptr };
@@ -188,6 +196,7 @@ private:
 	int sizeBtnCount{ 0 };
 	bool sizeWithColors{ false };
 	float sizeExtraW{ 0.f };
+	int sizeSliderCount{ 1 };
 	// 下一个序号的编号。每次开始标号都回到 1，之后跟着图上最大号 + 1 走（syncNumberVal），
 	// 用户也可以在输入框里改成别的数（那一份只活在这一轮标号里）
 	int numberNext{ 1 };
