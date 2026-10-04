@@ -33,15 +33,18 @@ void ShapeMosaicRect::applyStyle()
 
 void ShapeMosaicRect::paint(ID2D1DeviceContext* ctx)
 {
+	// 旋转由基类统一叠（马赛克也能转），画完要把变换还回去 —— 后面还有别的东西要画
+	auto prev{ setRotateTransform(ctx) };
 	if (eraseBrush) {
 		ctx->FillRectangle(rect, eraseBrush.Get());
-		return;
 	}
-	if (mosaicBrush) {
+	else if (mosaicBrush) {
 		ctx->FillRectangle(rect, mosaicBrush.Get());
-		return;
 	}
-	ctx->FillRectangle(rect, brush.Get());
+	else {
+		ctx->FillRectangle(rect, brush.Get());
+	}
+	ctx->SetTransform(prev);
 }
 
 // 几何一变，之前算好的马赛克就不对了，先扔掉退回占位色
