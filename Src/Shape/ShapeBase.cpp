@@ -30,8 +30,8 @@ D2D1_RECT_F ShapeBase::actionBtnRect(const int i) const
 	auto rad{ draggerSize * 0.9f };
 	// 默认摆在外接矩形右上角的"外面"一点：角上正压着那个控制点，叠在一起会互相打架
 	auto gap{ draggerSize * 1.6f };
-	// 图标之间留一点缝。整排往右上角外面排，末尾那枚（×）在最右 ——
-	// 这样派生类多挂一枚图标时，× 的位置不会跟着挪，用户不用重新找它
+	// 图标之间留一点缝。整排往右上角外面排：末尾那枚（×）紧贴右上角、位置恒为
+	// b.right + gap，派生类多挂的图标顺着往右长 —— 这样 × 永远不挪位，用户不用重新找它
 	auto step{ rad * 2.f + draggerSize * 0.5f };
 	auto last{ actionBtnTotal() - 1 };
 	auto cx{ b.right + gap + (last - i) * step };

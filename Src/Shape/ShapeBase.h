@@ -30,8 +30,9 @@ public:
 	// 默认返回 false（水印铺满整图、折线族那几笔用户说不用加），派生类按需覆写。
 	// 带旋转的元素要把旋转也算进去（摆图标的是外接框，不是未旋转的那个 rect）
 	virtual bool getShapeBounds(D2D1_RECT_F& out) const { return false; }
-	// 选中元素右上角那排小图标。末尾恒是 ×（删除），派生类自己的动作图标排在它左边 ——
-	// 矩形/圆用一枚做"矩形↔圆"互转。默认一枚都没有，只有 ×
+	// 选中元素右上角那排小图标。末尾恒是 ×（删除），它紧贴右上角待着（与只有它一枚时
+	// 同一个位置），派生类自己的动作图标排在它右边、往外延伸 —— 矩形/圆用一枚做
+	// "矩形↔圆"互转。默认一枚都没有，只有 ×
 	virtual int actionCount() const { return 0; }
 	// 画第 i 枚动作图标（i 只会在 actionCount 范围内被调到）。c 是圆心、rad 是圆半径
 	virtual void paintActionIcon(ID2D1DeviceContext* ctx, const int i, const D2D1_POINT_2F& c, const float rad) {}
