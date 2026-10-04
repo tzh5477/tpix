@@ -5,12 +5,14 @@
 #include "Tool/ToolSub.h"
 #include "ShapeRectBase.h"
 
+using Microsoft::WRL::ComPtr;
+
 namespace {
 	constexpr float kPi{ 3.14159265358979323846f };
 	float toRad(const float deg) { return deg * kPi / 180.f; }
 }
 
-ShapeRectBase::ShapeRectBase(Canvas* win) : ShapeBase(win), draggers(9, D2D1::RectF(0, 0, 0, 0))
+ShapeRectBase::ShapeRectBase(Canvas* win) : ShapeBase(win), draggers(17, D2D1::RectF(0, 0, 0, 0))
 {
 }
 
@@ -45,6 +47,41 @@ const wchar_t* ShapeRectBase::styleGroup() const
 	return kind == Kind::Ellipse ? L"ellipse" : L"rect";
 }
 
+float ShapeRectBase::norm360(const float deg)
+{
+	auto v = fmodf(deg, 360.f);
+	if (v < 0.f) v += 360.f;
+	return v;
+}
+
+D2D1_POINT_2F ShapeRectBase::ellipsePoint(const float deg, const float scale) const
+{
+	auto rad = toRad(deg);
+	return { cx + rx * scale * cosf(rad), cy + ry * scale * sinf(rad) };
+}
+
+bool ShapeRectBase::inNotch(const float deg) const
+{
+	if (notchSweep <= 0.5f) return false;
+	// 缺角是 [notchStart, notchStart + notchSweep]，两头顶着算 —— 边界上那一点点
+	// 让给缺角侧，免得沿切边的命中时有时无
+	return norm360(deg - notchStart) <= notchSweep;
+}
+
+float ShapeRectBase::radiusHome() const
+{
+	auto minWH = std::min(rect.right - rect.left, rect.bottom - rect.top);
+	// 初始位置随图形尺寸走（小图形不该被几枚手柄压满），但最小要让开角上那个八向手柄，
+	// 两枚图标叠在一起谁也点不准
+	return std::max(minWH * 0.22f, draggerSize * 1.2f);
+}
+
+float ShapeRectBase::radiusMax() const
+{
+	auto minWH = std::min(rect.right - rect.left, rect.bottom - rect.top);
+	return std::max(0.f, minWH / 2.f - radiusHome());
+}
+
 bool ShapeRectBase::getShapeBounds(D2D1_RECT_F& out) const
 {
 	// 转过之后外接框也跟着放大：动作图标摆的是"看得见的那一块"的外面
@@ -67,16 +104,56 @@ D2D1_POINT_2F ShapeRectBase::handleLocalPoint(const int i) const
 	}
 }
 
+// 扇形 / 环形：外弧 + （内弧）拼成一条闭合路径。弧用折线近似（2 度一段）——
+// D2D 的 AddArc 要求把超过 180 度的弧拆成几段才不会画歪，而这里的 sweep 是连着变的，
+// 拆段的边界每帧都在动。折线在半径几百像素时的偏差远小于一个像素，肉眼看不出来
+ComPtr<ID2D1PathGeometry> ShapeRectBase::makePieGeometry() const
+{
+	ComPtr<ID2D1PathGeometry> geo;
+	ComPtr<ID2D1GeometrySink> sink;
+	if (FAILED(Ling::D2D::get()->d2dFactory->CreatePathGeometry(geo.GetAddressOf()))) return geo;
+	if (FAILED(geo->Open(sink.GetAddressOf()))) return geo;
+	// 要画的是"缺角之外的那一段"：从 notchStart 扫过一周、停在缺角的起点
+	auto start{ notchStart + notchSweep };
+	auto sweep{ 360.f - notchSweep };
+	auto steps{ std::max(1, (int)ceilf(sweep / 2.f)) };
+	auto ring{ innerRatio > 0.001f };
+	if (ring) sink->BeginFigure(ellipsePoint(start, innerRatio), D2D1_FIGURE_BEGIN_FILLED);
+	else sink->BeginFigure(D2D1::Point2F(cx, cy), D2D1_FIGURE_BEGIN_FILLED);
+	sink->AddLine(ellipsePoint(start, 1.f));
+	for (int i = 1; i <= steps; i++) sink->AddLine(ellipsePoint(start + sweep * i / steps, 1.f));
+	if (ring) {
+		sink->AddLine(ellipsePoint(start + sweep, innerRatio));
+		for (int i = steps - 1; i >= 0; i--) sink->AddLine(ellipsePoint(start + sweep * i / steps, innerRatio));
+	}
+	sink->EndFigure(D2D1_FIGURE_END_CLOSED);
+	sink->Close();
+	return geo;
+}
+
 void ShapeRectBase::paint(ID2D1DeviceContext* ctx)
 {
 	// 外层变换（屏幕上是缩放、导出时是单位阵）要保住，旋转排在内层 ——
 	// 与 ShapeText 同一套写法，导出因此不必另走一条路
 	auto prev{ setRotateTransform(ctx) };
 	if (kind == Kind::Ellipse) {
-		// 完整圆没有缺角，直接用 D2D 的椭圆（比拿折线拼出来的更干净）
-		D2D1_ELLIPSE e = D2D1::Ellipse({ cx, cy }, rx, ry);
-		if (isFill) ctx->FillEllipse(e, brush.Get());
-		else ctx->DrawEllipse(e, brush.Get(), strokeWidth);
+		if (!isPie()) {
+			// 完整圆没有缺角，直接用 D2D 的椭圆（比拿折线拼出来的更干净）
+			D2D1_ELLIPSE e = D2D1::Ellipse({ cx, cy }, rx, ry);
+			if (isFill) ctx->FillEllipse(e, brush.Get());
+			else ctx->DrawEllipse(e, brush.Get(), strokeWidth);
+		}
+		else if (auto geo = makePieGeometry()) {
+			if (isFill) ctx->FillGeometry(geo.Get(), brush.Get());
+			else ctx->DrawGeometry(geo.Get(), brush.Get(), strokeWidth);
+		}
+	}
+	else if (radius > 0.5f) {
+		// 半径再大就被 D2D 按半宽半高夹住，画出来的角会突然变样；这里先自己夹一道
+		auto r{ std::min(radius, std::min(rect.right - rect.left, rect.bottom - rect.top) / 2.f) };
+		auto rr = D2D1::RoundedRect(rect, r, r);
+		if (isFill) ctx->FillRoundedRectangle(rr, brush.Get());
+		else ctx->DrawRoundedRectangle(rr, brush.Get(), strokeWidth);
 	}
 	else if (isFill) {
 		ctx->FillRectangle(rect, brush.Get());
@@ -85,6 +162,19 @@ void ShapeRectBase::paint(ID2D1DeviceContext* ctx)
 		ctx->DrawRectangle(rect, brush.Get(), strokeWidth);
 	}
 	ctx->SetTransform(prev);
+}
+
+void ShapeRectBase::paintDot(ID2D1DeviceContext* ctx, const D2D1_RECT_F& box, const bool withCenter) const
+{
+	if (box.right <= box.left) return;
+	auto c = D2D1::Point2F((box.left + box.right) / 2.f, (box.top + box.bottom) / 2.f);
+	auto r{ (box.right - box.left) / 2.f };
+	ctx->FillEllipse(D2D1::Ellipse(c, r, r), brushDraggerFill.Get());
+	ctx->DrawEllipse(D2D1::Ellipse(c, r, r), brushDragger.Get(), win->getDpi());
+	// 中间点一点的那枚 = "转"（扇区的方向由它定），与另外两枚空心点分开
+	if (withCenter) {
+		ctx->FillEllipse(D2D1::Ellipse(c, r * 0.3f, r * 0.3f), brushDragger.Get());
+	}
 }
 
 void ShapeRectBase::paintDragger(ID2D1DeviceContext* ctx)
@@ -99,6 +189,21 @@ void ShapeRectBase::paintDragger(ID2D1DeviceContext* ctx)
 		// 先填后描：描边是压在矩形边线中线上的，先描再填会把内半边盖掉，线看着只剩外半截
 		if (win->selected == this) ctx->FillRectangle(draggers[i], brushDraggerFill.Get());
 		ctx->DrawRectangle(draggers[i], brushDragger.Get(), dpi);
+	}
+	// 内部那几枚（圆角 / 扇区）只在选中时现身：它们调的是"这个元素自己的参数"，
+	// 光标只是路过时冒出来，会和八向手柄混在一起分不清谁是谁
+	if (win->selected == this) {
+		if (kind == Kind::Rect) {
+			for (int i = HitRadiusTL; i <= HitRadiusBL; i++) paintDot(ctx, draggers[i], false);
+		}
+		else {
+			// 完整圆只有一枚（拖它才切出扇形）；切出缺角之后内径那一枚才出现
+			if (isPie()) {
+				paintDot(ctx, draggers[HitInner], false);
+				paintDot(ctx, draggers[HitNotchStart], true);
+			}
+			paintDot(ctx, draggers[HitNotchEnd], false);
+		}
 	}
 	ctx->SetTransform(prev);
 	// 旋转手柄的坐标已经是屏幕坐标（见 updateRotateHandle），不能再跟着上面的变换转一遍
@@ -118,10 +223,56 @@ void ShapeRectBase::updateRotateHandle()
 
 void ShapeRectBase::mouseDrag(const float x, const float y)
 {
-	if (hoverDraggerIndex == HitRotate) {
-		// 手柄静止时挂在右下角，鼠标方向减掉静止方向（rotateRestAngle）才是这次转过的角度
+	switch (hoverDraggerIndex)
+	{
+	case HitRotate:
 		angle = rotateAngleAt(rectCenter(), x, y);
 		return;
+	case HitRadiusTL:
+	case HitRadiusTR:
+	case HitRadiusBR:
+	case HitRadiusBL:
+	{
+		// 手柄往图形里拖得越深圆角越大：半径就是它离那个角点往里让开的距离。
+		// 拖回角上（甚至拖到外面）就是方角 —— 用两份分量里小的那个，
+		// 这样斜着拖也不会把角拖成"一边大一边小"的怪形状
+		auto p = unrotatePoint({ x, y }, rectCenter(), angle);
+		float inward{ 0.f };
+		switch (hoverDraggerIndex)
+		{
+		case HitRadiusTL: inward = std::min(p.x - rect.left, p.y - rect.top); break;
+		case HitRadiusTR: inward = std::min(rect.right - p.x, p.y - rect.top); break;
+		case HitRadiusBR: inward = std::min(rect.right - p.x, rect.bottom - p.y); break;
+		default:          inward = std::min(p.x - rect.left, rect.bottom - p.y); break;
+		}
+		radius = std::clamp(inward - radiusHome(), 0.f, radiusMax());
+		return;
+	}
+	case HitInner:
+	{
+		// 往中心拖 = 实心扇形；往外拖 = 环形。位置就是"离圆心多远"，与画出来的内圈一致
+		auto p = unrotatePoint({ x, y }, rectCenter(), angle);
+		auto nx{ rx > 0.f ? (p.x - cx) / rx : 0.f };
+		auto ny{ ry > 0.f ? (p.y - cy) / ry : 0.f };
+		innerRatio = std::clamp(sqrtf(nx * nx + ny * ny), 0.f, 0.95f);
+		return;
+	}
+	case HitNotchStart:
+	{
+		// 这枚是"把缺角整个转过去"：跨度不变，两条边一起走 —— 就是扇形的朝向
+		auto p = unrotatePoint({ x, y }, rectCenter(), angle);
+		notchStart = norm360(atan2f(p.y - cy, p.x - cx) * 180.f / kPi);
+		return;
+	}
+	case HitNotchEnd:
+	{
+		// 这枚改的是缺角有多大（也就是扇形还剩多少）。停在起始边上就是完整圆
+		auto p = unrotatePoint({ x, y }, rectCenter(), angle);
+		auto deg = atan2f(p.y - cy, p.x - cx) * 180.f / kPi;
+		// 留一点点：正好 360 时那两条边重合，看着像画错了
+		notchSweep = std::min(norm360(deg - notchStart), 359.f);
+		return;
+	}
 	}
 	if (hoverDraggerIndex == HitBody) {
 		auto w = rect.right - rect.left;
@@ -183,8 +334,9 @@ void ShapeRectBase::mouseDown(const float x, const float y)
 	}
 	pressW = rect.right - rect.left;
 	pressH = rect.bottom - rect.top;
-	if (hoverDraggerIndex == HitRotate) {
-		// 旋转按"当前位形 + 鼠标位置"现算，按下这一下只要把尺寸记下来就够
+	if (hoverDraggerIndex >= HitRotate) {
+		// 旋转与那几枚内部手柄都在 mouseDrag 里按"当前位形 + 鼠标位置"现算，
+		// 按下这一下只要把尺寸记下来就够
 		pressX = x;
 		pressY = y;
 		return;
@@ -226,6 +378,14 @@ void ShapeRectBase::setCursor()
 	case 3: case 7: SetCursor(LoadCursor(nullptr, IDC_SIZEWE)); return;
 	case HitBody: SetCursor(LoadCursor(nullptr, IDC_SIZEALL)); return;
 	case HitRotate: SetCursor(LoadCursor(nullptr, IDC_CROSS)); return;
+	default:
+		if (hoverDraggerIndex >= HitRadiusTL && hoverDraggerIndex <= HitRadiusBL) {
+			SetCursor(LoadCursor(nullptr, IDC_SIZEALL));
+		}
+		else if (hoverDraggerIndex >= HitInner) {
+			SetCursor(LoadCursor(nullptr, IDC_CROSS));
+		}
+		return;
 	}
 }
 
@@ -275,7 +435,7 @@ void ShapeRectBase::onAction(const int i)
 {
 	if (i != 0) return;
 	kind = kind == Kind::Rect ? Kind::Ellipse : Kind::Rect;
-	// 几何、颜色、线宽全部留着 —— 换的只是"怎么画、怎么命中"。
+	// 几何、颜色、线宽、圆角、扇区全部留着 —— 换的只是"怎么画、怎么命中"。
 	// toolId 故意不动：它是"这一笔当初是哪个工具画的"，工具条改样式、WinPin 换工具
 	// 时清选中态都按它筛。翻成"ellipse"的话，正选着它的这一刻调颜色反而落不到它身上。
 	// 互转之后要跟着换的是线宽那一组，由 styleGroup() 按 kind 现取
@@ -286,6 +446,28 @@ void ShapeRectBase::onAction(const int i)
 void ShapeRectBase::hitDraggers(const float x, const float y)
 {
 	for (int i = 0; i <= 7; i++) {
+		if (isInRect(draggers[i], x, y)) {
+			hoverDraggerIndex = i;
+			return;
+		}
+	}
+	// 内部那几枚只在选中时才算数（也只在选中时才画，见 paintDragger）
+	if (win->selected != this) return;
+	if (kind == Kind::Rect) {
+		for (int i = HitRadiusTL; i <= HitRadiusBL; i++) {
+			if (isInRect(draggers[i], x, y)) {
+				hoverDraggerIndex = i;
+				return;
+			}
+		}
+		return;
+	}
+	// 完整圆时只有"切缺角"那一枚（内径那枚要等切出扇形才出现）
+	if (isPie() && isInRect(draggers[HitInner], x, y)) {
+		hoverDraggerIndex = HitInner;
+		return;
+	}
+	for (int i = HitNotchStart; i <= HitNotchEnd; i++) {
 		if (isInRect(draggers[i], x, y)) {
 			hoverDraggerIndex = i;
 			return;
@@ -306,13 +488,20 @@ void ShapeRectBase::hitBody(const float x, const float y)
 		// 命中带的宽度折算到单位圆上（两个半径取平均，扁椭圆也不会一带子宽一带子窄）
 		auto rr{ (rx + ry) / 2.f };
 		auto band{ rr > 0.f ? half / rr : 0.f };
-		if (r > 1.f + band || r < 1.f - band) return;
+		if (r > 1.f + band) return;
+		// 内边界：实心图形（含实心扇形）就是贴着外沿那一圈带子 —— 内部整块都能抓的话，
+		// 一个铺满大半张图的填充椭圆会让里面的空白处再也点不到，别的标注就没法画了。
+		// 环形（innerRatio > 0）时中间是空的，从内圈到外沿这一整圈才都是图，抓哪儿都算
+		auto hole{ innerRatio > 0.02f ? innerRatio : 0.f };
+		if (r < std::max(hole, 1.f - band)) return;
+		// 缺角那一块也不在图里
+		if (inNotch(atan2f(y - cy, x - cx) * 180.f / kPi)) return;
 		hoverDraggerIndex = HitBody;
 		return;
 	}
 	if (x >= rect.left - half && x <= rect.right + half && y >= rect.top - half && y <= rect.bottom + half)
 	{
-		if (x <= rect.left + half || x >= rect.right - half || y >= rect.top + half || y >= rect.bottom - half) {
+		if (x <= rect.left + half || x >= rect.right - half || y <= rect.top + half || y >= rect.bottom - half) {
 			hoverDraggerIndex = HitBody;
 		}
 	}
@@ -339,7 +528,8 @@ void ShapeRectBase::makeDraggers()
 	auto box = [half](float px, float py) {
 		return D2D1::RectF(px - half, py - half, px + half, py + half);
 	};
-	// 顺序不能动，mouseDown / mouseDrag 里的语义按它写（对角 = 索引 + 4）
+	auto none = D2D1::RectF(0, 0, 0, 0);
+	// 0~7 八向：顺序不能动，mouseDown / mouseDrag 里的语义按它写（对角 = 索引 + 4）
 	draggers[0] = box(rect.left, rect.top);
 	draggers[1] = box(rect.left + w / 2, rect.top);
 	draggers[2] = box(rect.right, rect.top);
@@ -348,4 +538,32 @@ void ShapeRectBase::makeDraggers()
 	draggers[5] = box(rect.left + w / 2, rect.bottom);
 	draggers[6] = box(rect.left, rect.bottom);
 	draggers[7] = box(rect.left, rect.top + h / 2);
+	// 圆角手柄：四个角沿对角线往里让开"初始位置 + 当前半径"，正好落在圆角弧的起止点上
+	auto off{ radiusHome() + radius };
+	draggers[HitRadiusTL] = kind == Kind::Rect ? box(rect.left + off, rect.top + off) : none;
+	draggers[HitRadiusTR] = kind == Kind::Rect ? box(rect.right - off, rect.top + off) : none;
+	draggers[HitRadiusBR] = kind == Kind::Rect ? box(rect.right - off, rect.bottom - off) : none;
+	draggers[HitRadiusBL] = kind == Kind::Rect ? box(rect.left + off, rect.bottom - off) : none;
+	// 扇区那三枚：内径那一枚落在"缺角起点"那条边上、离圆心 innerRatio 倍半径处
+	// （内径为 0 时正好在圆心）；另外两枚分别落在缺角的两条边与外弧的交点上
+	if (kind == Kind::Ellipse) {
+		auto start = notchStart, end = notchStart + notchSweep;
+		if (isPie()) {
+			draggers[HitInner] = box(ellipsePoint(start, innerRatio).x, ellipsePoint(start, innerRatio).y);
+			draggers[HitNotchStart] = box(ellipsePoint(start, 1.f).x, ellipsePoint(start, 1.f).y);
+			draggers[HitNotchEnd] = box(ellipsePoint(end, 1.f).x, ellipsePoint(end, 1.f).y);
+		}
+		else {
+			// 完整圆只有一枚，摆在圆内（0.55 倍半径）而不是外弧上 ——
+			// 外弧上正压着"整体拖动"的命中带，小点摆那儿会和拖图形抢鼠标
+			draggers[HitInner] = none;
+			draggers[HitNotchStart] = none;
+			draggers[HitNotchEnd] = box(ellipsePoint(end, 0.55f).x, ellipsePoint(end, 0.55f).y);
+		}
+	}
+	else {
+		draggers[HitInner] = none;
+		draggers[HitNotchStart] = none;
+		draggers[HitNotchEnd] = none;
+	}
 }
