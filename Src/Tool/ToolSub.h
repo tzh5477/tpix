@@ -28,6 +28,9 @@ public:
 	// 文本当前的字体族名（DWrite 认的名字）。工具条还没建过字体按钮时给默认的微软雅黑 ——
 	// ShapeText 在文本工具下取它，空串会让 DWrite 退回默认字体，不如直接给个明确的
 	const std::wstring& getFontFamily() const;
+	// 水印的字体族名，同上。与文本各存一份：两个工具的用法不同 ——
+	// 水印一般是固定一款，不该被文字工具上一次的选择带着跑
+	const std::wstring& getWatermarkFontFamily() const;
 	// 给新建的序号取一个编号，并把「下一个」自增回填到输入框。
 	// 工具条没开着也照记不误 —— 编号的进度不能依赖面板是否可见
 	int takeNumberVal();
@@ -134,10 +137,13 @@ private:
 	int getNumberSampleVal();
 	// 「编号」输入框。它是固定宽度，宽度另算进 initSize 的 extraW
 	void initNumberBox();
-	// 字体按钮：按钮上显示当前字体名（长了截断），点开是系统字体全表
-	Ling::Button* makeFontBtn();
-	// 把当前字体写到按钮上。字体名长短不一，长了就截断加省略号
-	void syncFontBtnText(Ling::Button* btn);
+	// 字体按钮：按钮上显示当前字体名（长了截断），点开是常用十款里装了的那些。
+	// toolId 决定这份选择存在 config.json 的哪一组（文本 / 水印各一份），
+	// family 是随这份按钮一起走的那份族名，onPick 是选完之后要做的收尾
+	Ling::Button* makeFontBtn(const std::wstring& toolId, std::wstring& family,
+		std::function<void()> onPick);
+	// 把字体名写到按钮上。字体名长短不一，长了就截断加省略号
+	void syncFontBtnText(Ling::Button* btn, const std::wstring& family);
 	// 字体在系统字体表里的下标，找不到（换过机器 / 字体被卸了）返回 -1
 	int fontIndexOf(const std::wstring& family) const;
 	// 每个 show*Tools 开头都要做的事：收提示、清旧内容、记下当前工具，
@@ -211,6 +217,8 @@ private:
 	// 文本字体族名（DWrite 认的名字）。落盘存的是族名而不是下标 ——
 	// 下标会随着机器上装的字体变化而串味
 	std::wstring fontFamily;
+	// 水印字体族名，存 config.json 里 watermark 那一组
+	std::wstring watermarkFont;
 	UINT selectColorIndex{ 0 };
 	// 滑块值。每次切换工具都由 beginTool 从 config.json 里换成那个工具自己的那份。
 	float sliderVal{ 2.f };

@@ -290,7 +290,7 @@ void ToolSub::showTextTools()
 	beginTool(L"text");
 	// 字体按钮是固定宽度，宽度从 extraW 里预留（粗体 / 斜体两枚跟着 flex 走）
 	initSize(2, true, false, fontBtnW);
-	makeFontBtn();
+	makeFontBtn(L"text", fontFamily, [this]() { win->onToolStyleChanged(); });
 	// 粗体默认关（isTextBold 的初值），新建出来的文字就是不粗的
 	makeToggleBtn(L"\ue634", &isTextBold, L"tool.bold", L"bold");
 	makeToggleBtn(L"\ue682", &isTextItalic, L"tool.italic", L"italic");
@@ -307,6 +307,12 @@ const std::wstring& ToolSub::getFontFamily() const
 	return fontFamily.empty() ? defaultFamily : fontFamily;
 }
 
+const std::wstring& ToolSub::getWatermarkFontFamily() const
+{
+	static const std::wstring defaultFamily{ L"Microsoft YaHei" };
+	return watermarkFont.empty() ? defaultFamily : watermarkFont;
+}
+
 int ToolSub::fontIndexOf(const std::wstring& family) const
 {
 	auto& list = commonFonts();
@@ -316,12 +322,12 @@ int ToolSub::fontIndexOf(const std::wstring& family) const
 	return -1;
 }
 
-void ToolSub::syncFontBtnText(Ling::Button* btn)
+void ToolSub::syncFontBtnText(Ling::Button* btn, const std::wstring& family)
 {
 	auto& list = commonFonts();
-	auto idx = fontIndexOf(getFontFamily());
+	auto idx = fontIndexOf(family);
 	// 找不到就在列表里现查一遍显示名；机器上确实没这款字体（配置从别处搬来的）才退回族名本身
-	std::wstring show = idx >= 0 && idx < (int)list.size() ? list[idx].show : getFontFamily();
+	std::wstring show = idx >= 0 && idx < (int)list.size() ? list[idx].show : family;
 	// 按钮只有一格宽，长名字截断 —— 下拉里显示的是全名
 	if (show.size() > (size_t)fontMaxChars) {
 		show = show.substr(0, (size_t)fontMaxChars - 1) + L"\u2026";
@@ -329,34 +335,35 @@ void ToolSub::syncFontBtnText(Ling::Button* btn)
 	btn->setText(show);
 }
 
-Ling::Button* ToolSub::makeFontBtn()
+Ling::Button* ToolSub::makeFontBtn(const std::wstring& toolId, std::wstring& family,
+	std::function<void()> onPick)
 {
 	// 上次用的字体存在配置里。存族名而不是下标：下标会随机器上装的字体变化而串味
-	fontFamily = Setting::get()->getToolStr(L"text", L"fontFamily", L"Microsoft YaHei");
+	family = Setting::get()->getToolStr(toolId, L"fontFamily", L"Microsoft YaHei");
 	auto btn = contentNode->makeChild<Ling::Button>();
 	btn->setHeight(btnSize - 2.5);
 	btn->setWidth(fontBtnW);
 	btn->setFontSize(12.f);
 	btn->setBg(0);
 	btn->setHoverBg(0xF2F2F2ff);
-	syncFontBtnText(btn);
+	syncFontBtnText(btn, family);
 	tip->bind(btn, Lang::get(L"tool.font"));
-	btn->onClick.add([this, btn](Ling::Button*) {
+	btn->onClick.add([this, btn, toolId, &family, onPick](Ling::Button*) {
 		// 列表会盖住按钮，悬停提示先收掉（与其他下拉一致）
 		tip->hide();
 		auto& list = commonFonts();
 		std::vector<std::wstring> items;
 		items.reserve(list.size());
 		for (auto& font : list) items.push_back(font.show);
-		SelectPopup::show(this, btn, items, fontIndexOf(getFontFamily()),
-			[this, btn](int picked) {
+		SelectPopup::show(this, btn, items, fontIndexOf(family),
+			[this, btn, toolId, &family, onPick](int picked) {
 				auto& fonts = commonFonts();
 				if (picked < 0 || picked >= (int)fonts.size()) return;
-				fontFamily = fonts[picked].family;
-				Setting::get()->setToolStr(L"text", L"fontFamily", fontFamily);
-				syncFontBtnText(btn);
-				// 正在编辑的文本要立刻换字体，选中的文本也跟着换（同改颜色那条链路）
-				win->onToolStyleChanged();
+				family = fonts[picked].family;
+				Setting::get()->setToolStr(toolId, L"fontFamily", family);
+				syncFontBtnText(btn, family);
+				// 收尾由调用方给：文本要作用到正在编辑 / 选中的文字上，水印只要重画
+				if (onPick) onPick();
 			}, {}, fontPopupMinW);
 	});
 	return btn;
@@ -815,8 +822,9 @@ void ToolSub::showWatermarkTools()
 {
 	beginTool(L"watermark");
 	// 两个按钮（位置 / 旋转）+ 三个滑块（不透明度 / 大小 / 间距）+ 色板。
-	// extraW 里要算上文字输入框与它左右各一次的间距 —— initSize 只按滑块数算间距，输入框的得自己加
-	initSize(2, true, true, 150.f + sliderMargin * 2, 3);
+	// extraW 里要算上文字输入框与它左右各一次的间距、以及固定宽度的字体按钮 ——
+	// initSize 只按滑块数算间距，这两个的得自己加
+	initSize(2, true, true, 150.f + fontBtnW + sliderMargin * 2, 3);
 	auto setting = Setting::get();
 	// 文字从配置读回：水印十有八九每张截图都写同一句，不该每次都重打
 	watermarkText = setting->getToolStr(L"watermark", L"text", L"");
@@ -845,6 +853,9 @@ void ToolSub::showWatermarkTools()
 		Setting::get()->setToolStr(L"watermark", L"text", val);
 		win->refresh();
 		});
+	// 字体：与文本工具同一份常用十款，但存在 watermark 这一组 ——
+	// 水印一般是固定一款字体，不该被文字工具上一次的选择带着跑
+	makeFontBtn(L"watermark", watermarkFont, [this]() { win->refresh(); });
 	// 位置：平铺 / 右下角 / 左下角 / 右上角 / 左上角 / 顶部居中 / 底部居中 / 居中。
 	// 原来这里只有一个"平铺"开关 —— 关了就只能以鼠标落点为中心摆一块，四角 / 上下中这些常用落点
 	// 一个都没有。改成表里的八档，一次点中

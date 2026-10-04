@@ -39,24 +39,29 @@ bool ShapeWatermark::makeLayout()
 	textW = 0.f;
 	textH = 0.f;
 	if (!win->getToolSub()) return false;
-	auto text = win->getToolSub()->watermarkText;
+	auto sub = win->getToolSub();
+	auto text = sub->watermarkText;
 	if (text.empty()) return false;
 	// getSliderVal 返回的已经是物理像素（内部乘过 dpi），这里再乘一次会变成 dpi² ——
 	// 150% 缩放下 24 号被算成 54，字被放大、平铺步长跟着变大，看着就是"稀得看不见字"
-	auto fontSize = win->getToolSub()->getSliderVal();
+	auto fontSize = sub->getSliderVal();
 	layout = Ling::D2D::makeTextLayout(text, fontSize);
 	if (!layout) return false;
+	// 字体名要在建完 layout 之后单独设：Ling 的 makeTextLayout 用的是系统字体集合，
+	// 换族名在同一集合内就能换（与 ShapeText 同一条路子）
+	auto& family = sub->getWatermarkFontFamily();
+	if (!family.empty()) layout->SetFontFamilyName(family.c_str(), { 0, INT_MAX });
 	DWRITE_TEXT_METRICS m{};
 	if (FAILED(layout->GetMetrics(&m))) return false;
 	textW = m.width;
 	textH = m.height;
-	// 透明度四档与颜色都在工具条上。alpha 取"档位"这一个值就够了 ——
+	// 不透明度是滑块给的 0~1，颜色在工具条上。alpha 取"档位"这一个值就够了 ——
 	// 色板里每种颜色自己的 alpha 恒是 0xFF，乘不乘没区别
-	auto alpha = win->getToolSub()->getWatermarkOpacity();
+	auto alpha = sub->getWatermarkOpacity();
 	// 走 getSelectedColor 与其它标注同一条解码路径。原来这里手写移位把 0xRRGGBBAA 拆错位
 	// （每一路都少移 8 位，R 取成 G、B 取成 A），调色板的 alpha 又恒是 0xFF，
 	// 于是任何颜色都带满蓝：红色 0xCF1322FF 被解成 (19,34,255) —— 画出来就是蓝的
-	auto c = win->getToolSub()->getSelectedColor();
+	auto c = sub->getSelectedColor();
 	c.a = alpha;
 	if (FAILED(Ling::D2D::get()->deviceContext->CreateSolidColorBrush(c, brush.GetAddressOf()))) return false;
 	return true;
