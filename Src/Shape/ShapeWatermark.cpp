@@ -13,13 +13,6 @@ ShapeWatermark::~ShapeWatermark()
 {
 }
 
-void ShapeWatermark::mouseDown(const float x, const float y)
-{
-	// 居中模式的落点。平铺模式下用不到它，但记着无妨
-	cx = x;
-	cy = y;
-}
-
 void ShapeWatermark::setCursor()
 {
 	// 与序号一致：水印是"点一下就落"的元素，用系统箭头就够了
@@ -79,25 +72,46 @@ void ShapeWatermark::drawOne(ID2D1DeviceContext* ctx, float x, float y, float ro
 	ctx->DrawTextLayout({ -textW / 2.f, -textH / 2.f }, layout.Get(), brush.Get());
 }
 
+D2D1_POINT_2F ShapeWatermark::anchorPos(WmPos pos, float imgW, float imgH) const
+{
+	// 边距按文字自身高度给：小字自动贴得近，大字也不会顶到（或压住）图的边线
+	auto gap = std::max(textH * 0.5f, 8.f);
+	auto l{ gap + textW / 2.f }, t{ gap + textH / 2.f };
+	auto r{ imgW - gap - textW / 2.f }, b{ imgH - gap - textH / 2.f };
+	switch (pos)
+	{
+	case WmPos::RightBottom:  return D2D1::Point2F(r, b);
+	case WmPos::LeftBottom:   return D2D1::Point2F(l, b);
+	case WmPos::RightTop:     return D2D1::Point2F(r, t);
+	case WmPos::LeftTop:      return D2D1::Point2F(l, t);
+	case WmPos::TopCenter:    return D2D1::Point2F(imgW / 2.f, t);
+	case WmPos::BottomCenter: return D2D1::Point2F(imgW / 2.f, b);
+	default:                  return D2D1::Point2F(imgW / 2.f, imgH / 2.f);
+	}
+}
+
 void ShapeWatermark::paint(ID2D1DeviceContext* ctx)
 {
 	if (!makeLayout()) return;
-	// 直接问底图要像素尺寸（不是 GetSize —— 那个按位图自身 dpi 折过）。平铺范围就是整张底图
+	// 直接问底图要像素尺寸（不是 GetSize —— 那个按位图自身 dpi 折过）。平铺范围就是整张底图，
+	// 四角 / 居中的落点也要按它算，拿折过的尺寸会让水印整体偏到图中间去
 	auto sz = win->getImgSize();
 	if (sz.width == 0 || sz.height == 0) return;
-	auto rotation = win->getToolSub()->getWatermarkRotation();
+	auto sub = win->getToolSub();
+	auto pos = static_cast<WmPos>(sub->getWatermarkPos());
 	// 屏幕绘制时外层是缩放变换、导出时是单位阵，进来是什么出去还是什么，
 	// 不能自己设回 Scale —— 导出图会被放大 scale 倍
 	D2D1_MATRIX_3X2_F prev{};
 	ctx->GetTransform(&prev);
-	if (win->getToolSub()->watermarkTile) {
+	if (pos == WmPos::Tile) {
+		auto rotation = sub->getWatermarkRotation();
 		// 平铺：网格建在"文字自己的坐标系"里 —— u 沿文字方向、v 垂直文字方向。
 		// 这样留出的空隙是顺着文字斜的（看着就是正常的行距），整张图处处疏密一致。
 		// 早先这里是横平竖直的网格配斜着画的文字：斜文字的外接框与正交网格对不上，
 		// 列与列之间会空出一条从头通到底的白带、最右一列还可能整列够不到右边 ——
 		// "倾斜角度下水印显示不全、右上角没有水印"就是这么来的。
 		// 间距按文字尺寸的比例给（档位在工具条上切），小字自动密、大字自动疏
-		auto k = win->getToolSub()->getWatermarkGapRatio();
+		auto k = sub->getWatermarkGapRatio();
 		auto stepU = std::max(textW * (1.f + k), 1.f);   // 沿文字方向
 		auto stepV = std::max(textH * (1.f + k), 1.f);   // 垂直文字方向
 		auto rad{ rotation * 3.14159265358979323846f / 180.f };
@@ -127,8 +141,10 @@ void ShapeWatermark::paint(ID2D1DeviceContext* ctx)
 		}
 	}
 	else {
-		// 居中：以鼠标落点为水印中心
-		drawOne(ctx, cx, cy, rotation, prev);
+		// 四角 / 上下中 / 居中：只摆一块，而且一律水平摆 —— 角度那一项只对平铺有意义，
+		// 工具条上的旋转按钮在非平铺时是置灰的，这里也不去读它
+		auto p = anchorPos(pos, (float)sz.width, (float)sz.height);
+		drawOne(ctx, p.x, p.y, 0.f, prev);
 	}
 	ctx->SetTransform(prev);
 }

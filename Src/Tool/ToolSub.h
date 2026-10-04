@@ -73,15 +73,17 @@ public:
 	int arrowStyle{ 0 };
 	// 贴图不透明度的当前档位（下标进 .cpp 里的 pinOpacitySteps 表），值本身落盘
 	int pinOpacity{ 0 };
-	// 水印。文字 / 平铺是状态本体；档位存下标，换算成透明度与角度的表在 .cpp 里
+	// 水印。文字 / 位置是状态本体；透明度、角度、间距的档位存下标，换算表在 .cpp 里
 	std::wstring watermarkText{ L"" };
-	// 默认平铺：只落一块居中的水印，图一大就容易被当成"没生效"，平铺才是水印该有的样子
-	bool watermarkTile{ true };
+	// 水印位置：0 平铺 / 1 右下角 / 2 左下角 / 3 右上角 / 4 左上角 / 5 顶部居中 / 6 底部居中 / 7 居中。
+	// 顺序与 ShapeWatermark::WmPos 一一对应，也是「位置」下拉里的顺序（要落盘，别随手调）
+	int watermarkPos{ 0 };
 	// watermarkGap 是平铺间距档位（0 紧凑 / 1 标准 / 2 宽松），换算系数的表同样在 .cpp 里
 	int watermarkOpacity{ 0 }, watermarkRotate{ 0 }, watermarkGap{ 1 };
 	float getWatermarkOpacity() const;
 	float getWatermarkRotation() const;
 	float getWatermarkGapRatio() const;
+	int getWatermarkPos() const { return watermarkPos; }
 private:
 	void onCreated() override;
 	void layout() override;
@@ -90,6 +92,9 @@ private:
 	void onColorSelect(Ling::Button* btn);
 	void initColorBtns();
 	void initSlider();
+	// 水印的「旋转」按钮：非平铺时置灰并让它点了也不动 —— 角度只对平铺有意义。
+	// 位置一变（下拉里选的）就要重画一次按钮上的字与配色，所以单独抽出来
+	void syncWatermarkRotateBtn();
 	// 选中/未选中两套配色，与 ToolMain 的选中效果保持一致
 	void applyToggleStyle(Ling::Button* btn, bool selected);
 	// 建一个可切换的工具按钮：初始态从配置文件读（写回 flag），点击时翻转 flag、刷新配色并落盘。
@@ -149,6 +154,9 @@ private:
 	// 当前的滑块。切换工具时会被销毁重建，重建后由 initSlider 重新赋值。
 	// 存下来是为了在窗口的 onMouseMove 里判断鼠标是否在它上面，好显示数值提示。
 	Ling::Slider* slider{ nullptr };
+	// 水印「旋转」按钮。与 slider 同理：切工具时随 contentNode 一起销毁，beginTool 里必须置空，
+	// 否则位置下拉回调里的 syncWatermarkRotateBtn 会往一个已删掉的按钮上写字
+	Ling::Button* watermarkRotBtn{ nullptr };
 	// 悬停提示。要 hwnd，所以在 onCreated 里才建得起来
 	std::unique_ptr<Tip> tip;
 	static constexpr float btnSize{ 32.f };

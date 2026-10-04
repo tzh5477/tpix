@@ -189,6 +189,8 @@ void ToolSub::beginTool(const std::wstring& id)
 	slider = nullptr;
 	numberBox = nullptr;
 	numberBoxSilent = false;
+	// 同上：水印的旋转按钮也只在水印面板里存在
+	watermarkRotBtn = nullptr;
 	curToolId = id;
 	auto cfg = findSliderCfg(id);
 	if (!cfg) return;
@@ -814,11 +816,13 @@ void ToolSub::makeApplyAllBtn()
 void ToolSub::showWatermarkTools()
 {
 	beginTool(L"watermark");
-	// 四枚按钮：透明度 / 旋转 / 间距 / 平铺
+	// 四枚按钮：位置 / 旋转 / 透明度 / 间距（+ 一个通用滑块）
 	initSize(4, true, true, 150.f);
 	auto setting = Setting::get();
 	// 文字从配置读回：水印十有八九每张截图都写同一句，不该每次都重打
 	watermarkText = setting->getToolStr(L"watermark", L"text", L"");
+	// 位置也读回并夹一遍：配置可能是旧版写的（那时还没有这个键），也可能被手工改坏
+	watermarkPos = std::clamp((int)setting->getToolNum(L"watermark", L"pos", 0.f), 0, 7);
 	// 文字输入框的宽度已在 initSize 里预留（extraW），放最前面
 	auto textBox = contentNode->makeChild<Ling::TextBox>();
 	textBox->setHeight(btnSize - 2.5);
@@ -835,6 +839,40 @@ void ToolSub::showWatermarkTools()
 		Setting::get()->setToolStr(L"watermark", L"text", val);
 		win->refresh();
 		});
+	// 位置：平铺 / 右下角 / 左下角 / 右上角 / 左上角 / 顶部居中 / 底部居中 / 居中。
+	// 原来这里只有一个"平铺"开关 —— 关了就只能以鼠标落点为中心摆一块，四角 / 上下中这些常用落点
+	// 一个都没有。改成表里的八档，一次点中
+	std::vector<std::wstring> posItems;
+	for (int i = 0; i < 8; ++i) posItems.push_back(Lang::get(std::format(L"tool.watermarkPos{}", i)));
+	makeSelectBtn(L"tool.watermarkPos", L"pos", &watermarkPos, posItems,
+		[this]() { syncWatermarkRotateBtn(); win->refresh(); }, false, false);
+	// 旋转按钮自己建（不用 makeSelectBtn）：非平铺时要置灰且点了不弹列表
+	{
+		auto btn = contentNode->makeChild<Ling::Button>();
+		watermarkRotBtn = btn;
+		btn->setHeight(btnSize - 2.5);
+		btn->setFlexGrow(1.f);
+		btn->setFontSize(13.f);
+		btn->setBg(0);
+		btn->setHoverBg(0xF2F2F2ff);
+		tip->bind(btn, Lang::get(L"tool.watermarkRotate"));
+		btn->onClick.add([this, btn](Ling::Button*) {
+			// 平铺以外的位置一律水平摆（见 ShapeWatermark::paint），角度这一项用不上
+			if (watermarkPos != 0) return;
+			// 列表可能翻到按钮上方，那时它正好压在悬停提示的位置上，先把提示收掉
+			tip->hide();
+			std::vector<std::wstring> items;
+			for (auto v : watermarkRotateSteps) items.push_back(std::format(L"{}°", (int)v));
+			SelectPopup::show(this, btn, items, std::clamp(watermarkRotate, 0, 3),
+				[this](int picked) {
+					watermarkRotate = picked;
+					Setting::get()->setToolNum(curToolId, L"rotate", (float)picked);
+					syncWatermarkRotateBtn();
+					win->refresh();
+				});
+			});
+	}
+	syncWatermarkRotateBtn();
 	// 水印是画的时候现读工具条状态的，档位一变就得刷一下才看得见
 	std::vector<std::wstring> opacityItems;
 	for (auto v : watermarkOpacitySteps) {
@@ -842,23 +880,24 @@ void ToolSub::showWatermarkTools()
 	}
 	makeSelectBtn(L"tool.watermarkOpacity", L"opacity", &watermarkOpacity, opacityItems,
 		[this]() { win->refresh(); });
-	std::vector<std::wstring> rotateItems;
-	for (auto v : watermarkRotateSteps) {
-		rotateItems.push_back(std::format(L"{}°", (int)v));
-	}
-	makeSelectBtn(L"tool.watermarkRotate", L"rotate", &watermarkRotate, rotateItems,
-		[this]() { win->refresh(); });
 	// 平铺间距三档：布局是 paint 时现算的，跟透明度 / 旋转一样换档就得刷
 	std::vector<std::wstring> gapItems;
 	for (int i = 0; i < 3; ++i) gapItems.push_back(Lang::get(std::format(L"tool.watermarkGap{}", i)));
 	makeSelectBtn(L"tool.watermarkGap", L"gap", &watermarkGap, gapItems,
 		[this]() { win->refresh(); });
-	// 平铺开关：apply 里必须把成员写回去 —— 以前只 refresh 了一下，成员一直是初值 false，
-	// 于是"平铺"永远是关的、图上也永远只落一块水印
-	makeTextToggle(Lang::get(L"tool.watermarkTile"), L"tool.watermarkTile", L"tile", true,
-		[this](bool on) { watermarkTile = on; win->refresh(); });
 	initSlider();
 	initColorBtns();
+}
+
+void ToolSub::syncWatermarkRotateBtn()
+{
+	if (!watermarkRotBtn) return;
+	// 非平铺显示 0°：这就是图上实际的摆法，免得人以为"调了角度没生效"
+	auto on = watermarkPos == 0;
+	auto deg = on ? (int)watermarkRotateSteps[std::clamp(watermarkRotate, 0, 3)] : 0;
+	watermarkRotBtn->setText(std::format(L"{}°", deg));
+	watermarkRotBtn->setColor(on ? 0x000000FF : 0xAAAAAAFF);
+	watermarkRotBtn->setHoverBg(on ? 0xF2F2F2ff : 0);
 }
 
 void ToolSub::initSlider()

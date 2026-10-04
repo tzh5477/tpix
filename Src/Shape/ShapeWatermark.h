@@ -2,12 +2,15 @@
 #include <include/Ling.h>
 #include "ShapeBase.h"
 
-// 文字水印。单击落一个水印层：居中一块，或者平铺整张底图（ToolSub 上切）。
-// 样式（文字 / 字号 / 颜色 / 透明度 / 平铺 / 旋转）每次画的时候直接从工具条读，
+// 文字水印。单击落一个水印层：平铺整张底图，或者按「位置」摆在四角 / 上下中 / 正中。
+// 样式（文字 / 字号 / 字体 / 颜色 / 透明度 / 位置 / 旋转）每次画的时候直接从工具条读，
 // 所以工具条上改任何一项，图上已画的水印立刻跟着变，不需要 applyStyle 重排
 class ShapeWatermark : public ShapeBase
 {
 public:
+	// 水印落点。值与工具条「位置」下拉的顺序、config.json 里 watermark.pos 一一对应，
+	// 也是 ToolSub::watermarkPos 的取值（改动顺序会让老配置串味）
+	enum class WmPos { Tile = 0, RightBottom, LeftBottom, RightTop, LeftTop, TopCenter, BottomCenter, Center };
 	ShapeWatermark(Canvas* win);
 	~ShapeWatermark();
 	void paint(ID2D1DeviceContext* ctx) override;
@@ -15,7 +18,6 @@ public:
 	// 单击就是它的正常用法：落一个水印层，不需要拖动
 	bool isValidWithoutDrag() override { return true; };
 	void setCursor() override;
-	void mouseDown(const float x, const float y) override;
 	// 只有水印工具下才吃悬停：别的工具下它不是"图上某一块"，而是整张图的背景层，
 	// 一旦参与命中就会把其它工具的每一下点击都截胡（见 .cpp 里的说明）
 	void mouseMove(const float x, const float y) override;
@@ -26,7 +28,9 @@ private:
 	// outer 是外层已有的变换（屏幕上是缩放、导出时是单位阵），必须左乘保住
 	void drawOne(ID2D1DeviceContext* ctx, float x, float y, float rotation,
 		const D2D1_MATRIX_3X2_F& outer);
-	float cx{ 0.f }, cy{ 0.f };
+	// 非平铺时的落点（底图坐标）：按位置把水印摆在四角 / 上下中 / 正中，
+	// 四周留一点边距，免得压着图的边线
+	D2D1_POINT_2F anchorPos(WmPos pos, float imgW, float imgH) const;
 	Microsoft::WRL::ComPtr<IDWriteTextLayout> layout;
 	Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brush;
 	// 缓存 makeLayout 的结果，paint 里判断"有没有东西可画"用
