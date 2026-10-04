@@ -24,16 +24,29 @@ public:
 	// 新建这一笔如果只是按下马上弹起（没有拖动），默认当成什么也没画，元素直接丢掉。
 	// 单击本身就是正常用法的元素（number 落徽章、text 进编辑）覆盖它返回 true
 	virtual bool isValidWithoutDrag() { return false; };
-	bool isInRect(const D2D1_RECT_F rect, const float x, const float y);
-	// 元素在底图坐标系里的外接矩形。用来摆右上角那个关闭按钮 ——
-	// 默认返回 false（水印铺满整图、折线族那几笔用户说不用加），派生类按需覆写
+	// 命中判定要能在 const 上下文里用（动作图标的 hitActionBtn 就是 const 的）
+	bool isInRect(const D2D1_RECT_F rect, const float x, const float y) const;
+	// 元素在底图坐标系里的外接矩形。用来摆右上角那排动作图标 ——
+	// 默认返回 false（水印铺满整图、折线族那几笔用户说不用加），派生类按需覆写。
+	// 带旋转的元素要把旋转也算进去（摆图标的是外接框，不是未旋转的那个 rect）
 	virtual bool getShapeBounds(D2D1_RECT_F& out) const { return false; }
-	// 右上角关闭按钮的方框（底图坐标）。没有外接矩形的元素返回一个空框
-	D2D1_RECT_F closeBtnRect() const;
-	// 点是否落在关闭按钮上
-	bool hitCloseBtn(const float x, const float y);
-	// 画关闭按钮：白底圆 + 浅蓝边 + 一个 ×。样式与那些控制点成套
-	void paintCloseBtn(ID2D1DeviceContext* ctx);
+	// 选中元素右上角那排小图标。末尾恒是 ×（删除），派生类自己的动作图标排在它左边 ——
+	// 矩形/圆用一枚做"矩形↔圆"互转。默认一枚都没有，只有 ×
+	virtual int actionCount() const { return 0; }
+	// 画第 i 枚动作图标（i 只会在 actionCount 范围内被调到）。c 是圆心、rad 是圆半径
+	virtual void paintActionIcon(ID2D1DeviceContext* ctx, const int i, const D2D1_POINT_2F& c, const float rad) {}
+	// 第 i 枚动作图标被点了
+	virtual void onAction(const int i) {}
+	// 整排图标的枚数（含末尾那枚 ×）
+	int actionBtnTotal() const { return actionCount() + 1; }
+	// 第 i 枚图标的方框（底图坐标）。没有外接矩形、或 i 越界时返回空框
+	D2D1_RECT_F actionBtnRect(const int i) const;
+	// 命中的是第几枚图标，没命中返回 -1
+	int hitActionBtn(const float x, const float y) const;
+	// 画整排图标：白底圆 + 浅蓝边，派生类的动作图标在前、末尾那枚是 ×
+	void paintActionBtns(ID2D1DeviceContext* ctx);
+	// 命中之后分发：末尾那枚 = 删掉自己，其余交给 onAction
+	void onActionBtn(const int i);
 public:
 	// 所属画布。窗口尺寸、DPI、底图、工具条样式、刷新全从这里出 ——
 	// shape 不认识窗口，换一个画布宿主这层照旧能挂上去
@@ -45,10 +58,35 @@ public:
 	// 跨类型套样式会让文字、序号被矩形的那个颜色污染
 	std::wstring toolId;
 protected:
+	// 旋转手柄：挂在外接框的右下方向、再沿对角线往外挪一点（pixpin 的旋转提示就在这个位置），
+	// 既不压着框线，转起来也不会和框本身挤在一起。
+	// 文本与矩形族共用这一份 —— 画法（圆弧 + 两端箭头）与求角方式完全一样
+	void updateRotateDragger(const D2D1_RECT_F& bounds);
+	// 画旋转手柄。坐标已经是转好之后的，调用方不用再叠旋转
+	void paintRotateHandle(ID2D1DeviceContext* ctx);
+	// 鼠标落在 (x,y) 时，相对手柄的静止方向转过了多少度（顺时针为正）。
+	// center 是元素中心，rotateRestAngle 由 updateRotateDragger 记下
+	float rotateAngleAt(const D2D1_POINT_2F& center, const float x, const float y) const;
+	// 绕 c 转 deg 度（与 D2D 的 Rotation 同一套约定：正角度在屏幕上顺时针）
+	static D2D1_POINT_2F rotatePoint(const D2D1_POINT_2F& p, const D2D1_POINT_2F& c, const float deg);
+	// 同上的反向：命中判定时把鼠标点转回元素自己的坐标系
+	static D2D1_POINT_2F unrotatePoint(const D2D1_POINT_2F& p, const D2D1_POINT_2F& c, const float deg);
+	// 按画布当前的变换把点映射过去。元素存的是底图坐标，而屏幕上还压着 Canvas 的缩放
+	// （Ctrl+滚轮），旋转中心得跟着落到同一层坐标上，否则一缩放就转偏
+	static D2D1_POINT_2F transformPoint(ID2D1DeviceContext* ctx, const D2D1_POINT_2F& p);
+	// 轴对齐矩形绕自己中心转 deg 度之后的外接矩形。带旋转的元素给动作图标定位要用
+	// "看得见的那一块"的外面，不是未旋转的那个 rect
+	static D2D1_RECT_F rotatedBounds(const D2D1_RECT_F& r, const float deg);
+protected:
 	float draggerSize;
 	// 控制点的浅蓝描边 + 选中时的白色填充（样式参考 pixpin：浅蓝空心框压在标注线上，
 	// 不填白的话线从框中间穿过去，一排点看着全是花的）
 	Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brushDragger;
 	Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brushDraggerFill;
+	// 旋转手柄的方框（底图坐标），与它静止时所在的方向（度，顺时针为正、0 = 正上方）
+	D2D1_RECT_F rotateDragger{};
+	float rotateRestAngle{ 0.f };
+	// 手柄的两段几何：圆弧（描边）与两端的箭头（填充）。每帧重建，用 Release 拿地址
+	Microsoft::WRL::ComPtr<ID2D1PathGeometry> rotateArc, rotateArrows;
 private:
 };

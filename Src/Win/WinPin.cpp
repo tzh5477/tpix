@@ -769,10 +769,10 @@ void WinPin::layout()
 		if (drawing->shapeHover) {
 			drawing->shapeHover->paintDragger(ctx);
 		}
-		// 选中元素右上角的关闭按钮。只给"当前选中"的那一个画：鼠标掠过一串元素时
-		// 每个都冒一个 ×，反而看不出改样式 / 删除会作用到谁
+		// 选中元素右上角那排动作图标（末尾是 ×）。只给"当前选中"的那一个画：
+		// 鼠标掠过一串元素时每个都冒一枚 ×，反而看不出改样式 / 删除会作用到谁
 		if (drawing->selected) {
-			drawing->selected->paintCloseBtn(ctx);
+			drawing->selected->paintActionBtns(ctx);
 		}
 	}
 	// 蓝边框和倍数提示属于窗口装饰，不跟着图缩放：变换收回来，按窗口坐标画。
@@ -865,10 +865,13 @@ void WinPin::onDown(POINT pos, BOOL isRight)
 	// 也赶在"给正在编辑的那个收尾"之前：编辑器开着时这个 × 同样该点得动
 	{
 		auto hitPos = toImgPos(pos);
-		if (drawing->selected && drawing->selected->hitCloseBtn((float)hitPos.x, (float)hitPos.y)) {
-			// 走 History 的统一删除口子：它会先把可能开着的编辑器收尾，再删、再刷新
-			drawing->history->removeActiveShape();
-			return;
+		if (drawing->selected) {
+			// 末尾那枚是 ×（删掉），前面几枚是元素自己的动作图标（矩形/圆用它互转）
+			auto idx = drawing->selected->hitActionBtn((float)hitPos.x, (float)hitPos.y);
+			if (idx >= 0) {
+				drawing->selected->onActionBtn(idx);
+				return;
+			}
 		}
 	}
 	// 点在文本框外：先把正在编辑的那一个收尾，再往下派发。

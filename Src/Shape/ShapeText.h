@@ -42,16 +42,11 @@ private:
 	void setAttr();
 	// 旋转中心。rect 是轴对齐的存法，画的时候才绕这个点转
 	D2D1_POINT_2F center() const;
-	// 把点绕中心转 angle 度（与 D2D 的 Rotation 同一套约定：正角度在屏幕上顺时针）
-	D2D1_POINT_2F rotatedPoint(const D2D1_POINT_2F& p);
-	// 旋转手柄的矩形（在已经转过之后的坐标里），以及顺手更新它
+	// 旋转手柄的矩形（在已经转过之后的坐标里），以及顺手更新它。
+	// 手柄的画法与求角在 ShapeBase 上（与矩形族共用一份），这里只补"转过去"这一步
 	void updateRotateDragger();
-	// 画旋转手柄：一个圆弧 + 两端的箭头（pixpin 那个样式），而不是一个方块
-	void paintRotateHandle(ID2D1DeviceContext* ctx);
 	// 按文字实际尺寸把边框盒贴合上去。滚轮改完字号后文字会溢出原来的框，得跟着长
 	void fitRectToText();
-	// 画布当前的变换里可能带着 Canvas 的缩放，旋转中心得跟着它落到画布坐标上
-	D2D1_POINT_2F transformCenter(ID2D1DeviceContext* ctx) const;
 private:
 	std::wstring text;
 	// 整块文字绕中心旋转的角度（度）。rect 本身始终轴对齐，旋转只在画的时候施加，
@@ -59,12 +54,6 @@ private:
 	float angle{ 0.f };
 	// 编辑期间把角度临时归零（见 startEdit），这个值记着退出编辑时要还原的角度
 	float editAngle{ 0.f };
-	D2D1_RECT_F rotateDragger{};
-	// 手柄静止时所在的方向（度，顺时针为正，0 = 正上方）。手柄挂在右下角，
-	// 拖拽时算出的是鼠标方向，减掉它才是"相对静止位置转了多少"
-	float restAngle{ 0.f };
-	// 旋转手柄的两段几何：圆弧（描边）与两端的箭头（填充）。每帧重建，用 Release 拿地址
-	Microsoft::WRL::ComPtr<ID2D1PathGeometry> rotateArc, rotateArrows;
 	// 物理像素。ToolSub::getSliderVal() 给的就是物理值，而 TextBox::setFontSize 收逻辑值，
 	// 传过去时要除回 dpi。
 	float fontSize{ 20.f };

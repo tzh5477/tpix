@@ -37,99 +37,18 @@ D2D1_POINT_2F ShapeText::center() const
 	return { (rect.left + rect.right) / 2.f, (rect.top + rect.bottom) / 2.f };
 }
 
-D2D1_POINT_2F ShapeText::rotatedPoint(const D2D1_POINT_2F& p)
-{
-	auto c = center();
-	float radians = angle * 3.14159265358979323846f / 180.f;
-	float cosValue = cosf(radians);
-	float sinValue = sinf(radians);
-	float dx = p.x - c.x, dy = p.y - c.y;
-	return { c.x + dx * cosValue - dy * sinValue, c.y + dx * sinValue + dy * cosValue };
-}
-
-// 旋转中心不是 rect 的中心点本身：画布上可能还压着 Canvas 的缩放变换（Ctrl+滚轮），
-// 而导出那条路走的是不带缩放的离屏画布。统一用当前矩阵把中心点映射过去，
-// 两条路都不用各写一份换算
-D2D1_POINT_2F ShapeText::transformCenter(ID2D1DeviceContext* ctx) const
-{
-	// ID2D1RenderTarget::GetTransform 返回 void、走出参，没有按值返回的重载
-	D2D1_MATRIX_3X2_F m{};
-	ctx->GetTransform(&m);
-	auto c = center();
-	return { c.x * m._11 + c.y * m._21 + m._31, c.x * m._12 + c.y * m._22 + m._32 };
-}
-
+// 手柄的位置按"转过之后"算：静止点在右下方向，绕中心转 angle 才是它在屏幕上待的地方。
+// 方框本身仍是轴对齐的（命中判定也就跟着简单），只有中心点需要转
 void ShapeText::updateRotateDragger()
 {
-	auto half{ draggerSize / 2 };
-	// 手柄挂在框的右下角、再沿对角线往外挪一点（pixpin 的旋转提示就在这个位置），
-	// 既不压在框线上，转起来也不会和框本身挤在一起
-	auto dx{ (rect.right - rect.left) / 2.f };
-	auto dy{ (rect.bottom - rect.top) / 2.f };
-	auto len = sqrtf(dx * dx + dy * dy);
-	// 空文本时 rect 很小但不为零；真出现零尺寸就退回"右下方向"，div 会算出 NaN
-	auto ux{ len > 0.f ? dx / len : 0.7071f };
-	auto uy{ len > 0.f ? dy / len : 0.7071f };
-	// 静止方向：由中心指向右下角。顺时针为正、0 度朝上（与 mouseDrag 里的算法同一套）
-	restAngle = atan2f(dx, -dy) * 180.f / 3.14159265358979323846f;
-	auto offset = draggerSize * 0.8f;
-	auto p = rotatedPoint({ rect.right + ux * offset, rect.bottom + uy * offset });
-	rotateDragger = D2D1::RectF(p.x - half, p.y - half, p.x + half, p.y + half);
-}
-
-void ShapeText::paintRotateHandle(ID2D1DeviceContext* ctx)
-{
-	auto d2d = Ling::D2D::get();
-	auto dpi = win->getDpi();
-	auto c = D2D1::Point2F((rotateDragger.left + rotateDragger.right) / 2.f,
+	ShapeBase::updateRotateDragger(rect);
+	if (angle == 0.f) return;
+	auto c = center();
+	auto half{ draggerSize / 2.f };
+	auto h = D2D1::Point2F((rotateDragger.left + rotateDragger.right) / 2.f,
 		(rotateDragger.top + rotateDragger.bottom) / 2.f);
-	auto r{ draggerSize * 0.5f };
-	// 底下一个白圆：手柄要压在图上，不垫一层会和底图糊在一起
-	ctx->FillEllipse(D2D1::Ellipse(c, r, r), brushDraggerFill.Get());
-	ctx->DrawEllipse(D2D1::Ellipse(c, r, r), brushDragger.Get(), dpi);
-	// 圆弧：留一段缺口对着框（右下方向），看着就是个"转"的符号
-	auto arcR{ draggerSize * 0.3f };
-	auto arrowSize{ draggerSize * 0.26f };
-	const float start = 20.f, sweep = 280.f;
-	const int steps = 24;
-	d2d->d2dFactory->CreatePathGeometry(rotateArc.ReleaseAndGetAddressOf());
-	ComPtr<ID2D1GeometrySink> arcSink;
-	rotateArc->Open(arcSink.GetAddressOf());
-	// 屏幕角度 -> 点：0 度朝右、逆时针为正（屏幕 y 向下，所以纵坐标取负）
-	auto pointAt = [&](float deg) {
-		auto rad = deg * 3.14159265358979323846f / 180.f;
-		return D2D1::Point2F(c.x + arcR * cosf(rad), c.y - arcR * sinf(rad));
-	};
-	arcSink->BeginFigure(pointAt(start), D2D1_FIGURE_BEGIN_HOLLOW);
-	for (int i = 1; i <= steps; i++) {
-		arcSink->AddLine(pointAt(start + sweep * i / steps));
-	}
-	arcSink->EndFigure(D2D1_FIGURE_END_OPEN);
-	arcSink->Close();
-	ctx->DrawGeometry(rotateArc.Get(), brushDragger.Get(), dpi);
-	// 两端的箭头：指向圆弧的走向（起点朝回、终点朝前），拼成一个几何体一次填掉
-	d2d->d2dFactory->CreatePathGeometry(rotateArrows.ReleaseAndGetAddressOf());
-	ComPtr<ID2D1GeometrySink> headSink;
-	rotateArrows->Open(headSink.GetAddressOf());
-	auto addHead = [&](float deg, bool forward) {
-		auto rad = deg * 3.14159265358979323846f / 180.f;
-		// 圆弧在该点的切向（对 deg 求导），forward=false 时取反向
-		auto sign = forward ? 1.f : -1.f;
-		auto tx{ -sinf(rad) * sign }, ty{ -cosf(rad) * sign };
-		// 法向：切向转 90 度
-		auto nx{ -ty }, ny{ tx };
-		auto tip = D2D1::Point2F(c.x + arcR * cosf(rad) + tx * arrowSize, c.y - arcR * sinf(rad) + ty * arrowSize);
-		auto p1 = D2D1::Point2F(c.x + arcR * cosf(rad) + nx * arrowSize * 0.6f, c.y - arcR * sinf(rad) + ny * arrowSize * 0.6f);
-		auto p2 = D2D1::Point2F(c.x + arcR * cosf(rad) - nx * arrowSize * 0.6f, c.y - arcR * sinf(rad) - ny * arrowSize * 0.6f);
-		headSink->BeginFigure(p1, D2D1_FIGURE_BEGIN_FILLED);
-		headSink->AddLine(tip);
-		headSink->AddLine(p2);
-		headSink->EndFigure(D2D1_FIGURE_END_CLOSED);
-	};
-	addHead(start, false);
-	addHead(start + sweep, true);
-	headSink->Close();
-	ctx->FillGeometry(rotateArrows.Get(), brushDragger.Get());
+	auto p = rotatePoint(h, c, angle);
+	rotateDragger = D2D1::RectF(p.x - half, p.y - half, p.x + half, p.y + half);
 }
 
 void ShapeText::fitRectToText()
@@ -162,7 +81,7 @@ void ShapeText::paint(ID2D1DeviceContext* ctx)
 	ctx->GetTransform(&prev);
 	if (angle != 0.f) {
 		// 旋转叠在当前变换之后（矩阵左乘 = 先缩放再旋转），所以中心要用缩放后的坐标
-		ctx->SetTransform(prev * D2D1::Matrix3x2F::Rotation(angle, transformCenter(ctx)));
+		ctx->SetTransform(prev * D2D1::Matrix3x2F::Rotation(angle, transformPoint(ctx, center())));
 	}
 	ctx->DrawTextLayout({ rect.left + borderPadding, rect.top + borderPadding },
 		textLayout.Get(), textBrush.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
@@ -177,7 +96,7 @@ void ShapeText::paintDragger(ID2D1DeviceContext* ctx)
 	D2D1_MATRIX_3X2_F prev{};
 	ctx->GetTransform(&prev);
 	if (angle != 0.f) {
-		ctx->SetTransform(prev * D2D1::Matrix3x2F::Rotation(angle, transformCenter(ctx)));
+		ctx->SetTransform(prev * D2D1::Matrix3x2F::Rotation(angle, transformPoint(ctx, center())));
 	}
 	ctx->DrawRectangle(rect, textBrush.Get(), win->getDpi(), dashedStrokeStyle.Get());
 	ctx->SetTransform(prev);
@@ -189,9 +108,9 @@ void ShapeText::mouseDrag(const float x, const float y)
 {
 	if (hoverDraggerIndex == 9) {
 		auto c = center();
-		// 手柄静止时挂在右下角（方向见 updateRotateDragger 里的 restAngle），
-		// 鼠标方向减掉静止方向才是这次转过的角度。顺时针为正
-		angle = atan2f(x - c.x, -(y - c.y)) * 180.f / 3.14159265358979323846f - restAngle;
+		// 手柄静止时挂在右下角，鼠标方向减掉静止方向（rotateRestAngle）才是这次转过的角度。
+		// 顺时针为正
+		angle = rotateAngleAt(c, x, y);
 		return;
 	}
 	if (hoverDraggerIndex != 8) return;
@@ -247,16 +166,8 @@ void ShapeText::mouseMove(const float x, const float y)
 	}
 	// 转过之后框的可点区域也跟着转了，得把鼠标点逆着角度转回来再判 ——
 	// 否则框转了、能点中的那块还留在原处
-	auto lx = x, ly = y;
-	if (angle != 0.f) {
-		auto c = center();
-		float radians = -angle * 3.14159265358979323846f / 180.f;
-		float cosValue = cosf(radians);
-		float sinValue = sinf(radians);
-		auto dx = x - c.x, dy = y - c.y;
-		lx = c.x + dx * cosValue - dy * sinValue;
-		ly = c.y + dx * sinValue + dy * cosValue;
-	}
+	auto p = unrotatePoint(D2D1::Point2F(x, y), center(), angle);
+	auto lx = p.x, ly = p.y;
 	auto half{ borderPadding / 2.f + win->getDpi() };//多给一个 dpi，让判定范围宽松点
 	if (lx >= rect.left - half && lx <= rect.right + half && ly >= rect.top - half && ly <= rect.bottom + half)
 	{
@@ -446,6 +357,7 @@ void ShapeText::setAttr()
 
 bool ShapeText::getShapeBounds(D2D1_RECT_F& out) const
 {
-	out = rect;
+	// 转过的文字按"看得见的那一块"给动作图标定位，不然 × 会飘在虚线框外面
+	out = rotatedBounds(rect, angle);
 	return true;
 }
