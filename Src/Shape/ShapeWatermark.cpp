@@ -1,9 +1,70 @@
 ﻿#include "pch.h"
+#include <cwchar>
 #include "Canvas.h"
 #include "Tool/ToolSub.h"
 #include "Tool/ToolMain.h"
 #include "History.h"
 #include "ShapeWatermark.h"
+
+namespace {
+	// 时间占位符的零件。名字沿用 C# 那套自定义格式串（yyyy / MM / dd / HH / mm / ss），
+	// 认得的人多；大小写有意思（MM 是月、mm 是分），所以逐个精确匹配而不是统一大小写。
+	// 第二列是喂给 wcsftime 的格式
+	struct TimeToken {
+		const wchar_t* name;
+		const wchar_t* fmt;
+	};
+	const TimeToken timeTokens[]{
+		{ L"{yyyy}", L"%Y" }, { L"{yy}",   L"%y" }, { L"{MM}", L"%m" },
+		{ L"{dd}",   L"%d" }, { L"{HH}",   L"%H" }, { L"{mm}", L"%M" }, { L"{ss}", L"%S" },
+	};
+}
+
+const std::vector<std::wstring>& ShapeWatermark::timeFormats()
+{
+	static const std::vector<std::wstring> list{
+		L"{yyyy}-{MM}-{dd}",
+		L"{yyyy}/{MM}/{dd}",
+		L"{yyyy}年{MM}月{dd}日",
+		L"{yyyy}-{MM}-{dd} {HH}:{mm}",
+		L"{yyyy}-{MM}-{dd} {HH}:{mm}:{ss}",
+		L"{HH}:{mm}",
+		L"{HH}:{mm}:{ss}",
+		L"{yyyy}{MM}{dd}",
+	};
+	return list;
+}
+
+std::wstring ShapeWatermark::expandTime(const std::wstring& text, std::time_t stamp)
+{
+	// 连一个花括号都没有就没什么可换的，直接返回原串 —— 也省掉下面那一趟扫描
+	if (text.find(L'{') == std::wstring::npos) return text;
+	std::tm tm{};
+	localtime_s(&tm, &stamp);
+	std::wstring out;
+	out.reserve(text.size() + 16);
+	size_t i{ 0 };
+	while (i < text.size()) {
+		if (text[i] == L'{') {
+			bool matched{ false };
+			for (auto& t : timeTokens) {
+				auto n = wcslen(t.name);
+				// compare 自己会把越界的那段截掉，末尾只剩半个花括号时不会读到界外
+				if (text.compare(i, n, t.name) == 0) {
+					wchar_t buf[16]{};
+					out.append(buf, wcsftime(buf, 16, t.fmt, &tm));
+					i += n;
+					matched = true;
+					break;
+				}
+			}
+			if (matched) continue;
+		}
+		out.push_back(text[i]);
+		++i;
+	}
+	return out;
+}
 
 ShapeWatermark::ShapeWatermark(Canvas* win) : ShapeBase(win)
 {
@@ -40,8 +101,16 @@ bool ShapeWatermark::makeLayout()
 	textH = 0.f;
 	if (!win->getToolSub()) return false;
 	auto sub = win->getToolSub();
-	auto text = sub->watermarkText;
-	if (text.empty()) return false;
+	auto raw = sub->watermarkText;
+	if (raw.empty()) return false;
+	// 时间占位符只在"文字内容变了"的那一刻求值，之后的重画沿用同一个时刻。
+	// 每次 paint 都取当前时间的话，带秒的格式会在每次重画时跳一个数，
+	// 屏幕上看到的和导出那份还可能差一秒 —— 水印上的时间该是"这一笔写上去的时候"
+	if (raw != lastText) {
+		lastText = raw;
+		stamp = std::time(nullptr);
+	}
+	auto text = expandTime(raw, stamp);
 	// getSliderVal 返回的已经是物理像素（内部乘过 dpi），这里再乘一次会变成 dpi² ——
 	// 150% 缩放下 24 号被算成 54，字被放大、平铺步长跟着变大，看着就是"稀得看不见字"
 	auto fontSize = sub->getSliderVal();

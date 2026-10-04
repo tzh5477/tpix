@@ -1,5 +1,8 @@
 ﻿#pragma once
 #include <include/Ling.h>
+#include <ctime>
+#include <string>
+#include <vector>
 #include "ShapeBase.h"
 
 // 文字水印。单击落一个水印层：平铺整张底图，或者按「位置」摆在四角 / 上下中 / 正中。
@@ -11,6 +14,13 @@ public:
 	// 水印落点。值与工具条「位置」下拉的顺序、config.json 里 watermark.pos 一一对应，
 	// 也是 ToolSub::watermarkPos 的取值（改动顺序会让老配置串味）
 	enum class WmPos { Tile = 0, RightBottom, LeftBottom, RightTop, LeftTop, TopCenter, BottomCenter, Center };
+	// 水印文字里可用的时间模板，存进文字（与配置）的就是这个串 ——
+	// 工具条的「时间」下拉显示的则是"按当前时刻展开之后的样子"，比显示模板好认。
+	// 顺序就是下拉里的顺序，八种最常用的写法（日期三种、日期加时间两种、纯时间两种、紧凑一种）
+	static const std::vector<std::wstring>& timeFormats();
+	// 把 text 里的 {yyyy} / {MM} / {dd} / {HH} / {mm} / {ss} 换成 stamp 这一刻的值。
+	// 没有占位符就原样返回（也不会去碰花括号里的其它内容）
+	static std::wstring expandTime(const std::wstring& text, std::time_t stamp);
 	ShapeWatermark(Canvas* win);
 	~ShapeWatermark();
 	void paint(ID2D1DeviceContext* ctx) override;
@@ -35,4 +45,8 @@ private:
 	Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brush;
 	// 缓存 makeLayout 的结果，paint 里判断"有没有东西可画"用
 	float textW{ 0.f }, textH{ 0.f };
+	// 时间占位符是在"文字内容变了"那一刻求值的，之后重画沿用同一个 stamp ——
+	// 见 makeLayout 里的说明
+	std::wstring lastText;
+	std::time_t stamp{ 0 };
 };

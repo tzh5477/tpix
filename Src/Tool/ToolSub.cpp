@@ -1,11 +1,13 @@
 #include "pch.h"
 #include <cmath>
+#include <ctime>
 #include "../Win/WinPin.h"
 #include "../Lang.h"
 #include "../SelectPopup.h"
 #include "../Setting.h"
 #include "../History.h"
 #include "../Shape/ShapeNumber.h"
+#include "../Shape/ShapeWatermark.h"
 #include "../Tip.h"
 #include "ToolSub.h"
 #include "ToolMain.h"
@@ -821,10 +823,10 @@ void ToolSub::makeApplyAllBtn()
 void ToolSub::showWatermarkTools()
 {
 	beginTool(L"watermark");
-	// 两个按钮（位置 / 旋转）+ 三个滑块（不透明度 / 大小 / 间距）+ 色板。
+	// 三个按钮（位置 / 旋转 / 时间）+ 三个滑块（不透明度 / 大小 / 间距）+ 色板。
 	// extraW 里要算上文字输入框与它左右各一次的间距、以及固定宽度的字体按钮 ——
 	// initSize 只按滑块数算间距，这两个的得自己加
-	initSize(2, true, true, 150.f + fontBtnW + sliderMargin * 2, 3);
+	initSize(3, true, true, 150.f + fontBtnW + sliderMargin * 2, 3);
 	auto setting = Setting::get();
 	// 文字从配置读回：水印十有八九每张截图都写同一句，不该每次都重打
 	watermarkText = setting->getToolStr(L"watermark", L"text", L"");
@@ -856,6 +858,8 @@ void ToolSub::showWatermarkTools()
 	// 字体：与文本工具同一份常用十款，但存在 watermark 这一组 ——
 	// 水印一般是固定一款字体，不该被文字工具上一次的选择带着跑
 	makeFontBtn(L"watermark", watermarkFont, [this]() { win->refresh(); });
+	// 时间：往文字末尾插一个时间占位符
+	makeWatermarkTimeBtn(textBox);
 	// 位置：平铺 / 右下角 / 左下角 / 右上角 / 左上角 / 顶部居中 / 底部居中 / 居中。
 	// 原来这里只有一个"平铺"开关 —— 关了就只能以鼠标落点为中心摆一块，四角 / 上下中这些常用落点
 	// 一个都没有。改成表里的八档，一次点中
@@ -947,6 +951,37 @@ Ling::Slider* ToolSub::makeSlider(float min, float max, float val, std::function
 	s->setFillColor(0x888888FF);
 	sliders.push_back(s);
 	return s;
+}
+
+void ToolSub::makeWatermarkTimeBtn(Ling::TextBox* textBox)
+{
+	auto btn = contentNode->makeChild<Ling::Button>();
+	btn->setHeight(btnSize - 2.5);
+	btn->setFlexGrow(1.f);
+	btn->setFontSize(13.f);
+	btn->setBg(0);
+	btn->setHoverBg(0xF2F2F2ff);
+	// 按钮上就写"时间"两个字：图标字体里没有现成的时钟，硬凑一个码位大概率显示成方块
+	btn->setText(Lang::get(L"tool.watermarkTime"));
+	tip->bind(btn, Lang::get(L"tool.watermarkTime"));
+	btn->onClick.add([this, btn, textBox](Ling::Button*) {
+		tip->hide();
+		auto& fmts = ShapeWatermark::timeFormats();
+		// 列表里显示的是"按现在这一刻展开之后的样子"，比把 {yyyy}-{MM}-{dd} 直接摆出来好认
+		auto now = std::time(nullptr);
+		std::vector<std::wstring> items;
+		items.reserve(fmts.size());
+		for (auto& f : fmts) items.push_back(ShapeWatermark::expandTime(f, now));
+		SelectPopup::show(this, btn, items, -1, [this, textBox, &fmts](int picked) {
+			if (picked < 0 || picked >= (int)fmts.size()) return;
+			// 插在末尾。原来那句不为空就先换行 —— 时间单独占一行才是水印的常见写法
+			auto text = textBox->getText();
+			if (!text.empty() && text.back() != L'\n') text += L'\n';
+			text += fmts[picked];
+			// setText 会触发 onTextChanged（那边落盘 + 重画），不用自己再刷一遍
+			textBox->setText(text);
+			});
+		});
 }
 
 void ToolSub::initSlider()

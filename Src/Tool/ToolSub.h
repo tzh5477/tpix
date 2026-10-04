@@ -99,6 +99,9 @@ private:
 	// 建一个横向滑块。值域 / 当前值都由调用方给（水印的不透明度、间距、大小都要用，
 	// 而每工具一份的那套字段只有"大小"这一项），建好之后登记进 sliders 好让悬停提示找到它
 	Ling::Slider* makeSlider(float min, float max, float val, std::function<void(float)> onChange);
+	// 水印的「时间」下拉：往水印文字末尾插一个时间占位符（原来那句不为空就先换行）。
+	// 列表里显示的是"按现在这一刻展开之后的样子"，比直接显示模板串好认
+	void makeWatermarkTimeBtn(Ling::TextBox* textBox);
 	// 水印的「旋转」按钮：非平铺时置灰并让它点了也不动 —— 角度只对平铺有意义。
 	// 位置一变（下拉里选的）就要重画一次按钮上的字与配色，所以单独抽出来
 	void syncWatermarkRotateBtn();
