@@ -97,8 +97,11 @@ private:
 	void initColorBtns();
 	void initSlider();
 	// 建一个横向滑块。值域 / 当前值都由调用方给（水印的不透明度、间距、大小都要用，
-	// 而每工具一份的那套字段只有"大小"这一项），建好之后登记进 sliders 好让悬停提示找到它
-	Ling::Slider* makeSlider(float min, float max, float val, std::function<void(float)> onChange);
+	// 而每工具一份的那套字段只有"大小"这一项），建好之后登记进 sliders 好让悬停提示找到它。
+	// name 是悬停提示里写在数值前面的那一截（"不透明度 25"），
+	// 只在同排摆着多个滑块时才需要 —— 一个滑块的工具光看数字就知道是什么
+	Ling::Slider* makeSlider(float min, float max, float val, std::function<void(float)> onChange,
+		const std::wstring& name = {});
 	// 水印的「时间」下拉：往水印文字末尾插一个时间占位符（原来那句不为空就先换行）。
 	// 列表里显示的是"按现在这一刻展开之后的样子"，比直接显示模板串好认
 	void makeWatermarkTimeBtn(Ling::TextBox* textBox);
@@ -169,8 +172,10 @@ private:
 	// 当前的滑块。切换工具时会被销毁重建，重建后由 initSlider 重新赋值。
 	// 存下来是为了在窗口的 onMouseMove 里判断鼠标是否在它上面，好显示数值提示。
 	Ling::Slider* slider{ nullptr };
-	// 本工具条上摆着的所有滑块（水印有三个）。悬停提示要挨个判，切工具时随内容一起作废
+	// 本工具条上摆着的所有滑块（水印有三个）。悬停提示要挨个判，切工具时随内容一起作废。
+	// sliderNames 与它一一对应，是提示里写在数值前面的那一截（单滑块的工具留空串）
 	std::vector<Ling::Slider*> sliders;
+	std::vector<std::wstring> sliderNames;
 	// 水印「旋转」按钮。与 slider 同理：切工具时随 contentNode 一起销毁，beginTool 里必须置空，
 	// 否则位置下拉回调里的 syncWatermarkRotateBtn 会往一个已删掉的按钮上写字
 	Ling::Button* watermarkRotBtn{ nullptr };

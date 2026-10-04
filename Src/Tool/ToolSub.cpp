@@ -163,11 +163,15 @@ void ToolSub::onCreated()
 	// 不能无条件 hide()：颜色按钮的 onLeave 排在这个回调后面，会把它刚显示出来的提示误关掉。
 	onMouseMove.add([this](POINT pos) {
 		// 本工具条上可能有多个滑块（水印那不透明度 / 大小 / 间距三个并排），挨个判
-		for (auto* s : sliders) {
+		for (size_t i = 0; i < sliders.size(); ++i) {
+			auto* s = sliders[i];
 			if (s->isPosIn(pos)) {
 				// 显示的是鼠标底下那个位置的值，不是当前值 —— 光标只是在滑轨上路过时 value 并没变
+				auto val = std::format(L"{}", static_cast<int>(std::round(s->getValueAt(static_cast<float>(pos.x)))));
+				// 三个滑块长得一样，光给个数字分不清是哪个 —— 有名字就写成"不透明度 25"
+				auto name = i < sliderNames.size() ? sliderNames[i] : std::wstring{};
 				tip->showAt(s, static_cast<float>(x + pos.x), y + s->y + Tip::anchorInset * dpi,
-					std::format(L"{}", static_cast<int>(std::round(s->getValueAt(static_cast<float>(pos.x))))));
+					name.empty() ? val : name + L" " + val);
 				return;
 			}
 		}
@@ -187,6 +191,7 @@ void ToolSub::beginTool(const std::wstring& id)
 	// 滑块与编号输入框一并作废：不是每个面板都建它们，留着就是悬垂指针
 	slider = nullptr;
 	sliders.clear();
+	sliderNames.clear();
 	numberBox = nullptr;
 	numberBoxSilent = false;
 	// 同上：水印的旋转按钮也只在水印面板里存在
@@ -895,12 +900,13 @@ void ToolSub::showWatermarkTools()
 	}
 	syncWatermarkRotateBtn();
 	// 不透明度 / 大小 / 间距：三个横向滑块并排。原来这里是「25%」「标准」两个档位下拉 ——
-	// 三档五档之间只能跳，想微调没法微调；水印这几个量恰恰是要反复试的
+	// 三档五档之间只能跳，想微调没法微调；水印这几个量恰恰是要反复试的。
+	// 三个长得一模一样，所以各自带一个名字 —— 悬停提示里写成"不透明度 25"这种
 	makeSlider(5.f, 100.f, (float)watermarkAlpha, [this](float val) {
 		watermarkAlpha = (int)std::lround(val);
 		Setting::get()->setToolNum(curToolId, L"alpha", val);
 		win->refresh();
-		});
+		}, Lang::get(L"tool.watermarkOpacity"));
 	// 大小沿用这个工具在 config.json 里的 fontSize；值域同样查 .cpp 里那张表（beginTool 已填好）
 	slider = makeSlider(sliderMin, sliderMax, sliderVal, [this](float val) {
 		sliderVal = val;
@@ -909,12 +915,12 @@ void ToolSub::showWatermarkTools()
 		win->onToolStyleChanged();
 		// 与 initSlider 的唯一区别：水印不是选中态元素，没选中任何东西时也得重画才看得见
 		win->refresh();
-		});
+		}, Lang::get(L"tool.watermarkSize"));
 	makeSlider(0.f, 100.f, (float)watermarkGapPct, [this](float val) {
 		watermarkGapPct = (int)std::lround(val);
 		Setting::get()->setToolNum(curToolId, L"gapPct", val);
 		win->refresh();
-		});
+		}, Lang::get(L"tool.watermarkGap"));
 	initColorBtns();
 }
 
@@ -929,7 +935,8 @@ void ToolSub::syncWatermarkRotateBtn()
 	watermarkRotBtn->setHoverBg(on ? 0xF2F2F2ff : 0);
 }
 
-Ling::Slider* ToolSub::makeSlider(float min, float max, float val, std::function<void(float)> onChange)
+Ling::Slider* ToolSub::makeSlider(float min, float max, float val, std::function<void(float)> onChange,
+	const std::wstring& name)
 {
 	auto s = contentNode->makeChild<Ling::Slider>();
 	// 尺寸从字段来，别写字面量：initSize 按同样的字段算窗口宽度，
@@ -950,6 +957,7 @@ Ling::Slider* ToolSub::makeSlider(float min, float max, float val, std::function
 	s->setTrackColor(0x888888FF);
 	s->setFillColor(0x888888FF);
 	sliders.push_back(s);
+	sliderNames.push_back(name);
 	return s;
 }
 
