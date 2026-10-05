@@ -1118,6 +1118,22 @@ UINT32 ToolSub::getSelectedColorValue() const
 	return colors[selectColorIndex];
 }
 
+UINT32 ToolSub::getWatermarkColorValue() const
+{
+	// 水印的选中色只有一处落盘：config.json 里 watermark 组的 colorIndex（onColorSelect 写的）。
+	// 不去读 selectColorIndex —— 那是"当前工具"的那份共享下标，切工具时就被换成别人的了，
+	// 而水印每帧都来取色（见 ShapeWatermark::prepare），于是"改矩形填充色水印跟着变色"。
+	// colors[] 的各处取用都不做边界检查，配置被手工改坏或旧版本写了越界值时这里兜一下
+	auto n = static_cast<int>(Setting::get()->getToolNum(L"watermark", L"colorIndex", 0.f));
+	if (n < 0 || n >= (int)colors.size()) n = 0;
+	return colors[(size_t)n];
+}
+
+D2D1_COLOR_F ToolSub::getWatermarkColor() const
+{
+	return Ling::Color(getWatermarkColorValue()).getD2DColor();
+}
+
 float ToolSub::getSliderVal() const
 {
 	return sliderVal*dpi;

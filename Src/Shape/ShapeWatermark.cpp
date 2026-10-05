@@ -129,10 +129,13 @@ bool ShapeWatermark::makeLayout()
 	// 不透明度是滑块给的 0~1，颜色在工具条上。alpha 取"档位"这一个值就够了 ——
 	// 色板里每种颜色自己的 alpha 恒是 0xFF，乘不乘没区别
 	auto alpha = sub->getWatermarkOpacity();
-	// 走 getSelectedColor 与其它标注同一条解码路径。原来这里手写移位把 0xRRGGBBAA 拆错位
-	// （每一路都少移 8 位，R 取成 G、B 取成 A），调色板的 alpha 又恒是 0xFF，
-	// 于是任何颜色都带满蓝：红色 0xCF1322FF 被解成 (19,34,255) —— 画出来就是蓝的
-	auto c = sub->getSelectedColor();
+	// 颜色取水印自己那一份（getWatermarkColor），不能借 getSelectedColor ——
+	// 那个是"当前工具"的选中色，切到矩形把填充色改成绿色后水印每帧都会跟着变绿。
+	// 与上面字号 / 字体 / 不透明度同一条路子：水印的样式只认 watermark 这一组。
+	// 解码仍走同一条路径（Ling::Color(...).getD2DColor()）—— 原来这里手写移位把
+	// 0xRRGGBBAA 拆错位（每一路都少移 8 位，R 取成 G、B 取成 A），调色板的 alpha
+	// 又恒是 0xFF，于是任何颜色都带满蓝：红色 0xCF1322FF 被解成 (19,34,255) —— 画出来就是蓝的
+	auto c = sub->getWatermarkColor();
 	c.a = alpha;
 	if (FAILED(Ling::D2D::get()->deviceContext->CreateSolidColorBrush(c, brush.GetAddressOf()))) return false;
 	return true;

@@ -67,6 +67,13 @@ public:
 	// 同一个颜色的 RGBA 原值。Ling::Color 没有从 D2D1_COLOR_F 构造的口子，
 	// TextBox::setColor 这类要 Ling::Color 的地方得用它。
 	UINT32 getSelectedColorValue() const;
+	// 水印用的颜色。刻意不借上面那两个 —— selectColorIndex 是"当前工具"共享的那一份
+	// 选中色，beginTool 每切一次工具就把它换成那个工具的。水印绘制每帧都取色，
+	// 于是"切到矩形、把填充色改成绿色"会把水印也染成绿色。
+	// 与字号 / 字体 / 不透明度同一条理由：水印的样式只认 watermark 这一组。
+	// 取的是同一份落盘值（onColorSelect 往 watermark/colorIndex 写的那一个）
+	D2D1_COLOR_F getWatermarkColor() const;
+	UINT32 getWatermarkColorValue() const;
 	// 滑块当前值（逻辑像素语义，用作线宽/字号等；D2D 里当物理像素用的话记得乘 dpi）。
 	// 值存在 sliderVal 里而不是问 Slider 节点要 —— 节点每次切换工具都被销毁重建。
 	float getSliderVal() const;
