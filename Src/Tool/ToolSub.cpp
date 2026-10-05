@@ -9,6 +9,7 @@
 #include "../Shape/ShapeNumber.h"
 #include "../Shape/ShapeWatermark.h"
 #include "../Tip.h"
+#include "../Win/WinWatermarkText.h"
 #include "ToolSub.h"
 #include "ToolMain.h"
 
@@ -54,48 +55,45 @@ namespace {
 		static const std::vector<std::wstring> items{ L"\ue909", L"\ue90a" };
 		return items;
 	}
-	// 系统字体表的每一项：family 是喂给 DWrite 的族名，show 是界面上显示的名字
-	struct FontItem {
-		std::wstring family;
-		std::wstring show;
-	};
-	// 「字体」下拉里固定这十款：系统里装的族往往上百个，全列出来既翻不到底、九成也没人用。
-	// family 是喂给 DWrite 的英文族名（中英文名 DWrite 都认，但英文名在任何语言的系统上都一样），
-	// show 是界面上显示的名字。机器上没装的那几款在下面被剔掉 ——
-	// 留下的都是"选了真能生效"的，不会出现点完没反应
-	const std::vector<FontItem>& commonFonts()
-	{
-		static std::vector<FontItem> list;
-		if (!list.empty()) return list;
-		static const std::pair<const wchar_t*, const wchar_t*> table[]{
-			{ L"Microsoft YaHei", L"微软雅黑" },
-			{ L"SimSun",          L"宋体" },
-			{ L"SimHei",          L"黑体" },
-			{ L"KaiTi",           L"楷体" },
-			{ L"FangSong",        L"仿宋" },
-			{ L"DengXian",        L"等线" },
-			{ L"Arial",           L"Arial" },
-			{ L"Times New Roman", L"Times New Roman" },
-			{ L"Calibri",         L"Calibri" },
-			{ L"Consolas",        L"Consolas" },
-		};
-		auto factory = Ling::D2D::get()->dwriteFactory;
-		ComPtr<IDWriteFontCollection> collection;
-		if (!factory || FAILED(factory->GetSystemFontCollection(collection.GetAddressOf(), FALSE))) return list;
-		for (auto& [family, show] : table) {
-			UINT32 idx{ 0 };
-			BOOL exists{ FALSE };
-			if (FAILED(collection->FindFamilyName(family, &idx, &exists)) || !exists) continue;
-			list.push_back({ family, show });
-		}
-		return list;
-	}
 	// 贴图不透明度的四档。index 落盘的是下标，百分比文本由 showPinTools 按这张表生成
 	const float pinOpacitySteps[]{ 1.f, 0.75f, 0.5f, 0.25f };
 	// 水印的旋转档位（角度只有在平铺下才有意义）
-const float watermarkRotateSteps[]{ 0.f, 30.f, 45.f, 60.f };
+	const float watermarkRotateSteps[]{ 0.f, 30.f, 45.f, 60.f };
 }
 
+// 「字体」下拉里固定这十款：系统里装的族往往上百个，全列出来既翻不到底、九成也没人用。
+// family 是喂给 DWrite 的英文族名（中英文名 DWrite 都认，但英文名在任何语言的系统上都一样），
+// show 是界面上显示的名字。机器上没装的那几款在下面被剔掉 ——
+// 留下的都是"选了真能生效"的，不会出现点完没反应。
+// 声明在 ToolSub.h 上：水印的内容编辑弹窗要用同一份
+const std::vector<ToolSub::FontItem>& ToolSub::commonFonts()
+{
+	static std::vector<FontItem> list;
+	if (!list.empty()) return list;
+	static const std::pair<const wchar_t*, const wchar_t*> table[]{
+		{ L"Microsoft YaHei", L"微软雅黑" },
+		{ L"SimSun",          L"宋体" },
+		{ L"SimHei",          L"黑体" },
+		{ L"KaiTi",           L"楷体" },
+		{ L"FangSong",        L"仿宋" },
+		{ L"DengXian",        L"等线" },
+		{ L"Arial",           L"Arial" },
+		{ L"Times New Roman", L"Times New Roman" },
+		{ L"Calibri",         L"Calibri" },
+		{ L"Consolas",        L"Consolas" },
+	};
+	auto factory = Ling::D2D::get()->dwriteFactory;
+	ComPtr<IDWriteFontCollection> collection;
+	if (!factory || FAILED(factory->GetSystemFontCollection(collection.GetAddressOf(), FALSE))) return list;
+	for (auto& [family, show] : table) {
+		UINT32 idx{ 0 };
+		BOOL exists{ FALSE };
+		if (FAILED(collection->FindFamilyName(family, &idx, &exists)) || !exists) continue;
+		list.push_back({ family, show });
+	}
+	return list;
+}
+// 声明在 ToolSub.h 上：水印的内容编辑弹窗要用同一份
 float ToolSub::getWatermarkOpacity() const
 {
 	// 滑块给的是整数百分比，画的时候要 0~1
@@ -320,7 +318,7 @@ const std::wstring& ToolSub::getWatermarkFontFamily() const
 	return watermarkFont.empty() ? defaultFamily : watermarkFont;
 }
 
-int ToolSub::fontIndexOf(const std::wstring& family) const
+int ToolSub::fontIndexOf(const std::wstring& family)
 {
 	auto& list = commonFonts();
 	for (size_t i = 0; i < list.size(); i++) {
@@ -329,12 +327,16 @@ int ToolSub::fontIndexOf(const std::wstring& family) const
 	return -1;
 }
 
+// 界面上显示的名字：表里查得到就用表里的（中文显示名），查不到退回族名本身
+std::wstring ToolSub::fontShowName(const std::wstring& family)
+{
+	auto idx = fontIndexOf(family);
+	return idx >= 0 ? commonFonts()[idx].show : family;
+}
+
 void ToolSub::syncFontBtnText(Ling::Button* btn, const std::wstring& family)
 {
-	auto& list = commonFonts();
-	auto idx = fontIndexOf(family);
-	// 找不到就在列表里现查一遍显示名；机器上确实没这款字体（配置从别处搬来的）才退回族名本身
-	std::wstring show = idx >= 0 && idx < (int)list.size() ? list[idx].show : family;
+	std::wstring show = fontShowName(family);
 	// 按钮只有一格宽，长名字截断 —— 下拉里显示的是全名
 	if (show.size() > (size_t)fontMaxChars) {
 		show = show.substr(0, (size_t)fontMaxChars - 1) + L"\u2026";

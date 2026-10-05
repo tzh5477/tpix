@@ -10,6 +10,19 @@ class ShapeNumber;
 class ToolSub:public Ling::WinBase
 {
 public:
+	// 系统字体表里"常用十款"的一项。family 是喂给 DWrite 的族名，show 是界面上显示的名字。
+	// 放在头文件里是因为水印的内容编辑弹窗也要用同一份表 —— 两处各列一份的话，
+	// 改了一处忘了另一处，同一个字体在两处的下拉里就长得不一样
+	struct FontItem {
+		std::wstring family;
+		std::wstring show;
+	};
+	// 常用十款（机器上没装的会自动剔掉）。整个进程一份，第一次调用时才去查系统字体表
+	static const std::vector<FontItem>& commonFonts();
+	// 某款字体在 commonFonts 里的下标，找不到（换过机器 / 字体被卸了）返回 -1
+	static int fontIndexOf(const std::wstring& family);
+	// 界面上的显示名：表里查得到就用表里的（中文显示名），查不到退回族名本身
+	static std::wstring fontShowName(const std::wstring& family);
 	ToolSub(WinPin* win);
 	~ToolSub();
 	void showRectTools();
@@ -150,8 +163,6 @@ private:
 		std::function<void()> onPick);
 	// 把字体名写到按钮上。字体名长短不一，长了就截断加省略号
 	void syncFontBtnText(Ling::Button* btn, const std::wstring& family);
-	// 字体在系统字体表里的下标，找不到（换过机器 / 字体被卸了）返回 -1
-	int fontIndexOf(const std::wstring& family) const;
 	// 每个 show*Tools 开头都要做的事：收提示、清旧内容、记下当前工具，
 	// 再把这个工具存在 config.json 里的滑块值和颜色读回来（读不到就用默认值 / 第一个颜色）。
 	// 滑块的键名与值域查 .cpp 里那张表，id 必须是表里有的（就是 ToolMain 的按钮 id）。
