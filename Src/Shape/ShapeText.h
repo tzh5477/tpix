@@ -42,9 +42,6 @@ private:
 	void setAttr();
 	// 旋转中心。rect 是轴对齐的存法，画的时候才绕这个点转
 	D2D1_POINT_2F center() const;
-	// 旋转手柄的矩形（在已经转过之后的坐标里），以及顺手更新它。
-	// 手柄的画法与求角在 ShapeBase 上（与矩形族共用一份），这里只补"转过去"这一步
-	void updateRotateDragger();
 	// 按文字实际尺寸把边框盒贴合上去。滚轮改完字号后文字会溢出原来的框，得跟着长
 	void fitRectToText();
 private:

@@ -66,8 +66,6 @@ protected:
 	// 画一枚"内部手柄"（圆角 / 扇区那几枚）。它们是空心的圆点，
 	// withCenter 为真时中间再点一个实心点 —— 那是"转方向"那一枚
 	void paintDot(ID2D1DeviceContext* ctx, const D2D1_RECT_F& box, const bool withCenter) const;
-	// 旋转手柄的方框：按轴对齐的 rect 算完再绕中心转到该在的地方（同 ShapeText）
-	void updateRotateHandle();
 	// 局部坐标 -> 屏幕坐标（绕 rect 中心转 angle 度）。angle 为 0 时原样返回，
 	// 免得白白跑一遍三角函数，也让没转过的那条路径与从前逐位一致
 	D2D1_POINT_2F toWorld(const D2D1_POINT_2F& p) const;

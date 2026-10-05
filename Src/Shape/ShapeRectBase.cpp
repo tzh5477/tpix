@@ -179,9 +179,11 @@ void ShapeRectBase::paintDot(ID2D1DeviceContext* ctx, const D2D1_RECT_F& box, co
 
 void ShapeRectBase::paintDragger(ID2D1DeviceContext* ctx)
 {
-	// 手柄位置每帧重算：rect 可能刚被拖过，而 paintDragger 不一定排在 mouseDrag 之后
+	// 手柄位置每帧重算：rect 可能刚被拖过，而 paintDragger 不一定排在 mouseDrag 之后。
+	// 摆在未旋转的外接框右下角（基类按 getShapeBounds 算），不跟着图形转 ——
+	// 手柄属于"外接框"，元素转过之后它仍待在框的右下角，三个角上的按钮才对得齐
 	makeDraggers();
-	updateRotateHandle();
+	updateRotateDragger();
 	auto prev{ setRotateTransform(ctx) };
 	auto dpi = win->getDpi();
 	for (int i = 0; i <= 7; i++) {
@@ -206,20 +208,12 @@ void ShapeRectBase::paintDragger(ID2D1DeviceContext* ctx)
 		}
 	}
 	ctx->SetTransform(prev);
-	// 旋转手柄的坐标已经是屏幕坐标（见 updateRotateHandle），不能再跟着上面的变换转一遍
+	// 手柄没跟着上面的变换转（见上），这里直接按它自己的坐标画
 	paintRotateHandle(ctx);
 }
 
-void ShapeRectBase::updateRotateHandle()
-{
-	ShapeBase::updateRotateDragger(rect);
-	if (angle == 0.f) return;
-	auto half{ draggerSize / 2.f };
-	auto h = D2D1::Point2F((rotateDragger.left + rotateDragger.right) / 2.f,
-		(rotateDragger.top + rotateDragger.bottom) / 2.f);
-	auto p = rotatePoint(h, rectCenter(), angle);
-	rotateDragger = D2D1::RectF(p.x - half, p.y - half, p.x + half, p.y + half);
-}
+// 手柄位置由基类按外接框右下角一次算完（与右上角的 × 对称），这里不必再跟着图形转 ——
+// 手柄属于"外接框"而不是图形本身，元素转过之后它仍待在框的右下角
 
 void ShapeRectBase::mouseDrag(const float x, const float y)
 {
@@ -355,7 +349,7 @@ void ShapeRectBase::mouseMove(const float x, const float y)
 	hoverDraggerIndex = -1;
 	// 手柄位置是 paintDragger 里算的，而它只在 hover 时才跑；这里先补算一次，
 	// 免得刚把鼠标移上去的那一帧拿着上一次的旧位置判不中
-	updateRotateHandle();
+	updateRotateDragger();
 	if (isInRect(rotateDragger, x, y)) {
 		hoverDraggerIndex = HitRotate;
 		return;

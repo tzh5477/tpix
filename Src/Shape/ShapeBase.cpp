@@ -28,17 +28,29 @@ D2D1_RECT_F ShapeBase::actionBtnRect(const int i) const
 	if (i < 0 || i >= actionBtnTotal()) return D2D1::RectF(0.f, 0.f, 0.f, 0.f);
 	if (!getShapeBounds(b)) return D2D1::RectF(0.f, 0.f, 0.f, 0.f);
 	auto rad{ draggerSize * 0.9f };
-	// 默认摆在外接矩形右上角的"外面"一点：角上正压着那个控制点，叠在一起会互相打架
-	auto gap{ draggerSize * 1.6f };
-	// 图标之间留一点缝。整排往右上角外面排：末尾那枚（×）紧贴右上角、位置恒为
-	// b.right + gap，派生类多挂的图标顺着往右长 —— 这样 × 永远不挪位，用户不用重新找它
+	// 离框多远。角上正压着八向手柄，而 WinPin::onDown 里 hitActionBtn 排在 shape 派发之前：
+	// 两者贴太近时，瞄着角手柄去 resize 就会先被按钮截住（点 × 直接把元素删了）。
+	// 3.2 个手柄宽 = 按钮内边缘离角手柄外边缘还有约 2 个手柄宽，鼠标走过去不会中途改判
+	auto gap{ draggerSize * 3.2f };
+	// 图标之间留一点缝
 	auto step{ rad * 2.f + draggerSize * 0.5f };
 	auto last{ actionBtnTotal() - 1 };
-	auto cx{ b.right + gap + (last - i) * step };
-	auto cy{ b.top - gap };
-	// 顶到画布边上就整排翻到内侧 —— 否则按钮被画布裁掉，点都点不到
+	// 末尾那枚（×）恒定在右上角；派生类自己的动作图标在左上角，从角上往外排。
+	// 分居两个角：挤在同一条边上时相邻两枚只隔一个手柄宽，鼠标移过去极易点错 ——
+	// 点错 × 就是把刚画的东西删了，点错互转就是形状忽然变了
+	float cx{}, cy{ b.top - gap };
+	if (i == last) {
+		cx = b.right + gap;
+	}
+	else {
+		cx = b.left - gap - (last - 1 - i) * step;
+	}
+	// 顶到画布边上就翻到内侧 —— 否则按钮被画布裁掉，点都点不到
 	auto img = win->getImgSize();
-	if (img.width > 0 && cx + rad > (float)img.width) cx = b.right - gap - (last - i) * step;
+	if (img.width > 0) {
+		if (cx + rad > (float)img.width) cx = b.right - gap;
+		if (cx - rad < 0.f) cx = b.left + gap;
+	}
 	if (cy - rad < 0.f) cy = b.top + gap;
 	return D2D1::RectF(cx - rad, cy - rad, cx + rad, cy + rad);
 }
@@ -118,23 +130,30 @@ D2D1_RECT_F ShapeBase::rotatedBounds(const D2D1_RECT_F& r, const float deg)
 		std::max({ p0.x, p1.x, p2.x, p3.x }), std::max({ p0.y, p1.y, p2.y, p3.y }));
 }
 
-void ShapeBase::updateRotateDragger(const D2D1_RECT_F& bounds)
+// 手柄挂在哪：外接框右下角的外侧，与右上角那枚 × 同一段距离 —— 两个角对称，
+// 看上去就是"外侧三个角各一枚按钮"（左上动作图标 / 右上 × / 右下旋转）。
+// 关键是它属于"外接框"而不属于图形本身：bounds 传进来的已经含旋转（见 getShapeBounds），
+// 这里不再跟着图形转，否则手柄会跑到斜边上去、而不是待在框的右下角
+void ShapeBase::updateRotateDragger()
 {
-	auto half{ draggerSize / 2 };
-	auto dx{ (bounds.right - bounds.left) / 2.f };
-	auto dy{ (bounds.bottom - bounds.top) / 2.f };
-	auto len = sqrtf(dx * dx + dy * dy);
-	// 零尺寸的框（空文本）下 div 会算出 NaN，退回"右下方向"
-	auto ux{ len > 0.f ? dx / len : 0.7071f };
-	auto uy{ len > 0.f ? dy / len : 0.7071f };
-	// 静止方向：由中心指向右下角。顺时针为正、0 度朝上（与 rotateAngleAt 同一套）
-	rotateRestAngle = atan2f(dx, -dy) * 180.f / 3.14159265358979323846f;
-	auto offset = draggerSize * 0.8f;
-	auto c = D2D1::Point2F((bounds.left + bounds.right) / 2.f, (bounds.top + bounds.bottom) / 2.f);
-	auto p = D2D1::Point2F(bounds.right + ux * offset, bounds.bottom + uy * offset);
-	rotateDragger = D2D1::RectF(p.x - half, p.y - half, p.x + half, p.y + half);
-	// 手柄要不要跟着元素一起转由调用方决定：文本那边手柄坐标存的就是转好之后的，
-	// 这里只按轴对齐的外接框算，转不转在外面套
+	D2D1_RECT_F b{};
+	if (!getShapeBounds(b)) {
+		rotateDragger = D2D1::RectF(0.f, 0.f, 0.f, 0.f);
+		return;
+	}
+	auto rad{ draggerSize * 0.9f };
+	// 与 actionBtnRect 用同一个 gap：三个角离框的距离一致，摆在一起才像一排
+	auto gap{ draggerSize * 3.2f };
+	auto cx{ b.right + gap }, cy{ b.bottom + gap };
+	// 贴到画布下边缘 / 右边缘就翻到内侧 —— 否则手柄被裁掉，鼠标够不着也就没法转
+	auto img = win->getImgSize();
+	if (img.width > 0 && cx + rad > (float)img.width) cx = b.right - gap;
+	if (img.height > 0 && cy + rad > (float)img.height) cy = b.bottom - gap;
+	auto c = D2D1::Point2F((b.left + b.right) / 2.f, (b.top + b.bottom) / 2.f);
+	// 静止方向 = 从中心指向手柄。rotateAngleAt 拿鼠标方向减掉它才是转过的角度，
+	// 所以手柄翻到内侧时这里也要跟着翻（否则第一下就跳一大截角度）
+	rotateRestAngle = atan2f(cx - c.x, -(cy - c.y)) * 180.f / 3.14159265358979323846f;
+	rotateDragger = D2D1::RectF(cx - rad, cy - rad, cx + rad, cy + rad);
 }
 
 float ShapeBase::rotateAngleAt(const D2D1_POINT_2F& center, const float x, const float y) const
@@ -149,7 +168,7 @@ void ShapeBase::paintRotateHandle(ID2D1DeviceContext* ctx)
 	auto d2d = Ling::D2D::get();
 	auto dpi = win->getDpi();
 	auto c = D2D1::Point2F((rotateDragger.left + rotateDragger.right) / 2.f,
-		(rotateDragger.top + rotateDragger.bottom) / 2.f);
+		(rotateDragger.bottom + rotateDragger.top) / 2.f);
 	auto r{ draggerSize * 0.5f };
 	// 底下一个白圆：手柄要压在图上，不垫一层会和底图糊在一起
 	ctx->FillEllipse(D2D1::Ellipse(c, r, r), brushDraggerFill.Get());

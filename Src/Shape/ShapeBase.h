@@ -30,9 +30,10 @@ public:
 	// 默认返回 false（水印铺满整图、折线族那几笔用户说不用加），派生类按需覆写。
 	// 带旋转的元素要把旋转也算进去（摆图标的是外接框，不是未旋转的那个 rect）
 	virtual bool getShapeBounds(D2D1_RECT_F& out) const { return false; }
-	// 选中元素右上角那排小图标。末尾恒是 ×（删除），它紧贴右上角待着（与只有它一枚时
-	// 同一个位置），派生类自己的动作图标排在它右边、往外延伸 —— 矩形/圆用一枚做
-	// "矩形↔圆"互转。默认一枚都没有，只有 ×
+	// 选中元素外侧那几枚按钮。三个角各摆一枚：右上恒是 ×（删除），派生类自己的动作图标
+	// 排在左上角，旋转手柄固定在右下角（见 updateRotateDragger）。
+	// 分成三个角而不是挤在一条边上：挤在一起时相邻两枚挨得太近，
+	// 鼠标移过去点错一个就是误删或者误改形状
 	virtual int actionCount() const { return 0; }
 	// 画第 i 枚动作图标（i 只会在 actionCount 范围内被调到）。c 是圆心、rad 是圆半径
 	virtual void paintActionIcon(ID2D1DeviceContext* ctx, const int i, const D2D1_POINT_2F& c, const float rad) {}
@@ -40,11 +41,12 @@ public:
 	virtual void onAction(const int i) {}
 	// 整排图标的枚数（含末尾那枚 ×）
 	int actionBtnTotal() const { return actionCount() + 1; }
-	// 第 i 枚图标的方框（底图坐标）。没有外接矩形、或 i 越界时返回空框
+	// 第 i 枚图标的方框（底图坐标）。i == 末尾那枚是右上角的 ×，其余是左上角的动作图标。
+	// 没有外接矩形、或 i 越界时返回空框
 	D2D1_RECT_F actionBtnRect(const int i) const;
 	// 命中的是第几枚图标，没命中返回 -1
 	int hitActionBtn(const float x, const float y) const;
-	// 画整排图标：白底圆 + 浅蓝边，派生类的动作图标在前、末尾那枚是 ×
+	// 画整排图标：白底圆 + 浅蓝边。末尾那枚是右上角的 ×，其余是左上角的动作图标
 	void paintActionBtns(ID2D1DeviceContext* ctx);
 	// 命中之后分发：末尾那枚 = 删掉自己，其余交给 onAction
 	void onActionBtn(const int i);
@@ -59,10 +61,10 @@ public:
 	// 跨类型套样式会让文字、序号被矩形的那个颜色污染
 	std::wstring toolId;
 protected:
-	// 旋转手柄：挂在外接框的右下方向、再沿对角线往外挪一点（pixpin 的旋转提示就在这个位置），
-	// 既不压着框线，转起来也不会和框本身挤在一起。
-	// 文本与矩形族共用这一份 —— 画法（圆弧 + 两端箭头）与求角方式完全一样
-	void updateRotateDragger(const D2D1_RECT_F& bounds);
+	// 旋转手柄的方框（底图坐标）。摆在 getShapeBounds() 给的外接框右下角外侧，
+	// 与右上角的 × 同一段距离。手柄跟着外接框走、不跟着图形转 —— 三个角各一枚按钮才对称。
+	// 文本与矩形族共用这一份，画法与求角方式完全一样
+	void updateRotateDragger();
 	// 画旋转手柄。坐标已经是转好之后的，调用方不用再叠旋转
 	void paintRotateHandle(ID2D1DeviceContext* ctx);
 	// 鼠标落在 (x,y) 时，相对手柄的静止方向转过了多少度（顺时针为正）。

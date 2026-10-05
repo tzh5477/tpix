@@ -769,7 +769,8 @@ void WinPin::layout()
 		if (drawing->shapeHover) {
 			drawing->shapeHover->paintDragger(ctx);
 		}
-		// 选中元素右上角那排动作图标（末尾是 ×）。只给"当前选中"的那一个画：
+		// 选中元素外侧那几枚动作图标（右上 × / 左上动作图标，右下那枚旋转手柄
+		// 由它自己的 paintDragger 画）。只给"当前选中"的那一个画：
 		// 鼠标掠过一串元素时每个都冒一枚 ×，反而看不出改样式 / 删除会作用到谁
 		if (drawing->selected) {
 			drawing->selected->paintActionBtns(ctx);
@@ -860,13 +861,13 @@ void WinPin::onDown(POINT pos, BOOL isRight)
 		copyToClipboard();
 		return;
 	}
-	// 选中元素右上角的关闭按钮：点它就是删掉。要赶在下面 SetCapture / 建新元素之前 ——
-	// 这个按钮摆在外接矩形之外，不拦的话这一下会被当成"点空白"，反手又落一个新元素。
-	// 也赶在"给正在编辑的那个收尾"之前：编辑器开着时这个 × 同样该点得动
+	// 选中元素外侧那几枚按钮：右上角的 × 是删掉，左上角是元素自己的动作图标（矩形/圆用它互转）。
+	// 要赶在下面 SetCapture / 建新元素之前 —— 这些按钮摆在外接矩形之外，
+	// 不拦的话这一下会被当成"点空白"，反手又落一个新元素。
+	// 也赶在"给正在编辑的那个收尾"之前：编辑器开着时这些按钮同样该点得动
 	{
 		auto hitPos = toImgPos(pos);
 		if (drawing->selected) {
-			// 末尾那枚是 ×（删掉），前面几枚是元素自己的动作图标（矩形/圆用它互转）
 			auto idx = drawing->selected->hitActionBtn((float)hitPos.x, (float)hitPos.y);
 			if (idx >= 0) {
 				drawing->selected->onActionBtn(idx);

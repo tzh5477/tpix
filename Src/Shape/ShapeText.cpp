@@ -37,20 +37,6 @@ D2D1_POINT_2F ShapeText::center() const
 	return { (rect.left + rect.right) / 2.f, (rect.top + rect.bottom) / 2.f };
 }
 
-// 手柄的位置按"转过之后"算：静止点在右下方向，绕中心转 angle 才是它在屏幕上待的地方。
-// 方框本身仍是轴对齐的（命中判定也就跟着简单），只有中心点需要转
-void ShapeText::updateRotateDragger()
-{
-	ShapeBase::updateRotateDragger(rect);
-	if (angle == 0.f) return;
-	auto c = center();
-	auto half{ draggerSize / 2.f };
-	auto h = D2D1::Point2F((rotateDragger.left + rotateDragger.right) / 2.f,
-		(rotateDragger.top + rotateDragger.bottom) / 2.f);
-	auto p = rotatePoint(h, c, angle);
-	rotateDragger = D2D1::RectF(p.x - half, p.y - half, p.x + half, p.y + half);
-}
-
 void ShapeText::fitRectToText()
 {
 	if (!textLayout) return;
@@ -92,6 +78,9 @@ void ShapeText::paintDragger(ID2D1DeviceContext* ctx)
 {
 	// 虚线框画在这里而不是 paint 里：导出图片走的是离屏 paint(ctx)，画在那边会被存进图里。
 	// 本函数只在 hover 且没按下鼠标时调，正好是该显示提示框的时候。
+	// 手柄位置在基类里一次算完（按外接框的右下角，与右上角的 × 对称）。原来这里还要
+	// 把方框中心再绕中心转 angle，现在不用了：手柄属于"外接框"而不是文字本身，
+	// 转过之后它仍待在框的右下角，三个角上的按钮才对得齐
 	updateRotateDragger();
 	D2D1_MATRIX_3X2_F prev{};
 	ctx->GetTransform(&prev);
@@ -100,7 +89,7 @@ void ShapeText::paintDragger(ID2D1DeviceContext* ctx)
 	}
 	ctx->DrawRectangle(rect, textBrush.Get(), win->getDpi(), dashedStrokeStyle.Get());
 	ctx->SetTransform(prev);
-	// 手柄的坐标已经是转好之后的，不能再跟着上面的变换转一遍
+	// 手柄没跟着上面的变换转（见上），这里直接按它自己的坐标画
 	paintRotateHandle(ctx);
 }
 
