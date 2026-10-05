@@ -27,6 +27,32 @@ namespace {
 		}
 		return result;
 	}
+
+	// 按点分路径逐级下钻，末段取字符串。任一级缺失 / 不是对象 / 末段不是字符串，
+	// 一律返回空串，交给 Lang::get 继续找兜底。
+	//
+	// 这里刻意不用带默认值的 GetNamedObject / GetNamedString：它们只兜"键不存在"，
+	// **兜不住"类型不对"** —— 名字在、值却是另一种类型时，内部会走到
+	// IJsonValue::GetObject / GetString，那两个在 winrt\Windows.Data.Json.h 里就是
+	// 一句 check_hresult，类型不符直接返回 E_ILLEGAL_METHOD_CALL
+	// （0x8000000E，"A method was called at an unexpected time"），cppwinrt 抛出
+	// hresult_illegal_method_call。这个异常从 DispatcherQueue 回调里穿出去就是
+	// 0xC000027B stowed fail-fast，进程当场没 —— 2026-10-05 的托盘"设置"崩溃即此：
+	// Lang::get(L"setting.ball.title") 只按前两段找，把对象 setting.ball 当字符串取。
+	std::wstring getNestedString(JsonObject root, const std::vector<std::wstring>& path)
+	{
+		JsonObject cur{ root };
+		for (size_t i = 0; i + 1 < path.size(); i++) {
+			if (!cur) return {};
+			auto value = cur.GetNamedValue(path[i], nullptr);
+			if (!value || value.ValueType() != JsonValueType::Object) return {};
+			cur = value.GetObject();
+		}
+		if (!cur) return {};
+		auto leaf = cur.GetNamedValue(path.back(), nullptr);
+		if (!leaf || leaf.ValueType() != JsonValueType::String) return {};
+		return std::wstring{ leaf.GetString() };
+	}
 }
 
 Lang::Lang()
@@ -56,23 +82,19 @@ Lang* Lang::get()
 
 std::wstring Lang::get(const std::wstring& keyPath)
 {
-	// 一路用带默认值的重载：第三方语言文件缺键是常态（程序加了新文案，人家的文件还是老的），
-	// 而带默认值的 GetNamedObject/GetNamedString 不抛异常。缺了先找内置的 en-US，
-	// 连那儿也没有就把键名本身显示出来 —— 界面上难看，但比崩掉好，也一眼能看出缺哪个键
+	// keyPath 是 "组.键" 或 "组.子组.键" 这种点分路径，按段数逐级下钻（setting.ball.title
+	// 是三层）。第三方语言文件缺键是常态（程序加了新文案，人家的文件还是老的），
+	// 缺了先找内置的 en-US，连那儿也没有就把键名本身显示出来 —— 界面上难看，
+	// 但比崩掉好，也一眼能看出缺哪个键。类型不符也走同一条兜底（见 getNestedString）
 	auto arr = Ling::Util::splitStr(keyPath, L'.');
 	if (arr.size() < 2) return keyPath;
 	auto& self = *lang;
-	auto obj = self.langObj.GetNamedObject(arr[0], nullptr);
-	if (obj) {
-		auto text = obj.GetNamedString(arr[1], L"");
-		if (!text.empty()) return std::wstring{ text };
-	}
+	auto text = getNestedString(self.langObj, arr);
+	if (!text.empty()) return text;
 	if (!self.fallbackObj) return keyPath;
-	auto def = self.fallbackObj.GetNamedObject(arr[0], nullptr);
-	if (!def) return keyPath;
-	auto text = def.GetNamedString(arr[1], L"");
+	text = getNestedString(self.fallbackObj, arr);
 	if (text.empty()) return keyPath;
-	return std::wstring{ text };
+	return text;
 }
 
 void Lang::initLang(const std::wstring& langCode)
