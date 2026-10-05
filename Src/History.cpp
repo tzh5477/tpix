@@ -160,6 +160,23 @@ void History::removeShape(ShapeBase* target)
     }
 }
 
+void History::undoShapes(const std::vector<ShapeBase*>& targets)
+{
+    bool changed{ false };
+    for (auto* target : targets) {
+        // 已经是"撤销态"的跳过：没有这一句会把它重新记成一次改动，
+        // 后面那个 changed 就白报了一次刷新
+        if (!target || target->isUndo) continue;
+        target->isUndo = true;
+        // 与 undo() 同样的两条善后：悬停 / 选中若指着它，必须一起清掉，
+        // 否则下一笔 createShape 的 removeUndoShape 真删之后，这两处就成了野指针
+        if (target == canvas->shapeHover) canvas->shapeHover = nullptr;
+        if (target == canvas->selected) canvas->selected = nullptr;
+        changed = true;
+    }
+    if (changed) canvas->refresh();
+}
+
 void History::removeUndoShape()
 {
     int i{ (int)(shapes.size() - 1) };

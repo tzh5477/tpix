@@ -219,6 +219,9 @@ private:
 	Ling::Button* watermarkContentBtn{ nullptr };
 	// 「样式」：悬停或点击弹开竖排浮层（不透明度 / 大小 / 间距）
 	Ling::Button* styleBtn{ nullptr };
+	// 「清除」：一键撤掉图上所有水印。加了水印之后又画了别的标注，
+	// 想反悔时挨个去撤销够不着，这一枚就是干这个的
+	Ling::Button* watermarkClearBtn{ nullptr };
 	// 悬停提示。要 hwnd，所以在 onCreated 里才建得起来
 	std::unique_ptr<Tip> tip;
 	static constexpr float btnSize{ 32.f };

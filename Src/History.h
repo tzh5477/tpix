@@ -16,6 +16,12 @@ public:
 	void removeActiveShape();
 	// 删掉指定 shape。ShapeText 输入为空时会异步调它把自己抹掉。
 	void removeShape(ShapeBase* target);
+	// 把一批 shape 一并标记成"已撤销"（水印的一键清除走它）。
+	// 与 undo() 是同一套机制：只打 isUndo 标记，不真删 —— 它们会在下一笔 createShape 时
+	// 由 removeUndoShape 真正清掉，所以清除之后还能 Ctrl+Y 找回来。
+	// 之所以要单开一个口子：undo() 只认"最后一个还没撤销的"，水印之间夹着别的标注时够不着，
+	// 而循环调 removeShape 是真删，撤不回来
+	void undoShapes(const std::vector<ShapeBase*>& targets);
 public:
 	std::vector<std::unique_ptr<ShapeBase>> shapes;
 private:

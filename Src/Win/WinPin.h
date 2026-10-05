@@ -77,6 +77,9 @@ public:
 	void onToolStyleChanged();
 	// 「应用到全部」：把工具条当前样式套到图上同工具的所有标注
 	void applyStyleToAllShapes();
+	// 一键清除图上所有水印（水印面板上的「清除」）。走 History::undoShapes，
+	// 只打撤销标记不真删 —— 清完还能 Ctrl+Y 找回来
+	void clearWatermark();
 	// ---- 贴图属性（ToolSub 的 pin 面板驱动，各项独立生效，见各自实现里的注释）----
 	void setOpacity(float v);
 	void setRounded(bool on);

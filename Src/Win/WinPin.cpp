@@ -1327,6 +1327,26 @@ void WinPin::applyStyleToAllShapes()
 	refresh();
 }
 
+// 一键清除图上所有水印（水印面板上的「清除」按钮）。
+// 遍历整份 shapes 而不是只看末尾那几个：水印加完之后又画了别的标注，它就不在末尾了；
+// 被别的标注压住的水印同样得清掉 —— 这类"看不见的残留"正是这一键要清的东西。
+// 走 History::undoShapes 而不是 removeShape：后者是真删，清完 Ctrl+Y 也找不回来
+void WinPin::clearWatermark()
+{
+	auto& history = drawing->history;
+	std::vector<ShapeBase*> targets;
+	for (auto& shape : history->shapes) {
+		// 已经处于撤销态的不必再算一遍：它这会儿本来就没画在图上
+		if (shape->isUndo) continue;
+		if (dynamic_cast<ShapeWatermark*>(shape.get())) targets.push_back(shape.get());
+	}
+	if (targets.empty()) return;
+	// 正在编辑的文本先收尾：这里是"清空一类元素"，被清掉的要是当前选中的那个，
+	// 编辑框还留在屏幕上就会挂在已撤销的元素上（撤销只是不画，对象还在）
+	if (editingShape) editingShape->finishEditing();
+	history->undoShapes(targets);
+}
+
 void WinPin::onKey(UINT key)
 {
 	// 剪裁态只认两个键：回车落这一刀，ESC 放弃。其余快捷键这会儿都用不上，

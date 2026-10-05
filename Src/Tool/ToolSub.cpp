@@ -252,6 +252,7 @@ void ToolSub::beginTool(const std::wstring& id)
 	watermarkRotBtn = nullptr;
 	watermarkContentBtn = nullptr;
 	styleBtn = nullptr;
+	watermarkClearBtn = nullptr;
 	WinWatermarkPanel::close();
 	curToolId = id;
 	auto cfg = findSliderCfg(id);
@@ -889,10 +890,10 @@ void ToolSub::makeApplyAllBtn()
 void ToolSub::showWatermarkTools()
 {
 	beginTool(L"watermark");
-	// 三个按钮（内容 / 位置 / 旋转 / 样式）+ 色板。extraW 里要算上固定宽度的内容按钮
-	// 与它左右各一次的间距 —— initSize 只按滑块数算间距，固定宽度的控件得自己加。
+	// 五个按钮（内容 / 位置 / 旋转 / 样式 / 清除）+ 色板。extraW 里要算上固定宽度的内容按钮
+	// 与它左右各一次的间距 —— initSize 只按按钮数算间距，固定宽度的控件得自己加。
 	// 滑块数给 0：那三个滑块搬去竖排浮层了，这里一个都不建
-	initSize(4, true, true, contentBtnW + sliderMargin * 2, 0);
+	initSize(5, true, true, contentBtnW + sliderMargin * 2, 0);
 	auto setting = Setting::get();
 	// 文字从配置读回：水印十有八九每张截图都写同一句，不该每次都重打
 	watermarkText = setting->getToolStr(L"watermark", L"text", L"");
@@ -1005,6 +1006,25 @@ void ToolSub::showWatermarkTools()
 		// 与其让人以为按钮坏了，不如两条路都能弹
 		WinWatermarkPanel::show(this, b);
 		});
+	// 「清除」：一键撤掉图上所有水印。挂在最后：前面四枚管"长什么样"，它管"不要了"。
+	// 字号比「样式」小一号 —— 这一格是 flexGrow 分下来的固定余量，
+	// 而 en/id/ru 的词（Clear / Hapus / Убрать）比「样式」两个字宽，13 号会顶破格子。
+	// 走 History::undoShapes，只打撤销标记不真删，清完还能 Ctrl+Y 找回来
+	{
+		auto btn = contentNode->makeChild<Ling::Button>();
+		watermarkClearBtn = btn;
+		btn->setHeight(btnSize - 2.5);
+		btn->setFlexGrow(1.f);
+		btn->setFontSize(12.f);
+		btn->setText(Lang::get(L"tool.watermarkClearShort"));
+		btn->setBg(0);
+		btn->setHoverBg(0xF2F2F2ff);
+		tip->bind(btn, Lang::get(L"tool.watermarkClear"));
+		btn->onClick.add([this](Ling::Button*) {
+			tip->hide();
+			win->clearWatermark();
+		});
+	}
 	initColorBtns();
 }
 
