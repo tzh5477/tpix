@@ -11,6 +11,35 @@
 
 std::unique_ptr<WinSetting> winSetting;
 
+namespace {
+	// 命中测试（Ling::Node::isPosIn）比的是 Node::x/y，而 ScrollerBox 里的内容
+	// 只是 visual 被整体上移了 scrollY —— x/y 仍是 yoga 算出来的、没减滚动量的
+	// 绝对坐标。于是内容一滚动，容器里所有可点子控件的响应位置就整体偏一个
+	// 滚动量：点第 3 个开关却关掉第 1 个，就是这么来的。
+	//
+	// 这里按 yoga 的相对坐标把绝对坐标重算一遍再减掉 scrollY，写回 Node::y。
+	// 每次都从 yoga 重算，所以幂等 —— 调多少次都不会累积偏移，layout 之后
+	// 被重置回未补偿值也无所谓，下一次鼠标事件会再摆正。
+	// absTop 是 root 自己的绝对坐标（layout 写好后我们不再动它）。
+	void shiftForScroll(Ling::Node* root, float absTop, float scrollY)
+	{
+		for (auto& child : root->children) {
+			const float childAbsTop = absTop + YGNodeLayoutGetTop(child->node);
+			child->y = childAbsTop - scrollY;
+			shiftForScroll(child.get(), childAbsTop, scrollY);
+		}
+	}
+}
+
+void WinSetting::syncScrollHitCoords()
+{
+	if (!scroller || !content) return;
+	const float scrollY = scroller->getScrollY();
+	// 没滚动就什么都别动：省掉整棵树的遍历，鼠标移动时这里是热路径
+	if (scrollY == 0.f) return;
+	shiftForScroll(content, content->y, scrollY);
+}
+
 WinSetting::WinSetting() :Ling::WinBase()
 {
 	// 关窗按钮是 body 的子节点，而 close() 正是从它的点击回调里一路进来的 ——
@@ -94,6 +123,17 @@ void WinSetting::makeContent(int index)
 
 void WinSetting::onCreated()
 {
+	// 订阅必须排在所有菜单项 / 开关按钮**之前**：Ling 的 winrt::event 按订阅
+	// 顺序回调，而 Button 是在构造里订阅 onMouseDown 的。抢在它们前面把内容区的
+	// 坐标摆正，后面每个 Button 的 isPosIn 才是对的（见 syncScrollHitCoords）。
+	// 窗口与事件源同生共死，token 不用留。
+	onMouseDown.add([](POINT, bool) {
+		if (winSetting) winSetting->syncScrollHitCoords();
+		});
+	onMouseMove.add([](POINT) {
+		if (winSetting) winSetting->syncScrollHitCoords();
+		});
+
 	enableShadow();
 	body->setBg(0xFAFAFAFF);
 	body->setFlexDirection(Ling::FlexDirection::Row);

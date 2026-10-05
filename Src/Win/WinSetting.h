@@ -15,6 +15,9 @@ private:
 	void makeContent(int index);
 	void onMenuItemClick(Ling::Button* menu);
 	LRESULT onHitTest(const POINT pos) override;
+	// 把内容区子树的 Node::y 摆成「yoga 绝对坐标 - 滚动量」，供本轮鼠标事件的
+	// 命中测试用。每次鼠标事件派发前调用，幂等。
+	void syncScrollHitCoords();
 private:
 	std::vector<Ling::Button*> menus;
 	int menuIndex{ 0 };
