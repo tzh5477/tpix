@@ -20,10 +20,14 @@ namespace {
 	{
 	public:
 		Dlg(std::wstring text, std::wstring family,
+			std::function<void(const std::wstring&, const std::wstring&)> onPreview,
 			std::function<void(const std::wstring&, const std::wstring&)> onApply)
 			: text{ std::move(text) }, family{ std::move(family) },
-			onApply{ std::move(onApply) }
+			onPreview{ std::move(onPreview) }, onApply{ std::move(onApply) }
 		{
+			// 打开时的原始值：取消 / 失焦时用它把预览改过的那份还原回去
+			origText = this->text;
+			origFamily = this->family;
 			createNativeWindow(WS_EX_TOPMOST | WS_EX_TOOLWINDOW, WS_POPUP);
 			onDestroy.add([this]() {
 				// 不能在销毁回调里同步 reset 自己
@@ -64,8 +68,8 @@ namespace {
 			closeBtn->setFontFamily(L"icon");
 			closeBtn->setHoverColor(0xFFFFFFFF);
 			closeBtn->setHoverBg(0xE81123FF);
-			// × 与「取消」是一回事：不回调 onApply，配置里一个字都不动
-			closeBtn->onClick.add([this](Ling::Button*) { close(); });
+			// × 与「取消」是一回事：不落盘，并把实时预览改过的那份还原回打开时的值
+			closeBtn->onClick.add([this](Ling::Button*) { cancel(); });
 
 			// 输入区：多行、滚轮可滚、Enter 是换行。工具条上那个单行框给不了"标题 + 时间"两行，
 			// 而那正是水印最常见的写法
@@ -82,6 +86,13 @@ namespace {
 			// 点进输入框就选中全部：改水印多半是整句重写，从头选比逐字删省事
 			box->onFocusChanged.add([this](Ling::TextBox*, bool focused) {
 				if (focused) box->selectAll();
+				});
+			// 实时预览：每敲一个字就把当前内容交给宿主重画，不用等「应用」。
+			// 订阅要排在 setText 之后（它在上面）—— setText 自己也会触发一次 onTextChanged，
+			// 那一次没有订阅接住，因此打开弹窗这一下不会被当成用户输入
+			box->onTextChanged.add([this](Ling::TextBox*, const std::wstring& val) {
+				text = val;
+				if (onPreview) onPreview(text, family);
 				});
 
 			// 底部一行：时间格式、字体、应用、取消。同上，不写 Row 的话这几项会竖排，
@@ -136,7 +147,7 @@ namespace {
 			cancelBtn->setMarginLeft(8.f);
 			cancelBtn->setText(Lang::get(L"wmText.cancel"));
 			cancelBtn->setHoverBg(0xF2F2F2FF);
-			cancelBtn->onClick.add([this](Ling::Button*) { close(); });
+			cancelBtn->onClick.add([this](Ling::Button*) { cancel(); });
 
 			syncFontBtn();
 			// 打开就把光标放进输入框：用户十有八九是来改字的
@@ -144,11 +155,11 @@ namespace {
 			// 点到别处就收起。这里靠失焦而不是"点到外面"：本弹窗要收键盘（不然打不了字），
 			// 而时间 / 字体那两个下拉是 WS_EX_NOACTIVATE 的独立窗口 —— 它们弹出来时本窗口
 			// 不会失焦，正好不会把正在选的那一档中途收掉
-			onBlur.add([this]() { close(); });
+			onBlur.add([this]() { cancel(); });
 			// Esc 取消。Enter 走「应用」要绕开输入框：多行框里 Enter 是换行，
 			// 直接在窗口层拦会把换行吃掉，所以只在焦点不在输入框时才认
 			onKeyDown.add([this](UINT key) {
-				if (key == VK_ESCAPE) { close(); return; }
+				if (key == VK_ESCAPE) { cancel(); return; }
 				if (key == VK_RETURN && box && !box->isFocused()) apply();
 				});
 		}
@@ -196,6 +207,9 @@ namespace {
 					if (picked < 0 || picked >= (int)ToolSub::commonFonts().size()) return;
 					family = ToolSub::commonFonts()[picked].family;
 					syncFontBtn();
+					// 选完立刻预览：字体是"看一眼才知道合不合适"的东西，
+					// 等按了应用才换的话每换一款都得先应用一次再回来看
+					if (onPreview) onPreview(box ? box->getText() : text, family);
 				}, {}, fontPopupMinW);
 		}
 		void syncFontBtn()
@@ -208,10 +222,22 @@ namespace {
 		// 收尾：把输入框里的文字与当前字体交出去，落盘与重画由调用方做
 		void apply()
 		{
+			if (finished) return;
+			finished = true;
 			text = box->getText();
 			auto cb = std::move(onApply);
 			close();
 			if (cb) cb(text, family);
+		}
+		// 关窗（× / 取消 / Esc / 失焦）：实时预览已经把宿主那份改了，这里把它还原回
+		// 打开时的值。不还原的话，改了半截再关掉，图上会留着那份没落盘的改动 ——
+		// 与"取消 = 不生效"对不上。finished 挡住的是「应用」之后再触发的失焦
+		void cancel()
+		{
+			if (finished) return;
+			finished = true;
+			if (onPreview) onPreview(origText, origFamily);
+			close();
 		}
 	public:
 		// 弹窗各部分的高度（逻辑像素）。跟 pixpin 对齐：一行标题、多行输入框、底部一行按钮
@@ -232,6 +258,13 @@ namespace {
 		Ling::Button* timeBtn{ nullptr }, * fontBtn{ nullptr };
 		std::wstring text;
 		std::wstring family;
+		// 打开时的原始值，取消时用它还原（两个回调都按这俩参数改宿主那份）
+		std::wstring origText;
+		std::wstring origFamily;
+		// 已经走过「应用」或「取消」其中之一。用一次就置位 ——
+		// 关窗可能连着触发两遍（比如 apply() 里 close() 顺带又打了一次失焦）
+		bool finished{ false };
+		std::function<void(const std::wstring&, const std::wstring&)> onPreview;
 		std::function<void(const std::wstring&, const std::wstring&)> onApply;
 	};
 
@@ -243,6 +276,7 @@ namespace {
 
 void WinWatermarkText::show(Ling::WinBase* owner, Ling::Node* anchor,
 	const std::wstring& curText, const std::wstring& curFamily,
+	std::function<void(const std::wstring&, const std::wstring&)> onPreview,
 	std::function<void(const std::wstring&, const std::wstring&)> onApply)
 {
 	if (!owner || !anchor) return;
@@ -272,7 +306,7 @@ void WinWatermarkText::show(Ling::WinBase* owner, Ling::Node* anchor,
 	if (px + pw > mi.rcWork.right) px = mi.rcWork.right - pw;
 	if (px < mi.rcWork.left) px = mi.rcWork.left;
 
-	dlg = std::make_unique<Dlg>(curText, curFamily, std::move(onApply));
+	dlg = std::make_unique<Dlg>(curText, curFamily, std::move(onPreview), std::move(onApply));
 	// 必须走 setter：createNativeWindow 在构造里就已经按当时还是 0 的 w/h 把 hwnd 建好了，
 	// 事后改成员不会动窗口，ShowWindow 出来的是个 0×0 的窗，看着就是"点了没反应"
 	dlg->setSize(Dlg::winW, Dlg::winH);   // setter 收逻辑像素，内部乘 dpi

@@ -898,6 +898,15 @@ void ToolSub::showWatermarkTools()
 		// 免得换个入口打开就退回默认字体
 		watermarkFont = Setting::get()->getToolStr(L"watermark", L"fontFamily", L"Microsoft YaHei");
 		WinWatermarkText::show(this, btn, watermarkText, watermarkFont,
+			// 实时预览：打字 / 换字体时就改内存里这份并重画，不碰 config.json ——
+			// 落盘是「应用」的事。弹窗在取消 / 失焦时会拿原值再回调一次这里，
+			// 于是预览被还原，图上不会留下没落盘的半截改动
+			[this](const std::wstring& text, const std::wstring& family) {
+				watermarkText = text;
+				watermarkFont = family;
+				syncWatermarkContentBtn();
+				win->refresh();
+				},
 			[this](const std::wstring& text, const std::wstring& family) {
 				watermarkText = text;
 				// 字体族名与工具条上那份存同一个键：哪边改的都要认

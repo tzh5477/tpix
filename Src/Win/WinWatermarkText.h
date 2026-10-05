@@ -17,10 +17,13 @@ class WinWatermarkText
 public:
 	// anchor 是被点的那个按钮（工具条上的「内容…」），弹窗按它的位置摆。
 	// curText / curFamily 是当前值（弹窗打开时先填进去）。
+	// onPreview 是打字 / 换字体时的实时回调：把"这一刻的样子"交给调用方先画出来，
+	// 但不落盘 —— 水印要边打边看效果，等按了应用才更新的话每次都得先猜。
 	// onApply 只在用户点「应用」或按 Enter 时回调一次，参数就是要落盘的那份；
-	// 取消 / Esc / × 都不回调 —— 试用不留在配置里
+	// 取消 / Esc / × / 失焦都不落盘，且会用 onPreview 把预览改过的那份还原回 curText / curFamily
 	static void show(Ling::WinBase* owner, Ling::Node* anchor,
 		const std::wstring& curText, const std::wstring& curFamily,
+		std::function<void(const std::wstring&, const std::wstring&)> onPreview,
 		std::function<void(const std::wstring&, const std::wstring&)> onApply);
 	// 收起。没开着时是空操作，调用方不用先判
 	static void close();
