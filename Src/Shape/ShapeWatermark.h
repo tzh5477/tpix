@@ -15,8 +15,10 @@ public:
 	// 也是 ToolSub::watermarkPos 的取值（改动顺序会让老配置串味）
 	enum class WmPos { Tile = 0, RightBottom, LeftBottom, RightTop, LeftTop, TopCenter, BottomCenter, Center };
 	// 水印文字里可用的时间模板，存进文字（与配置）的就是这个串 ——
-	// 工具条的「时间」下拉显示的则是"按当前时刻展开之后的样子"，比显示模板好认。
-	// 顺序就是下拉里的顺序，八种最常用的写法（日期三种、日期加时间两种、纯时间两种、紧凑一种）
+	// 水印内容弹窗的「时间」下拉显示的则是"按当前时刻展开之后的样子"，比显示模板好认；
+	// 选中一档就是把这里的模板串填进输入框。
+	// 顺序就是下拉里的顺序，九种最常用的写法
+	//（完整日期三种、年月一种、日期加时间两种、纯时间两种、紧凑一种）
 	static const std::vector<std::wstring>& timeFormats();
 	// 把 text 里的 {yyyy} / {MM} / {dd} / {HH} / {mm} / {ss} 换成 stamp 这一刻的值。
 	// 没有占位符就原样返回（也不会去碰花括号里的其它内容）

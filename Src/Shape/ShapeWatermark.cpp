@@ -24,6 +24,9 @@ const std::vector<std::wstring>& ShapeWatermark::timeFormats()
 {
 	static const std::vector<std::wstring> list{
 		L"{yyyy}-{MM}-{dd}",
+		// 年月一档紧跟在完整日期后面：它俩是前缀关系，选中的那一档是按"最长匹配"
+		// 从现有文字里认出来的（见 WinWatermarkText::pickTime），长的排前面才对得上
+		L"{yyyy}-{MM}",
 		L"{yyyy}/{MM}/{dd}",
 		L"{yyyy}年{MM}月{dd}日",
 		L"{yyyy}-{MM}-{dd} {HH}:{mm}",

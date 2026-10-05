@@ -50,6 +50,14 @@ namespace {
 		}
 		void onCreated() override
 		{
+			// 打开之后用户有没有在输入框里点过 —— 「选时间」要落在光标处，而光标是
+			// TextBox 的私有状态（Ling 没开这个口子）。不过它挪光标只在鼠标按下时发生，
+			// 而这一下同样会送到窗口的 onMouseDown 上，落点用公开的 isPosIn 就能判。
+			// 订阅排在输入框之前：TextBox 也是在构造里订阅同一个事件的（见 onCreated 末尾）
+			onMouseDown.add([this](POINT pos, bool) {
+				if (box && box->isPosIn(pos)) boxUntouched = false;
+				});
+
 			enableShadow();
 			body->setBg(0xFFFFFFFF);
 			body->setFlexDirection(Ling::FlexDirection::Column);
@@ -89,10 +97,6 @@ namespace {
 			box->setPadding(10.f, 10.f, 10.f, 10.f);
 			box->setPlaceholder(Lang::get(L"tool.watermarkTip"));
 			box->setText(text);
-			// 点进输入框就选中全部：改水印多半是整句重写，从头选比逐字删省事
-			box->onFocusChanged.add([this](Ling::TextBox*, bool focused) {
-				if (focused) box->selectAll();
-				});
 			// 实时预览：每敲一个字就把当前内容交给宿主重画，不用等「应用」。
 			// 订阅要排在 setText 之后（它在上面）—— setText 自己也会触发一次 onTextChanged，
 			// 那一次没有订阅接住，因此打开弹窗这一下不会被当成用户输入
@@ -156,8 +160,11 @@ namespace {
 			cancelBtn->onClick.add([this](Ling::Button*) { cancel(); });
 
 			syncFontBtn();
-			// 打开就把光标放进输入框：用户十有八九是来改字的
+			// 打开就把光标放进输入框，并整段选中：改水印多半是整句重写，从头选比逐字删省事。
+			// 全选只做这一次 —— 「选时间 / 换字体」之后还要把焦点还给输入框（见 insertIntoBox），
+			// 那时若又全选一次，刚填进去的时间模板会被一起选中，接着敲一个字整段就没了
 			box->focus();
+			box->selectAll();
 			// 点到别处就收起。这里靠失焦而不是"点到外面"：本弹窗要收键盘（不然打不了字），
 			// 而时间 / 字体那两个下拉是 WS_EX_NOACTIVATE 的独立窗口 —— 它们弹出来时本窗口
 			// 不会失焦，正好不会把正在选的那一档中途收掉
@@ -170,7 +177,8 @@ namespace {
 				});
 		}
 		// 时间格式下拉。列表里显示"按此刻展开之后的样子"：{yyyy}-{MM}-{dd} 这种模板串
-		// 认得的人不多，展开成 2026-10-05 一眼就知道是哪一档
+		// 认得的人不多，展开成 2026-10-05 一眼就知道是哪一档。
+		// 选中一档就是把这一档的模板串**填进输入框**：落点是当前光标处，有选区就替换选区
 		void pickTime(Ling::Button* anchor)
 		{
 			auto& fmts = ShapeWatermark::timeFormats();
@@ -179,28 +187,38 @@ namespace {
 			items.reserve(fmts.size());
 			for (auto& f : fmts) items.push_back(ShapeWatermark::expandTime(f, now));
 			// 当前文字里已经带了哪一档模板，就把它勾上：不然不知道选中的是哪一档，
-			// 一个带时间的旧水印改起格式来要逐个试
+			// 一个带时间的旧水印改起格式来要逐个试。取**最长**的那一条 —— 模板之间有
+			// 前缀关系（{yyyy}-{MM} 是 {yyyy}-{MM}-{dd} 的前缀），先撞上短的那条会勾错档
 			int cur{ -1 };
+			size_t bestLen{ 0 };
 			for (size_t i = 0; i < fmts.size(); i++) {
-				if (text.find(fmts[i]) != std::wstring::npos) { cur = (int)i; break; }
-			}
-			SelectPopup::show(this, anchor, items, cur, [this, &fmts](int picked) {
-				if (picked < 0 || picked >= (int)fmts.size()) return;
-				// 插在末尾。原来那句不为空就先换行 —— 时间单独占一行才是水印的常见写法。
-				// 同一个模板连按两次不重复插：先把上一份从现有文字里剔掉再插
-				const auto& f = fmts[picked];
-				auto at = text.find(f);
-				if (at != std::wstring::npos) {
-					text.erase(at, f.size());
-					// 剔完可能留下一个空行或行尾空白，一并收拾掉，免得空出来第二行
-					while (!text.empty() && (text.back() == L'\n' || text.back() == L' ')) {
-						text.pop_back();
-					}
+				if (fmts[i].size() > bestLen && text.find(fmts[i]) != std::wstring::npos) {
+					bestLen = fmts[i].size();
+					cur = (int)i;
 				}
-				if (!text.empty() && text.back() != L'\n') text += L'\n';
-				text += f;
-				box->setText(text);
+			}
+			SelectPopup::show(this, anchor, items, cur, [this](int picked) {
+				const auto& all = ShapeWatermark::timeFormats();
+				if (picked < 0 || picked >= (int)all.size()) return;
+				insertIntoBox(all[picked]);
 				});
+		}
+		// 把串填到输入框的光标处。用法是逐字 PostMessage(WM_CHAR) —— 那就是用户手打的
+		// 那条路：TextBox::onCharInput -> insertText 把字落在光标上、有选区先替换选区，
+		// 接着重建布局、把光标滚进可视区、触发 onTextChanged（实时预览），一样不落。
+		// 不走 setText 是因为它只能整段替换、落点找不回来：光标是 TextBox 的私有状态，
+		// Ling 没把它开出来，而 Ling 是预编译库，要开口子得连 Ling.lib 一起重编
+		void insertIntoBox(const std::wstring& s)
+		{
+			if (!box || !hwnd || s.empty()) return;
+			// 点「时间」那一下已经把输入框的焦点拿走了（TextBox::onDown 见点在自己外面
+			// 就 blur，而 blur 会清掉选区、只留下光标），这里把焦点要回来
+			box->focus();
+			// 打开后一眼没动过输入框：把打开时的那个全选补回来，让这一档顶替掉原来那段
+			// （对"水印就是一行时间"的老水印，改格式本来就是整段换掉）
+			if (boxUntouched) box->selectAll();
+			boxUntouched = false;
+			for (wchar_t c : s) PostMessageW(hwnd, WM_CHAR, (WPARAM)c, 0);
 		}
 		void pickFont(Ling::Button* anchor)
 		{
@@ -262,6 +280,9 @@ namespace {
 	private:
 		Ling::TextBox* box{ nullptr };
 		Ling::Button* timeBtn{ nullptr }, * fontBtn{ nullptr };
+		// 打开之后用户还没在输入框里点过（光标仍是打开时摆在末尾的那个）。
+		// 「选时间」据此决定是插在光标处还是顶替整段，见 insertIntoBox
+		bool boxUntouched{ true };
 		std::wstring text;
 		std::wstring family;
 		// 打开时的原始值，取消时用它还原（两个回调都按这俩参数改宿主那份）
