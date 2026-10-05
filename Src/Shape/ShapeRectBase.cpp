@@ -10,6 +10,21 @@ using Microsoft::WRL::ComPtr;
 namespace {
 	constexpr float kPi{ 3.14159265358979323846f };
 	float toRad(const float deg) { return deg * kPi / 180.f; }
+
+	// 拖 0~7 号手柄时，那个"固定不动的参考点"该取哪一号手柄的位置。
+	//
+	// 四个角取对角（i + 4）。四条边中点不能取对角 —— 边中点的对角是**另一条边的中点**，
+	// 它压根不是新矩形的角：拿它当锚点，新矩形的那一维会整体偏半格（拖下边中点往上收，
+	// 左上角会右移半个宽度；拖上边中点、右边中点分别往左 / 往上偏）。这正是作者报的
+	// "拖这 4 个点会导致图形位置偏移"。
+	//
+	// 正确取法是"贴着不动那条边的角"：上中→右下、右中→左下、下中→左上、左中→右上，
+	// 正好是 (i + 3) % 8（与对角那条只差一格）。这样 mouseDrag 里
+	// anchor + du·u + dv·v 量出来的矩形，两个角都是真角，被拖的那条边动、对边与两侧岿然不动
+	int anchorHandleIndex(const int i)
+	{
+		return i % 2 == 1 ? (i + 3) % 8 : (i + 4) % 8;
+	}
 }
 
 ShapeRectBase::ShapeRectBase(Canvas* win) : ShapeBase(win), draggers(17, D2D1::RectF(0, 0, 0, 0))
@@ -335,8 +350,9 @@ void ShapeRectBase::mouseDown(const float x, const float y)
 		pressY = y;
 		return;
 	}
-	// 0~7：记下对角那个手柄此刻的屏幕坐标，拖的过程中它固定不动（见 mouseDrag）
-	anchorWorld = toWorld(handleLocalPoint((hoverDraggerIndex + 4) % 8));
+	// 0~7：记下对角那个手柄此刻的屏幕坐标，拖的过程中它固定不动（见 mouseDrag）。
+	// 四条边中点取的是旁边那个角而不是对角那枚手柄，理由见 anchorHandleIndex
+	anchorWorld = toWorld(handleLocalPoint(anchorHandleIndex(hoverDraggerIndex)));
 }
 
 void ShapeRectBase::mouseUp(const float x, const float y)
