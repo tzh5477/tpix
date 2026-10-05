@@ -3,6 +3,7 @@
 #include <winrt/Windows.Data.Json.h>
 #include "../AnimImage.h"
 #include "../Canvas.h"
+#include "../Ocr.h"
 
 class ToolMain;
 class ToolSub;
@@ -92,6 +93,11 @@ public:
 	bool getRounded() const { return isRounded; }
 	bool getLocked() const { return isLocked; }
 	bool getThrough() const { return isThrough; }
+	// ---- 选文态（ToolMain 上那个「选文」开关）----
+	// 整张图进入"文字选择"：拖拽按词选、Ctrl+C 把选中那段文字送进剪切板（不关窗）、ESC 退出。
+	// 底图一进贴图窗口就在后台认一遍文字（Ocr::recognizeWords），所以点开这个开关通常立刻能选
+	void setTextSelect(bool on);
+	bool getTextSelect() const { return textSelect; }
 	// 翻历史截图：step 正负表示往更早 / 更新翻一张（0 = 最新）。换底图会作废旧标注
 	void previewHistory(int step);
 	// 收成贴边细条 / 展开。悬停细条即展开，Ctrl+M 触发
@@ -144,8 +150,33 @@ private:
 	// 把两条工具条重新提到 topmost 组的最前面。工具条比 WinPin 先建窗口，
 	// 而 topmost 组内后建者在上 —— 两者重叠时（全屏贴图的 overlay 模式）工具条会被底图整条盖住
 	void raiseTools();
+	// 自己认双击（窗口类没带 CS_DBLCLKS）。比的是屏幕坐标，见实现里的说明。
+	// 认一次就把 lastDownTime / lastDownPos 更新掉，所以同一次点击只能问一次
+	bool takeDoubleClick();
 	void onTimerCB(UINT id);
 	void onClosed();
+	// ---- 选文：后台识别 + 选区（详见各自实现）----
+	// 起一次后台识别。换底图 / 剪完一刀都会重认，seq 让老结果自己作废
+	void startOcr();
+	void clearOcr();
+	// 识别结果回填（UI 线程）。origin 是起识别那一刻的 Canvas::imgOrigin —— 词框坐标要从
+	// 底图像素换算到标注坐标系，剪裁正好在这中间发生时得用当时那个值
+	void applyOcrWords(std::vector<OcrWord> words, POINT origin);
+	// 把底图像素读一份到内存（BGRA、top-down、行紧凑），喂给识别引擎
+	bool readBasePixels(std::vector<BYTE>& pixels, int& w, int& h);
+	// 标注坐标 → 选区的"插入点"下标（0..ocrWords.size()）。与文本编辑器同一套：
+	// 按阅读顺序数下来，落在词缝里、行尾空白上也能定出一个位置，不必非要命中某个词
+	int caretIndexAt(const POINT& imgPos) const;
+	int wordIndexAt(const POINT& imgPos) const;
+	bool hasSelection() const { return selAnchor != selCur; }
+	std::wstring selectedText() const;
+	void copySelectedText();
+	void showToast(const std::wstring& text);
+	// 选中高亮（画在标注之上，用标注坐标系，所以跟着缩放和剪裁走）
+	void paintTextSelect(ID2D1DeviceContext* ctx);
+	// 顶部那条"正在识别文字…"/"未识别到文字"。按需重建，状态没变就不动
+	void paintTextTip(ID2D1DeviceContext* ctx);
+	void paintToast(ID2D1DeviceContext* ctx);
 	// 当前选中的是不是"能在图上画东西的"标注工具。curId 为空（什么都没选）与 curId 为
 	// pin（只开着贴图属性面板）都画不了 —— 这两种状态下左键该拖动贴图本身，
 	// 而不是当成画笔落笔，否则选过一次贴图属性后整张图就拖不动了
@@ -249,6 +280,29 @@ private:
 	// 右上角的倍数提示。非空即显示，缩放停手一会儿由定时器清掉
 	Microsoft::WRL::ComPtr<IDWriteTextLayout> scaleTip;
 	Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brushTipBg, brushTipText;
+	// ---- 选文态的成员 ----
+	// 识别出来的词，坐标已经换算到标注坐标系（与 shape 同一套）—— 剪裁只改 imgOrigin，
+	// 所以剪完这一刀之后词框仍然贴在原来的字上。顺序就是阅读顺序：行自上而下、行内从左到右
+	std::vector<OcrWord> ocrWords;
+	// 行分组。[first, first+count) 是同一行，也正好是 ocrWords 里连续的一段；
+	// 复制时靠它决定词与词之间是补空格还是换行
+	struct OcrLine { int first{ 0 }, count{ 0 }; };
+	std::vector<OcrLine> ocrLines;
+	bool ocrRunning{ false };
+	// 每起一次识别就 ++，回填时对不上就丢掉 —— 换底图 / 剪裁会再起一次，老结果不能盖上去
+	int ocrSeq{ 0 };
+	// 后台线程只拿得到裸 this，而窗口关掉之后这个对象下一轮消息循环就没了。
+	// 线程与回填的回调都先看这个标志（与 WinOcr 用 winOcr.get() != this 是同一个用处）
+	std::shared_ptr<bool> ocrAlive{ std::make_shared<bool>(true) };
+	bool textSelect{ false };
+	// 选区用两个"插入点"表示（同文本编辑器）：selAnchor 是按下那一下定的，selCur 跟着鼠标走
+	int selAnchor{ 0 }, selCur{ 0 };
+	bool selDragging{ false };
+	// 选中那一层半透明蓝底
+	Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> selectBrush;
+	// 顶部的状态条与右上角的轻提示（"已复制"）。按需重建
+	Microsoft::WRL::ComPtr<IDWriteTextLayout> textTip, toastTip;
+	std::wstring textTipFor;
 	bool isMouseDown{ false }, isClosed{ false };
 	// 贴图属性。锁定不是改窗口样式实现的（Ling 自己管拖动），靠 onDown 里早退；
 	// 不透明度也不是 WS_EX_LAYERED（窗口带 WS_EX_NOREDIRECTIONBITMAP，与分层窗口冲突），

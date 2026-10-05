@@ -1,5 +1,6 @@
 ﻿#include "pch.h"
 #include <algorithm>
+#include <thread>
 #include "../Canvas.h"
 #include "../Tool/ToolMain.h"
 #include "../Tool/ToolSub.h"
@@ -137,6 +138,9 @@ void WinPin::onClosed()
 	// 防止 close() 被走两遍（比如按钮和快捷键先后触发）时排两次销毁
 	if (isClosed) return;
 	isClosed = true;
+	// 后台识别线程可能还在跑（贴图刚建起来就被关掉是常事），先让它认的结果作废：
+	// 它拿到的是裸 this，回填时不能再碰这个对象
+	if (ocrAlive) *ocrAlive = false;
 	if (editingShape) editingShape->finishEditing();
 	// 竖排浮层与内容弹窗是独立顶层窗口，不随 toolSub 一起死。
 	// 不收的话它们会孤零零留在屏幕上：那上面的滑块调的是一个已经关掉的窗口的水印样式，
@@ -643,8 +647,8 @@ void WinPin::peek(bool on)
 
 bool WinPin::isBusy() const
 {
-	// 手上正拿着这张图：拖着窗口 / 正在画一笔 / 文字编辑器开着 / 剪裁框拉着
-	return isMouseDown || editingShape != nullptr || cropMask != nullptr;
+	// 手上正拿着这张图：拖着窗口 / 正在画一笔 / 文字编辑器开着 / 剪裁框拉着 / 正拖着选文字
+	return isMouseDown || editingShape != nullptr || cropMask != nullptr || selDragging;
 }
 
 std::vector<WinPin*> WinPin::getHiddenPins()
@@ -825,6 +829,9 @@ void WinPin::setToolsVisible(bool on)
 
 WinPin::~WinPin()
 {
+	// 后台识别线程可能还在跑。它只认这个标志，不看对象在不在 —— 那个线程拿到的是裸 this，
+	// 所以必须由这里（对象真没了之前）把标志放掉
+	if (ocrAlive) *ocrAlive = false;
 }
 
 void WinPin::init(int x, int y, int w, int h, const std::wstring& toolId)
@@ -901,6 +908,11 @@ void WinPin::onCreated()
     d2d->deviceContext->CreateSolidColorBrush(D2D1::ColorF(0x1677ff), borderBrush.GetAddressOf());
     d2d->deviceContext->CreateSolidColorBrush(D2D1::ColorF(0x000000, 0.46f), brushTipBg.GetAddressOf());
     d2d->deviceContext->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::White), brushTipText.GetAddressOf());
+    // 选中的词铺的那层蓝底。半透明：字还得看得清，不然选完不知道选的是哪几个字
+    d2d->deviceContext->CreateSolidColorBrush(D2D1::ColorF(0x1677ff, 0.34f), selectBrush.GetAddressOf());
+    // 「贴图之后默认识别文本」：不等用户点「选文」，窗口一建起来就在后台认 ——
+    // 那张图通常刚截下来，用户点开选文时结果基本已经在了，选起来是即时的
+    startOcr();
     show();
     // 本窗口的 hwnd 是刚刚才建的，压在两条工具条之上（见 layoutTools 末尾）。
     // 构造期那次 layoutTools 已经把 toolsOverlay 算出来了，但那时本窗口还没建窗口、提也没用，
@@ -927,13 +939,16 @@ void WinPin::layout()
     auto vs = viewScale();
     ctx->SetTransform(D2D1::Matrix3x2F::Translation(-(float)o.x, -(float)o.y)
         * D2D1::Matrix3x2F::Scale(vs, vs));
-    ctx->DrawBitmap(drawing->screenImg.Get(), destRect);
+	ctx->DrawBitmap(drawing->screenImg.Get(), destRect);
 	for (auto& shape : drawing->history->shapes)
 	{
 		if (!shape->isUndo) {
 			shape->paint(ctx);
 		}
 	}
+	// 选文态：选中的那些词铺一层蓝底。画在标注之上、窗口装饰之下，而且变换还在标注坐标系里，
+	// 所以它跟着 Ctrl+滚轮缩放、剪裁之后也仍贴在原来的字上
+	if (textSelect) paintTextSelect(ctx);
 	// 标号工具的 hover 预览压在标注上面：它是"马上要落下的这一笔"，本来就不该被别的元素盖住。
 	// 缩略图 / 细条态下不画 —— 那时候的变换与光标位置对不上
 	if (numberPreviewOn && numberPreview && !isThumb && !isMinimized) {
@@ -961,12 +976,14 @@ void WinPin::layout()
 	ctx->DrawRectangle(D2D1::RectF(0.f, 0.f, w, h), borderBrush.Get(), 2*dpi);
 	paintTitle(ctx);
 	paintScaleTip(ctx);
+	paintToast(ctx);
 	// 剪裁框与提示同样是窗口装饰，用窗口坐标画（上面已经把缩放变换收回来了）。
 	// 蒙层会把选区以外的整块压暗，正好把"这一刀要留下哪一块"标出来
 	if (cropMask) {
 		cropMask->paint(ctx);
 		paintCropTip(ctx);
 	}
+	if (textSelect) paintTextTip(ctx);
     canvas->finishPaint();
 }
 
@@ -1008,6 +1025,33 @@ void WinPin::onDown(POINT pos, BOOL isRight)
 		refresh();
 		return;
 	}
+	// 选文态：左键这一下是"划选一段文字"，既不落笔（curId 已经放掉）也不拖窗口。
+	// 整条判断必须排在 isLocked 之前 —— 锁的是"别改这张图"，在里面选字不算改图
+	if (textSelect && !isRight) {
+		auto imgPos = toImgPos(pos);
+		// 双击 = 选中光标底下这一个词。要先认，否则按下的第一下已经先把它缩成一个插入点了
+		if (takeDoubleClick()) {
+			auto idx = wordIndexAt(imgPos);
+			if (idx >= 0) { selAnchor = idx; selCur = idx + 1; }
+			else { selAnchor = selCur = caretIndexAt(imgPos); }
+			lastDownTime = 0;   // 第三下不该再凑成一次双击
+		}
+		else {
+			selAnchor = selCur = caretIndexAt(imgPos);
+		}
+		selDragging = true;     // 双击之后接着拖也能继续扩选
+		isMouseDown = true;
+		hasDragged = false;
+		SetCapture(hwnd);
+		refresh();
+		return;
+	}
+	// 选文态里右键先当"取消选中"：有选区就清掉，没有选区才轮到下面那套收放工具条
+	if (textSelect && isRight && hasSelection()) {
+		selAnchor = selCur = 0;
+		refresh();
+		return;
+	}
 	// 锁定后图上什么都不许动。右键单独放开：收/放工具条是解锁的入口，
 	// 全拦了的话锁死的贴图就只能靠任务栏找回工具条
 	if (isLocked && !isRight) return;
@@ -1044,20 +1088,9 @@ void WinPin::onDown(POINT pos, BOOL isRight)
 		toolSub->hideTools();
 		return;
 	}
-	// 双击判定得自己做，做法同 WinCap::onDown：Ling 的窗口类没带 CS_DBLCLKS，
-	// WM_LBUTTONDBLCLK 根本不会来，只能拿系统的双击间隔和双击判定框自己认。
-	// 与 WinCap 唯一的不同是这里比屏幕坐标而不是客户区坐标：拖动贴图窗口时窗口跟着光标走，
-	// 抓住的那一点始终停在光标下，光标的客户区坐标几乎不变 —— 用客户区坐标会把
-	// "拖一下松手再拖一下"当成双击，图和标注就这么被复制走关掉了。
-	// 而拖动必然意味着光标在屏幕上真的移动过，屏幕坐标能把这种情况分开
-	POINT screenPos{};
-	GetCursorPos(&screenPos);
-	auto now = GetTickCount64();
-	bool isDblClick = (now - lastDownTime <= GetDoubleClickTime())
-		&& std::abs(screenPos.x - lastDownPos.x) <= GetSystemMetrics(SM_CXDOUBLECLK)
-		&& std::abs(screenPos.y - lastDownPos.y) <= GetSystemMetrics(SM_CYDOUBLECLK);
-	lastDownTime = now;
-	lastDownPos = screenPos;
+	// 双击判定得自己做（Ling 的窗口类没带 CS_DBLCLKS，收不到 WM_LBUTTONDBLCLK）。
+	// 为什么比的是屏幕坐标而不是客户区坐标，见 takeDoubleClick
+	bool isDblClick = takeDoubleClick();
 	// 双击 = Ctrl+C：把图连标注一起送进剪切板并关窗，选着画笔也一样（等价于按 Ctrl+C，
 	// 手里拿着什么工具都不该影响这个手势）。要在下面所有分支之前处理：
 	// 这一下既不是画画也不是拖窗，不该留下 capture、更不该新建 shape。
@@ -1129,6 +1162,14 @@ void WinPin::onMove(POINT pos)
 		refresh();
 		return;
 	}
+	// 选文态：按着就是在扩大 / 缩小选区（插入点跟着鼠标走）；没按着只是在图上划过，
+	// 什么都不做 —— 所以这里也不必给词做 hover 高亮
+	if (textSelect) {
+		if (!selDragging) return;
+		selCur = caretIndexAt(toImgPos(pos));
+		refresh();
+		return;
+	}
 	// 缩略图上不做 hover / 命中：点一下是"还原"，夹点也没有地方摆
 	if (isThumb) return;
 	// 收成细条时鼠标一碰就展开 —— 这是细条唯一的展开方式
@@ -1197,6 +1238,13 @@ void WinPin::onUp(POINT pos, BOOL isRight)
 		cropAdjusting = false;
 		return;
 	}
+	// 选文态：这一下只是把选区放下，除了 capture 没有别的东西要收（也没有新建的元素要清）
+	if (textSelect) {
+		isMouseDown = false;
+		selDragging = false;
+		ReleaseCapture();
+		return;
+	}
 	// 右键按下时什么都没抓（既没置 isMouseDown 也没 SetCapture，见 onDown），抬手也就没什么要收的。
 	// 更要紧的是不能往下走：下面那条"拖窗结束"的路会把 ToolMain 显示出来，
 	// 而右键刚刚才把它收起来 —— 一按一放就等于什么都没做
@@ -1247,6 +1295,12 @@ void WinPin::onTimerCB(UINT id)
 		frameIndex = (frameIndex + 1) % (int)frames.size();
 		showFrame(frameIndex);
 		if (animPlaying && hasAnim()) setTimer(frames[frameIndex].delayMs, 102);
+		return;
+	}
+	if (id == 103) {   // 选文的轻提示（"已复制"）到点了，收掉
+		killTimer(103);
+		toastTip = nullptr;
+		refresh();
 		return;
 	}
 	if (id != 100) return;
@@ -1347,6 +1401,303 @@ void WinPin::clearWatermark()
 	history->undoShapes(targets);
 }
 
+// ---- 选文：贴图窗口里把识别出来的文字当成可选文本 ----
+//
+// 整条链路：窗口建好（或换底图 / 剪裁完）→ 后台 Ocr::recognizeWords 认一遍 → 词框换算到
+// 标注坐标系存起来 → 「选文」开关打开后拖拽按插入点划出一段词，Ctrl+C 把那段文字送进剪贴板。
+// 词框存的是标注坐标（与 shape 同一套），所以剪裁、Ctrl+滚轮缩放都不影响它贴不贴得住字。
+void WinPin::setTextSelect(bool on)
+{
+	if (isClosed || textSelect == on) return;
+	textSelect = on;
+	if (on) {
+		// 细条 / 缩略图这两种收法都没给"选一段字"留位置，先还原（与 beginCrop 同一个道理）
+		if (isThumb) setThumbMode(false);
+		if (isMinimized) setMinimized(false);
+		// 两套手势都要吃左键，画笔必须让位：curId 空着 onDown 才会把这一下当"选文字"。
+		// 反方向也堵上了 —— 拿起任何标注工具都会把选文关掉（见 ToolMain::selectTool）
+		toolMain->cancelSelect();
+		if (editingShape) editingShape->finishEditing();
+		drawing->shapeHover = nullptr;
+		drawing->selected = nullptr;
+		hideNumberPreview();
+		selAnchor = selCur = 0;
+		selDragging = false;
+		// 刚建好窗口就点进来时识别还在跑（甚至还没起），催一次；已经在跑就不用管
+		if (!ocrRunning && ocrWords.empty()) startOcr();
+	}
+	else {
+		selDragging = false;
+	}
+	// 开关状态住在这一层（ESC、拿起标注工具、关窗都要复位它），按钮的外观得回报过去
+	toolMain->setToggle(L"textSelect", on);
+	refresh();
+}
+
+void WinPin::startOcr()
+{
+	auto sz = drawing->screenImg ? drawing->screenImg->GetPixelSize() : D2D1::SizeU(0, 0);
+	// 滚动截图拼出来的长图动辄上万像素：识别又慢又吃内存，系统引擎自己也有尺寸上限。
+	// 这种图就当"没识别到文字"，选文点开也只有一句提示，总好过卡住
+	if (sz.width == 0 || sz.height == 0 || sz.width > 10000 || sz.height > 10000) return;
+	std::vector<BYTE> pixels;
+	int w{ (int)sz.width }, h{ (int)sz.height };
+	if (!readBasePixels(pixels, w, h)) return;
+	const auto seq = ++ocrSeq;
+	// 起识别这一刻的偏移：词框出来的是"底图像素"，回填时按它换算到标注坐标系。
+	// 不能等回填时再去读成员 —— 这中间用户可能正好剪了一刀，那个值已经不是当时那个了
+	const auto origin = drawing->imgOrigin;
+	auto lang = Setting::get()->getToolStr(L"ocr", L"lang", L"");
+	ocrRunning = true;
+	// 状态条上那句"正在识别文字…"是由本标志驱动的，得让它立刻显出来
+	if (textSelect) refresh();
+	auto alive = ocrAlive;
+	// 识别要几百毫秒到几秒，压在 UI 线程上整张图会僵住（同 WinOcr / GlobalMouse 的做法）
+	std::thread([this, alive, pixels = std::move(pixels), w, h, seq, origin, lang = std::move(lang)]() mutable {
+		// 新线程里没有 WinRT 单元，不初始化就用不了 OcrEngine
+		winrt::init_apartment(winrt::apartment_type::multi_threaded);
+		auto words = Ocr::recognizeWords(w, h, pixels.data(), lang);
+		Ling::App::get()->dq.TryEnqueue([this, alive, seq, origin, words = std::move(words)]() mutable {
+			// 窗口已经关了、或者又起过一次识别（换底图 / 剪裁），老结果一概不认
+			if (!*alive || ocrSeq != seq) return;
+			ocrRunning = false;
+			applyOcrWords(std::move(words), origin);
+		});
+	}).detach();
+}
+
+void WinPin::clearOcr()
+{
+	ocrWords.clear();
+	ocrLines.clear();
+	selAnchor = selCur = 0;
+	selDragging = false;
+}
+
+void WinPin::applyOcrWords(std::vector<OcrWord> words, POINT origin)
+{
+	clearOcr();
+	if (words.empty()) {
+		if (textSelect) refresh();
+		return;
+	}
+	ocrWords = std::move(words);
+	// 底图像素 → 标注坐标，往后一律按标注坐标用（与 shape 完全一致）
+	for (auto& word : ocrWords) {
+		word.x += (float)origin.x;
+		word.y += (float)origin.y;
+	}
+	// 引擎给出来的本来就是"按行、行内从左到右"，这里只把连续的同高度词切成行、不改顺序 ——
+	// 顺序一乱，"选中从 A 到 B 这一段"就没有意义了
+	float lineCenter = ocrWords[0].y + ocrWords[0].h / 2.f;
+	int first{ 0 };
+	for (int i = 1; i <= (int)ocrWords.size(); ++i) {
+		bool newLine = (i == (int)ocrWords.size());
+		if (!newLine) {
+			auto center = ocrWords[i].y + ocrWords[i].h / 2.f;
+			auto ref = std::max(ocrWords[i].h, ocrWords[first].h);
+			// 竖直中心差不到大半个字高就算同一行（同一行里各词的字号可能略有出入）
+			if (std::abs(center - lineCenter) > ref * 0.6f) newLine = true;
+		}
+		if (!newLine) continue;
+		ocrLines.push_back(OcrLine{ first, i - first });
+		if (i < (int)ocrWords.size()) {
+			first = i;
+			lineCenter = ocrWords[i].y + ocrWords[i].h / 2.f;
+		}
+	}
+	refresh();
+}
+
+bool WinPin::readBasePixels(std::vector<BYTE>& pixels, int& w, int& h)
+{
+	if (!drawing->screenImg) return false;
+	auto sz = drawing->screenImg->GetPixelSize();
+	if (sz.width == 0 || sz.height == 0) return false;
+	auto ctx = Ling::D2D::get()->deviceContext.Get();
+	// GPU 上的位图不能直接 Map，先拷到一块带 CPU_READ 的位图上（同 getImagePixels 的手法）。
+	// 像素格式必须照抄底图：截图那条路进来的是 ALPHA_MODE_IGNORE、长图那条是 PREMULTIPLIED，
+	// 写死一个就会在 CopyFromBitmap 上吃 E_INVALIDARG
+	D2D1_BITMAP_PROPERTIES1 cpuProps{
+		.pixelFormat{ drawing->screenImg->GetPixelFormat() },
+		.dpiX{ 96.0f }, .dpiY{ 96.0f },
+		.bitmapOptions{ D2D1_BITMAP_OPTIONS_CPU_READ | D2D1_BITMAP_OPTIONS_CANNOT_DRAW }
+	};
+	ComPtr<ID2D1Bitmap1> cpuBmp;
+	if (FAILED(ctx->CreateBitmap(sz, nullptr, 0, &cpuProps, cpuBmp.GetAddressOf()))) return false;
+	if (FAILED(cpuBmp->CopyFromBitmap(nullptr, drawing->screenImg.Get(), nullptr))) return false;
+	D2D1_MAPPED_RECT mapped{};
+	if (FAILED(cpuBmp->Map(D2D1_MAP_OPTIONS_READ, &mapped))) return false;
+	// mapped.pitch 按 GPU 行对齐，可能大于 w*4；识别引擎要的是紧凑步长，逐行紧缩
+	const UINT32 rowBytes = sz.width * 4;
+	pixels.resize((size_t)rowBytes * sz.height);
+	for (UINT32 row = 0; row < sz.height; ++row) {
+		CopyMemory(pixels.data() + (size_t)row * rowBytes, mapped.bits + (size_t)row * mapped.pitch, rowBytes);
+	}
+	cpuBmp->Unmap();
+	w = (int)sz.width;
+	h = (int)sz.height;
+	return true;
+}
+
+// 标注坐标 → 选区的"插入点"下标（0..ocrWords.size()）。与文本编辑器同一套：按阅读顺序
+// 数下来，落在词与词的缝里、行尾空白上也能定出一个位置，不必非要命中某个词
+int WinPin::caretIndexAt(const POINT& imgPos) const
+{
+	if (ocrLines.empty()) return 0;
+	for (auto& line : ocrLines) {
+		auto& first = ocrWords[line.first];
+		// 行高按这一行第一个词算：同一行基线一致，够用了
+		auto top = first.y, bottom = first.y + first.h;
+		if (imgPos.y < top) return line.first;      // 落在这一行上面 → 插入点在这一行行首
+		if (imgPos.y > bottom) continue;            // 还在更下面的行里，接着往下找
+		for (int i = line.first; i < line.first + line.count; ++i) {
+			auto& word = ocrWords[i];
+			// 以词的中点为界：过了一半就算走到下一个词，与拖选文字的手感一致
+			if (imgPos.x < word.x + word.w / 2.f) return i;
+		}
+		return line.first + line.count;             // 在行尾右边 → 这一行末尾
+	}
+	return (int)ocrWords.size();
+}
+
+int WinPin::wordIndexAt(const POINT& imgPos) const
+{
+	for (int i = 0; i < (int)ocrWords.size(); ++i) {
+		auto& word = ocrWords[i];
+		if (imgPos.x >= word.x && imgPos.x <= word.x + word.w
+			&& imgPos.y >= word.y && imgPos.y <= word.y + word.h) return i;
+	}
+	return -1;
+}
+
+namespace {
+	// 两端都是中日韩文字时不补空格，其余情况补一个 —— OCR 出来的词之间本来就没有空白，
+	// 全不补会把"中文OCR测试"连成一片，全补又会在"再见。他说"中间塞出空格来
+	bool isCjk(wchar_t ch)
+	{
+		return (ch >= 0x2E80 && ch <= 0x9FFF) || (ch >= 0x3000 && ch <= 0x303F)
+			|| (ch >= 0xFF00 && ch <= 0xFFEF);
+	}
+}
+
+std::wstring WinPin::selectedText() const
+{
+	if (!hasSelection() || ocrWords.empty()) return {};
+	const int lo = std::min(selAnchor, selCur);
+	const int hi = std::min(std::max(selAnchor, selCur), (int)ocrWords.size());
+	std::wstring text;
+	int lastLine{ -1 };
+	for (int i = lo; i < hi; ++i) {
+		// 这个下标落在第几行。ocrLines 是按阅读顺序排的，找出 i 落在哪一段里
+		int lineNo{ -1 };
+		for (int n = 0; n < (int)ocrLines.size(); ++n) {
+			auto& line = ocrLines[n];
+			if (i >= line.first && i < line.first + line.count) { lineNo = n; break; }
+		}
+		if (!text.empty()) {
+			auto& word = ocrWords[i].text;
+			if (lineNo != lastLine) text += L'\n';
+			else if (!isCjk(text.back()) || word.empty() || !isCjk(word.front())) text += L' ';
+		}
+		text += ocrWords[i].text;
+		lastLine = lineNo;
+	}
+	return text;
+}
+
+void WinPin::copySelectedText()
+{
+	auto text = selectedText();
+	// 空选区（点一下没拖）不去动剪贴板，也不弹提示 —— 那一下本来就没打算复制
+	if (text.empty()) return;
+	Ling::Util::setTextToClipboard(text);
+	// 刻意**不**关窗：这一下只把选中的那段字送进剪贴板，图还得留在屏幕上接着标。
+	// "复制整张图并走人"是 Ctrl+C 在非选文态下的那套，两者靠有没有选中文字分开
+	showToast(Lang::get(L"tool.textSelectCopied"));
+}
+
+void WinPin::showToast(const std::wstring& text)
+{
+	toastTip = Ling::D2D::get()->makeTextLayout(text, 12.f * dpi);
+	// 同一个 id 再调一次 SetTimer 就是重新计时，连续复制两次不会被前一次提前收掉
+	setTimer(1400, 103);
+	refresh();
+}
+
+// 选中的词铺一层半透明蓝底。调用方还在标注坐标系的变换里，所以它跟着缩放、剪裁一起走
+void WinPin::paintTextSelect(ID2D1DeviceContext* ctx)
+{
+	if (!hasSelection() || !selectBrush) return;
+	const int lo = std::min(selAnchor, selCur);
+	const int hi = std::min(std::max(selAnchor, selCur), (int)ocrWords.size());
+	for (int i = lo; i < hi; ++i) {
+		auto& word = ocrWords[i];
+		if (word.w <= 0 || word.h <= 0) continue;
+		ctx->FillRectangle(D2D1::RectF(word.x, word.y, word.x + word.w, word.y + word.h), selectBrush.Get());
+	}
+}
+
+// 顶部那条状态。"认完了而且认出了东西"就什么都不画；否则要说明是"还没认完"还是"确实没字" ——
+// 用户点开选文却选不到任何东西时，这两者的下一步动作完全不同
+void WinPin::paintTextTip(ID2D1DeviceContext* ctx)
+{
+	if (!brushTipBg) return;
+	std::wstring want;
+	if (ocrRunning) want = Lang::get(L"tool.textSelectLoading");
+	else if (ocrWords.empty()) want = Lang::get(L"tool.textSelectNone");
+	// 本函数每帧都会跑，状态没变就不重建布局
+	if (want != textTipFor) {
+		textTipFor = want;
+		textTip = want.empty() ? nullptr : Ling::D2D::get()->makeTextLayout(want, 13.f * dpi);
+	}
+	if (!textTip) return;
+	DWRITE_TEXT_METRICS tm{};
+	if (FAILED(textTip->GetMetrics(&tm))) return;
+	auto pad = 8.f * dpi;
+	D2D1_RECT_F bar{ w / 2.f - tm.width / 2.f - pad, pad,
+		w / 2.f + tm.width / 2.f + pad, pad + tm.height + pad * 2 };
+	// 图窄到装不下时贴左边画，别画到窗口外面去
+	if (bar.left < pad) bar.left = pad;
+	if (bar.right > w - pad) bar.right = w - pad;
+	ctx->FillRectangle(bar, brushTipBg.Get());
+	ctx->DrawTextLayout({ bar.left + pad, bar.top + pad }, textTip.Get(), brushTipText.Get(),
+		D2D1_DRAW_TEXT_OPTIONS_NONE);
+}
+
+// 右下角的轻提示（"已复制"）。摆这个角是因为别的角都占了：右上角是倍数提示、
+// 顶上一条是标题、顶部中间是剪裁 / 识别提示
+void WinPin::paintToast(ID2D1DeviceContext* ctx)
+{
+	if (!toastTip || !brushTipBg) return;
+	DWRITE_TEXT_METRICS tm{};
+	if (FAILED(toastTip->GetMetrics(&tm))) return;
+	auto pad = 4.f * dpi;
+	auto margin = 5.f * dpi;
+	D2D1_RECT_F bar{ w - margin - tm.width - pad * 2, h - margin - tm.height - pad * 2,
+		w - margin, h - margin };
+	if (bar.left < margin) bar.left = margin;
+	ctx->FillRectangle(bar, brushTipBg.Get());
+	ctx->DrawTextLayout({ bar.left + pad, bar.top + pad }, toastTip.Get(), brushTipText.Get(),
+		D2D1_DRAW_TEXT_OPTIONS_NONE);
+}
+
+// 自己认双击。Ling 的窗口类没带 CS_DBLCLKS，收不到 WM_LBUTTONDBLCLK，只能按系统的双击间隔
+// 和判定框自己算；比的是**屏幕**坐标 —— 拖动贴图窗口时光标的客户区坐标几乎不动，
+// 只有屏幕坐标分得开"拖一下松手再拖一下"和真双击
+bool WinPin::takeDoubleClick()
+{
+	POINT screenPos{};
+	GetCursorPos(&screenPos);
+	auto now = GetTickCount64();
+	bool dbl = (now - lastDownTime <= GetDoubleClickTime())
+		&& std::abs(screenPos.x - lastDownPos.x) <= GetSystemMetrics(SM_CXDOUBLECLK)
+		&& std::abs(screenPos.y - lastDownPos.y) <= GetSystemMetrics(SM_CYDOUBLECLK);
+	lastDownTime = now;
+	lastDownPos = screenPos;
+	return dbl;
+}
+
 void WinPin::onKey(UINT key)
 {
 	// 剪裁态只认两个键：回车落这一刀，ESC 放弃。其余快捷键这会儿都用不上，
@@ -1354,6 +1705,31 @@ void WinPin::onKey(UINT key)
 	if (cropMask) {
 		if (key == VK_RETURN) confirmCrop();
 		else if (key == VK_ESCAPE) toolMain->cancelSelect();
+		return;
+	}
+	// 选文态：只认 Ctrl+C（把选中的那段文字送进剪贴板，**不关窗**）、Ctrl+A（全选）、
+	// ESC（先清掉选区，再退整个模式）。这一句必须排在 isLocked 和所有全局快捷键之前 ——
+	// 别的键在这里一概不认，否则 Delete 会删掉图上标注、回车会把整张图复制走并关窗
+	if (textSelect) {
+		bool ctrl = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
+		if (ctrl && key == 'C') {
+			copySelectedText();
+		}
+		else if (ctrl && key == 'A') {
+			selAnchor = 0;
+			selCur = (int)ocrWords.size();
+			refresh();
+		}
+		else if (key == VK_ESCAPE) {
+			// 与 ESC 一贯的"退一步"一致：先撤掉这一步正在做的事（选区），再退整个模式
+			if (hasSelection()) {
+				selAnchor = selCur = 0;
+				refresh();
+			}
+			else {
+				setTextSelect(false);
+			}
+		}
 		return;
 	}
 	if (isLocked) return;
@@ -1506,6 +1882,10 @@ void WinPin::confirmCrop()
 	// 落在新图外面的那一截不用管 —— 画到目标位图上天然会被裁掉
 	drawing->imgOrigin.x += x0;
 	drawing->imgOrigin.y += y0;
+	// 底图换了，认出来的是老图上的词，重认一遍。偏移在上面已经加过了，startOcr 取到的
+	// 就是新的那一个，词框照样落在字上 —— 与 shape 同一套坐标，剪裁搬不动它们
+	clearOcr();
+	startOcr();
 	// 剪完回 100%：尺寸一变，原来那个倍数下的锚点已经没有意义了
 	scale = 1.f;
 	applyWinSize();
@@ -1601,6 +1981,9 @@ bool WinPin::swapImage(const std::vector<BYTE>& data, const int w, const int h)
 	scale = 1.f;
 	// 整张图换掉了，标注坐标系与底图之间那个剪裁偏移也就没意义了
 	drawing->imgOrigin = POINT{ 0, 0 };
+	// 换了底图，认出来的那些词一个都对不上了，重认一遍
+	clearOcr();
+	startOcr();
 	drawing->history->shapes.clear();
 	drawing->shapeHover = nullptr;
 	drawing->selected = nullptr;
@@ -1802,6 +2185,12 @@ BOOL WinPin::setCursor()
 		bool handled{ false };
 		onCursor(&handled);
 		if (handled) return TRUE;
+	}
+	// 选文态：整张图都是"文字区"，光标给 I 形。放在 hasDrawTool 之前 —— 那种状态下
+	// curId 是空的，不先拦一句就会被下面的"画不了 → 拖窗口"判成四向箭头
+	if (textSelect) {
+		SetCursor(LoadCursor(nullptr, IDC_IBEAM));
+		return TRUE;
 	}
 	if (!hasDrawTool()) {
 		// 画不了的时候是拖窗手势，给十字箭头（含 pin 面板开着的时候）

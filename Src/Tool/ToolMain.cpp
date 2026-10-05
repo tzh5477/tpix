@@ -110,6 +110,24 @@ void ToolMain::applyNormalStyle(Ling::Button* btn)
 	btn->setHoverBg(0xF2F2F2ff);
 }
 
+// 两态开关（「选文」）的选中底色。与 selectTool 里给工具按钮上的那层是同一种青色，
+// 但两者互斥地发生：拿起任何一个标注工具都会先把选文关掉（见 selectTool 开头）
+void ToolMain::setToggle(const std::wstring& id, bool on)
+{
+	for (auto b : btns)
+	{
+		if (b->id != id) continue;
+		if (on) {
+			b->setBg(0xe6f4ffff);
+			b->setHoverBg(0xe6f4ffff);
+		}
+		else {
+			applyNormalStyle(b);
+		}
+		return;
+	}
+}
+
 // 取消选中：与 onClick 选中某个按钮是对称操作，只是没有新的选中项。
 // ToolSub 由 curId 是否为空驱动，所以清空 curId 后 layoutTools() 会自动把它收起来。
 void ToolMain::cancelSelect()
@@ -174,6 +192,12 @@ void ToolMain::onClick(Ling::Button* btn)
 		win->setHidden(!win->getHidden());
 		return;
 	}
+	// 「选文」同样是两态开关：点一下整张图进入文字选择态（拖拽按词选、Ctrl+C 复制、ESC 退出），
+	// 再点一下出来。也同 pinHide，做完就返回，不进 curId —— 它不是"画什么"的工具
+	else if (btn->id == L"textSelect") {
+		win->setTextSelect(!win->getTextSelect());
+		return;
+	}
 	// 再次点击已选中的按钮 = 取消选中（开关式）。cancelSelect 里已经做了配色复位、
 	// 隐藏 ToolSub 和重排，这里直接返回，不要再往下走选中流程。
 	if (btn->id == curId) {
@@ -185,6 +209,9 @@ void ToolMain::onClick(Ling::Button* btn)
 
 void ToolMain::selectTool(const std::wstring& id)
 {
+	// 拿起任何一种标注工具都先退出选文态：两套手势都要吃左键，同时开着必然有一套点不动
+	//（选文那一套排在前面，剪裁框就再也拉不起来了）。已经是关的时候就什么都不做
+	win->setTextSelect(false);
 	for (auto b : btns)
 	{
 		if (b->id == curId)
