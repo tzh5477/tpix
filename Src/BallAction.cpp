@@ -30,7 +30,8 @@ const std::vector<BallActionDef>& ballActionDefs()
 
 std::wstring ballDefaultActions()
 {
-	return L"cap,long,delay,video,ocr,pinClip,pinFile,history";
+	// 顺序照 ballActionDefs 的定义表写：togglePick 会按表重排，写乱顺序也走不出别的排列
+	return L"cap,long,delay,video,ocr,pinClip,pinFile,history,setting";
 }
 
 std::vector<std::wstring> ballParseActions(const std::wstring& raw)
