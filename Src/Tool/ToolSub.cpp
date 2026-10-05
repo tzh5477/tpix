@@ -173,6 +173,15 @@ ToolSub::ToolSub(WinPin* win) :Ling::WinBase(), win(win)
 		refreshSize();                    //宿主的摆放规则要用宽高，先按新 dpi 把尺寸定下来
 		this->win->layoutTools();
 	});
+	// 点按钮会把 ToolSub 激活，此后键盘消息进的是它而不是 WinPin ——
+	// WS_EX_NOACTIVATE 只挡得住程序化激活，鼠标点上来那一下 DefWindowProc 照样回 MA_ACTIVATE。
+	// 把按键转回去，ESC / 空格 / 快捷键在工具条上和贴图上才是一个手感。
+	// 唯一的例外是焦点在输入框里（编号）：那时候 ESC 是"结束编辑"、空格就是个空格，
+	// 都该归 TextBox，转过去会被 WinPin 当成"退一步 / 切工具条"
+	onKeyDown.add([this](UINT key) {
+		if (numberBox && numberBox->isFocused()) return;
+		this->win->onKeyDown(key);
+	});
 	// 工具栏不参与激活：编辑文本时点一下颜色/字号，WinPin 不该因此丢掉键盘焦点
 	// （丢焦点 = WM_KILLFOCUS = TextBox 失焦 = 编辑被打断）。
 	createNativeWindow(WS_EX_TOPMOST | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW, WS_POPUP);

@@ -1233,9 +1233,34 @@ void WinPin::onKey(UINT key)
 		if (hasAnim() && isToolsVisible()) toggleAnim();
 		else setToolsVisible(!isToolsVisible());
 	}
+	// ESC 退一步：先把当前操作收掉（放掉画笔、收起 ToolSub，回到工具条的初始样子），
+	// 已经画在图上的一概不动；再按一次才关窗。
+	// 剪裁 / 滚动那几种中途态在 WinCap::onKey 里已经各有各的"退一步"，这里只管贴图窗口这一层
 	else if (key == VK_ESCAPE) {
+		if (stepBack()) return;
 		close();
 	}
+}
+
+// ESC 的"退一步"。顺序是"先收手、再放掉东西"：拿着画笔时按 ESC，用户要的是"不画了"，
+// 一次就该收起整套工具面板（连续标号那种批量操作尤其如此）；没拿画笔、只是点选着某个
+// 元素时才轮到放掉选中。返回是否消费掉了这一次 ESC，false 表示已经退无可退，可以关窗了
+bool WinPin::stepBack()
+{
+	if (toolMain && !toolMain->curId.empty()) {
+		// 鼠标还停在图上时那个"将要落下的号"也得一起收掉，否则光标不动就白退一步
+		hideNumberPreview();
+		// cancelSelect 里顺带清了选中态、收了 ToolSub、重排了整组
+		toolMain->cancelSelect();
+		return true;
+	}
+	if (drawing && drawing->selected) {
+		drawing->selected = nullptr;
+		drawing->shapeHover = nullptr;
+		refresh();
+		return true;
+	}
+	return false;
 }
 
 // 翻历史截图：把底图换成历史里第 previewIndex + step 张（0 = 最新）。

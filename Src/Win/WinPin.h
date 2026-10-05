@@ -116,6 +116,9 @@ private:
 	void onMove(POINT pos);
 	void onUp(POINT pos, BOOL isRight);
 	void onKey(UINT key);
+	// ESC 的"退一步"：先退出当前操作（收起画笔 / 放掉选中），返回是否已经消费掉这一次 ESC。
+	// 返回 false 表示已经没什么可退的了，调用方接着才关窗。已画下的标注一概不动
+	bool stepBack();
 	// 把两条工具条重新提到 topmost 组的最前面。工具条比 WinPin 先建窗口，
 	// 而 topmost 组内后建者在上 —— 两者重叠时（全屏贴图的 overlay 模式）工具条会被底图整条盖住
 	void raiseTools();
