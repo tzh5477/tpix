@@ -169,15 +169,17 @@ void ShapeBase::paintRotateHandle(ID2D1DeviceContext* ctx)
 	auto dpi = win->getDpi();
 	auto c = D2D1::Point2F((rotateDragger.left + rotateDragger.right) / 2.f,
 		(rotateDragger.bottom + rotateDragger.top) / 2.f);
-	auto r{ draggerSize * 0.5f };
-	// 底下一个白圆：手柄要压在图上，不垫一层会和底图糊在一起
+	// 圆底与另外两枚角标同大：三个角看上去是同一套按钮，而不是"手柄 + 图标"两样东西
+	auto r{ draggerSize * 0.9f };
 	ctx->FillEllipse(D2D1::Ellipse(c, r, r), brushDraggerFill.Get());
 	ctx->DrawEllipse(D2D1::Ellipse(c, r, r), brushDragger.Get(), dpi);
-	// 圆弧：留一段缺口对着框（右下方向），看着就是个"转"的符号
-	auto arcR{ draggerSize * 0.3f };
-	auto arrowSize{ draggerSize * 0.26f };
-	const float start = 20.f, sweep = 280.f;
-	const int steps = 24;
+	// 图标：半弧 + 一支箭头（转圈的意思），与另外两个角标的画法一样用浅蓝。
+	// 弧从右下角起、越过顶部、停在左侧（正对屏幕左边），末端一支箭头顺着走向往下 ——
+	// 一眼就是"转"，而不是原来那种两头箭头的整圆
+	auto arcR{ draggerSize * 0.42f };
+	auto arrowSize{ draggerSize * 0.34f };
+	const float start = -25.f, sweep = 205.f;
+	const int steps = 28;
 	d2d->d2dFactory->CreatePathGeometry(rotateArc.ReleaseAndGetAddressOf());
 	ComPtr<ID2D1GeometrySink> arcSink;
 	rotateArc->Open(arcSink.GetAddressOf());
@@ -193,27 +195,26 @@ void ShapeBase::paintRotateHandle(ID2D1DeviceContext* ctx)
 	arcSink->EndFigure(D2D1_FIGURE_END_OPEN);
 	arcSink->Close();
 	ctx->DrawGeometry(rotateArc.Get(), brushDragger.Get(), dpi);
-	// 两端的箭头：指向圆弧的走向（起点朝回、终点朝前），拼成一个几何体一次填掉
+	// 末端那一支箭头：沿圆弧该点的切向指出去，两腰落在切向的法向上
 	d2d->d2dFactory->CreatePathGeometry(rotateArrows.ReleaseAndGetAddressOf());
 	ComPtr<ID2D1GeometrySink> headSink;
 	rotateArrows->Open(headSink.GetAddressOf());
-	auto addHead = [&](float deg, bool forward) {
+	{
+		auto deg{ start + sweep };
 		auto rad = deg * 3.14159265358979323846f / 180.f;
-		// 圆弧在该点的切向（对 deg 求导），forward=false 时取反向
-		auto sign = forward ? 1.f : -1.f;
-		auto tx{ -sinf(rad) * sign }, ty{ -cosf(rad) * sign };
+		// 切向（对 deg 求导，屏幕 y 取负所以纵坐标也反号）
+		auto tx{ -sinf(rad) }, ty{ -cosf(rad) };
 		// 法向：切向转 90 度
 		auto nx{ -ty }, ny{ tx };
-		auto tip = D2D1::Point2F(c.x + arcR * cosf(rad) + tx * arrowSize, c.y - arcR * sinf(rad) + ty * arrowSize);
-		auto p1 = D2D1::Point2F(c.x + arcR * cosf(rad) + nx * arrowSize * 0.6f, c.y - arcR * sinf(rad) + ny * arrowSize * 0.6f);
-		auto p2 = D2D1::Point2F(c.x + arcR * cosf(rad) - nx * arrowSize * 0.6f, c.y - arcR * sinf(rad) - ny * arrowSize * 0.6f);
+		auto bx = c.x + arcR * cosf(rad), by = c.y - arcR * sinf(rad);
+		auto tip = D2D1::Point2F(bx + tx * arrowSize, by + ty * arrowSize);
+		auto p1 = D2D1::Point2F(bx + nx * arrowSize * 0.55f, by + ny * arrowSize * 0.55f);
+		auto p2 = D2D1::Point2F(bx - nx * arrowSize * 0.55f, by - ny * arrowSize * 0.55f);
 		headSink->BeginFigure(p1, D2D1_FIGURE_BEGIN_FILLED);
 		headSink->AddLine(tip);
 		headSink->AddLine(p2);
 		headSink->EndFigure(D2D1_FIGURE_END_CLOSED);
-	};
-	addHead(start, false);
-	addHead(start + sweep, true);
+	}
 	headSink->Close();
 	ctx->FillGeometry(rotateArrows.Get(), brushDragger.Get());
 }
