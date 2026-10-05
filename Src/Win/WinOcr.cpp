@@ -16,9 +16,11 @@ namespace {
 WinOcr::WinOcr(std::vector<BYTE>&& data, const int w, const int h)
 	: Ling::WinBase(), pixels(std::move(data)), imgW(w), imgH(h)
 {
-	// 关窗按钮的点击栈上不能同步 reset（use-after-free），推迟到下一轮消息循环
-	onDestroy.add([]() {
-		Ling::App::get()->dq.TryEnqueue([]() { winOcr.reset(); });
+	// 关窗按钮的点击栈上不能同步 reset（use-after-free），推迟到下一轮消息循环。
+	// 捕获 this 而不是裸用：回调跑的时候这个对象可能已经不是当前那一个了（见 init 的存在性判断）
+	auto self = this;
+	onDestroy.add([self]() {
+		Ling::App::get()->dq.TryEnqueue([self]() { if (winOcr.get() == self) winOcr.reset(); });
 	});
 	setTitle(Lang::get(L"ocr.title"));
 	setSize(560.f, 420.f);
@@ -49,6 +51,35 @@ void WinOcr::onCreated()
 	enableShadow();
 	body->setBg(0xFFFFFFFF);
 	body->setFlexDirection(Ling::FlexDirection::Column);
+
+	// 标题行：左边标题文字，右边关闭按钮。窗口是 WS_POPUP，系统标题栏不存在 ——
+	// 没有这一行的话整个窗只有一块文本框，用户既拖不动它，也没有关它的办法
+	auto titleRow = body->makeChild<Ling::Node>();
+	titleRow->setHeight(36.f);
+	titleRow->setWidthPercent(100.f);
+	titleRow->setFlexDirection(Ling::FlexDirection::Row);
+	titleRow->setAlignItems(Ling::Align::Center);
+
+	auto title = titleRow->makeChild<Ling::Label>();
+	title->setText(Lang::get(L"ocr.title"));
+	title->setHeightPercent(100.f);
+	title->setPaddingLeft(12.f);
+	title->setFontSize(13.f);
+	title->setColor(0x333333FF);
+	title->setFlexGrow(1.f);
+	title->setJustifyContent(Ling::Justify::Start);
+
+	// 绝对定位到右上角：不占标题行的横向空间，也不会把标题文字挤窄
+	auto closeBtn = titleRow->makeChild<Ling::Button>();
+	closeBtn->setSize(42.f, 32.f);
+	closeBtn->setPositionType(Ling::Position::Absolute);
+	closeBtn->setPosition(Ling::Edge::Right, 0);
+	closeBtn->setPosition(Ling::Edge::Top, 2);
+	closeBtn->setHoverColor(0xFFFFFFFF);
+	closeBtn->setHoverBg(0xE81123FF);
+	closeBtn->setText(L"\ue62d");
+	closeBtn->setFontFamily(L"icon");
+	closeBtn->onClick.add([](Ling::Button* btn) { btn->win->close(); });
 
 	box = body->makeChild<Ling::TextBox>();
 	box->setFlexGrow(1.f);
@@ -124,6 +155,25 @@ void WinOcr::onCreated()
 
 	show();
 	startRecognize();
+}
+
+// 标题行（顶 36 逻辑像素内）当拖拽区。WS_POPUP 没有系统标题栏，不给这一段
+// HTCAPTION 的话用户按不住窗口 —— 识别结果可能很长，窗口得能拖到别处看
+LRESULT WinOcr::onHitTest(const POINT pos)
+{
+	POINT pt = pos;
+	ScreenToClient(hwnd, &pt);
+	// 右边 42 留给关闭按钮：那一块要按成 HTCLIENT，否则点 × 会变成拖窗口，点不掉
+	if (pt.y > 0 && pt.y < 36 * dpi && pt.x < w - 42 * dpi) return HTCAPTION;
+	return HTCLIENT;
+}
+
+void WinOcr::onMinMaxInfo(MINMAXINFO* mmi)
+{
+	// 同 ToolMain / ToolSub / WinPin：Ling 默认的最小跟踪尺寸是 800×600，
+	// 比这个窗大得多，不放开的话 setSize 会被系统按回去
+	mmi->ptMinTrackSize.x = 1;
+	mmi->ptMinTrackSize.y = 1;
 }
 
 std::wstring WinOcr::curLangTag() const

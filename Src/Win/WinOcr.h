@@ -15,6 +15,9 @@ public:
 	static void dispose();
 private:
 	void onCreated() override;
+	// 标题行当拖拽区、放开 Ling 默认的 800×600 最小跟踪尺寸（这个窗只有 560×420）
+	LRESULT onHitTest(const POINT pos) override;
+	void onMinMaxInfo(MINMAXINFO* mmi) override;
 	void startRecognize();
 	void setResult(const std::wstring& text);
 	void setTable(const TableResult& table);
