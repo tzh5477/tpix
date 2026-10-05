@@ -88,6 +88,9 @@ namespace {
 			auto row = body->makeChild<Ling::Node>();
 			row->setHeight(rowH);
 			row->setWidthPercent(100.f);
+			// 必须显式 Row：yoga 默认是 Column，不写的话名称 / 滑块 / 数值会竖成三行，
+			// 行高只有 32 装不下，整块浮层就散了（作者截图里"不透明度"、滑块、"23"各占一行）
+			row->setFlexDirection(Ling::FlexDirection::Row);
 			row->setAlignItems(Ling::Align::Center);
 
 			auto label = row->makeChild<Ling::Label>();
@@ -113,12 +116,13 @@ namespace {
 			s->setHoverThumbColor(0x595959FF);
 			s->setTrackColor(0xD9D9D9FF);
 			s->setFillColor(0x1677FFFF);
-			// 数值：显示整数，与滑块的 step=1 配套。滑块变了就同步刷新那一格
+			// 数值：显示整数，与滑块的 step=1 配套。滑块变了就同步刷新那一格。
+			// 居右：位数从 1 位变 3 位时左边缘不动，读数不会左右跳
 			auto num = row->makeChild<Ling::Label>();
 			num->setFontSize(12.f);
 			num->setColor(0x555555FF);
 			num->setWidth(numW);
-			num->setJustifyContent(Ling::Justify::Center);
+			num->setJustifyContent(Ling::Justify::End);
 			num->setFlexShrink(0.f);
 			syncNum(num, s->getValue());
 			s->onValueChanged.add([this, onVal, s, num](Ling::Slider*, float v) {
