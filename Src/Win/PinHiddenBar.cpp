@@ -6,7 +6,9 @@
 #include "PinHiddenBar.h"
 
 namespace {
-	std::unique_ptr<PinHiddenBar> bar;
+	// 左、上各一扇窗。两边各算各的：贴图归哪条边是拖到哪儿松手决定的，
+	// 常出现"左边藏两张、顶边藏一张"，少哪边就不建哪扇窗
+	std::unique_ptr<PinHiddenBar> edgeBars[2];
 
 	// 藏起来的贴图按创建顺序轮转取色。之所以不在"藏的那一刻"按第几个藏的去取：
 	// 那样放掉中间一张，后面几张的颜色会跟着往前挪一位，同一张图前后不是一个颜色。
@@ -18,7 +20,7 @@ namespace {
 	};
 }
 
-PinHiddenBar::PinHiddenBar() : Ling::WinBase()
+PinHiddenBar::PinHiddenBar(WinPin::BarEdge edge) : Ling::WinBase(), edge(edge)
 {
 	// 屏幕左上角。用主显示器的工作区而不是 (0,0)：任务栏要是在顶上停靠，
 	// 条正好压在它下面，看不见也点不着
@@ -27,11 +29,15 @@ PinHiddenBar::PinHiddenBar() : Ling::WinBase()
 		barX = wa.left;
 		barY = wa.top;
 	}
+	// 顶边那条往右让开一条竖排的宽度：两扇窗都贴着左上角，不让开就叠在同一个角上，
+	// 后建的那扇会把先建那扇的开头几像素盖住（topmost 组内后建者在上）
+	if (isHorizontal()) barX += (int)((barThick + pad * 2) * dpi);
 	x = barX;
 	y = barY;
 	// 先给个"一条"的尺寸，真正的尺寸由 rebuild 按条数算；这里要的是让 CreateWindowEx
 	// 别拿 0 宽高建窗（那会连 WM_MOUSEMOVE 都收不到）
-	setSize(barW + pad * 2, barH + pad * 2);
+	setSize((isHorizontal() ? barLong : barThick) + pad * 2,
+		(isHorizontal() ? barThick : barLong) + pad * 2);
 	// WS_EX_NOACTIVATE：这条要一直挂在屏幕角上，绝不能因为它把用户手上的焦点抢走。
 	// WS_EX_TOPMOST：贴图窗口本身也是 topmost，不跟上的话全屏应用一起就被压掉了
 	createNativeWindow(WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, WS_POPUP);
@@ -43,9 +49,10 @@ PinHiddenBar::~PinHiddenBar()
 
 void PinHiddenBar::onCreated()
 {
-	// 整扇窗口就是几根头发丝，不要底色也不要边框。条自上而下竖着排、水平居中
+	// 整扇窗口就是几根头发丝，不要底色也不要边框。
+	// 左边那条自上而下竖着排（水平居中）；顶边那条自左向右横着排（垂直居中）
 	body->setBg(0);
-	body->setFlexDirection(Ling::FlexDirection::Column);
+	body->setFlexDirection(isHorizontal() ? Ling::FlexDirection::Row : Ling::FlexDirection::Column);
 	body->setAlignItems(Ling::Align::Center);
 	body->setPadding(pad);
 	onMouseMove.add([this](POINT pos) { this->onMove(pos); });
@@ -62,23 +69,27 @@ void PinHiddenBar::onMinMaxInfo(MINMAXINFO* mmi)
 
 void PinHiddenBar::sync()
 {
-	auto pins = WinPin::getHiddenPins();
-	if (!bar) {
-		if (pins.empty()) return;
-		bar.reset(new PinHiddenBar());
+	for (int i = 0; i < 2; ++i) {
+		auto edge = (WinPin::BarEdge)i;
+		if (!edgeBars[i]) {
+			if (WinPin::getHiddenPins(edge).empty()) continue;
+			edgeBars[i].reset(new PinHiddenBar(edge));
+		}
+		edgeBars[i]->rebuild();
 	}
-	bar->rebuild();
 }
 
 void PinHiddenBar::dispose()
 {
-	if (bar) bar->close();
-	bar.reset();
+	for (auto& b : edgeBars) {
+		if (b) b->close();
+		b.reset();
+	}
 }
 
 void PinHiddenBar::rebuild()
 {
-	auto pins = WinPin::getHiddenPins();
+	auto pins = WinPin::getHiddenPins(edge);
 	// 露着的那张可能已经被关掉了。关窗是先销毁窗口、下一轮消息循环才把它从表里摘掉，
 	// 而本函数也可能正好被那次摘除叫过来 —— 所以只可能是"它已经不在藏着的那批里了"：
 	// 清指针，绝不去解引用它（那可能是已经析构掉的对象）
@@ -95,18 +106,24 @@ void PinHiddenBar::rebuild()
 	}
 	for (size_t i = 0; i < pins.size(); ++i) {
 		auto node = body->makeChild<Ling::Node>();
-		node->setWidth(barW);
-		node->setHeight(barH);
-		// 条只有 2 逻辑像素宽，绝不能被 yoga 当成"空间不够"压掉
+		// 长边 50、厚 2。横排时这两条掉个个儿：条是横着摆的，自左向右接下去
+		node->setWidth(isHorizontal() ? barLong : barThick);
+		node->setHeight(isHorizontal() ? barThick : barLong);
+		// 条只有 2 逻辑像素厚，绝不能被 yoga 当成"空间不够"压掉
 		node->setFlexShrink(0.f);
 		node->setBg(barColors[pins[i]->getBarColorIndex() % std::size(barColors)]);
-		// 最后一条不留缝，否则窗口底下白出 2 像素
-		if (i + 1 < pins.size()) node->setMarginBottom(gapW);
+		// 最后一条不留缝，否则窗口末了白出 2 像素
+		if (i + 1 < pins.size()) {
+			if (isHorizontal()) node->setMarginRight(gapW);
+			else node->setMarginBottom(gapW);
+		}
 		bars.push_back(node);
 	}
-	// 竖排：宽固定成一条的宽，高随条数增长
-	setSize(barW + pad * 2,
-		barH * (float)pins.size() + gapW * (float)(pins.size() - 1) + pad * 2);
+	// 顺着排的方向随条数增长，另一向固定成一条的厚度
+	auto longSide = barLong * (float)pins.size() + gapW * (float)(pins.size() - 1) + pad * 2;
+	auto thickSide = barThick + pad * 2;
+	if (isHorizontal()) setSize(longSide, thickSide);
+	else setSize(thickSide, longSide);
 	setPosition(barX, barY);
 	// 尺寸没变时不会有 WM_SIZE，也就没人排这一次；新加的条得自己排一遍才算得出位置
 	if (body) layout();
@@ -122,8 +139,10 @@ int PinHiddenBar::barIndexAt(POINT pos) const
 	int best = 0;
 	float bestD = -1.f;
 	for (size_t i = 0; i < bars.size(); ++i) {
-		auto center = bars[i]->y + bars[i]->h / 2.f;
-		auto d = std::abs((float)pos.y - center);
+		auto center = isHorizontal() ? bars[i]->x + bars[i]->w / 2.f
+			: bars[i]->y + bars[i]->h / 2.f;
+		auto d = isHorizontal() ? std::abs((float)pos.x - center)
+			: std::abs((float)pos.y - center);
 		if (bestD < 0.f || d < bestD) {
 			bestD = d;
 			best = (int)i;
@@ -143,7 +162,7 @@ void PinHiddenBar::onMove(POINT pos)
 
 void PinHiddenBar::reveal(int index)
 {
-	auto pins = WinPin::getHiddenPins();
+	auto pins = WinPin::getHiddenPins(edge);
 	if (index < 0 || index >= (int)pins.size()) return;
 	auto target = pins[(size_t)index];
 	if (peek == target) return;

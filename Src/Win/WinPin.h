@@ -17,6 +17,9 @@ class WinPin : public Ling::WinBase, public CanvasHost
 {
 public:
 	~WinPin();
+	// 藏到屏幕的哪一条边上，对应 PinHiddenBar 的两扇窗。点「隐藏」按钮藏的一律走 Left
+	//（作者最早要的形态就是左上角那几条竖线）；拖到屏幕左边 / 顶边释放时按拖到的那条边记下来
+	enum class BarEdge { Left, Top };
 	// toolId 非空时，贴图窗口一打开就预选该标注工具（由 ToolCap 上的标注按钮直达进来）
 	static void init(int x, int y, int w, int h, const std::wstring& toolId = L"");
 	// 底图不来自 WinCap 的截屏，而是外部给的一块 BGRA、top-down、行紧凑（步长 = w*4）像素。
@@ -118,11 +121,14 @@ public:
 	void ensureWatermark();
 	// 剪裁态：底图裁一块，标注原地不动、继续可编辑（ToolMain 上那个剪裁按钮进的就是这里）
 	bool isCropping() const { return cropMask != nullptr; }
-	// ---- 藏进左上角那条"书签条"（见 PinHiddenBar）----
+	// ---- 藏进屏幕边上的那条"书签条"（见 PinHiddenBar）----
 	// 开关：藏着的时候再按一次就是放回来。藏起来的是"这扇窗"，位置、底图、标注一概不动。
-	// 条上的 hover 只是把窗口临时显出来（peek），不改这个状态
-	void setHidden(bool on);
+	// 条上的 hover 只是把窗口临时显出来（peek），不改这个状态。
+	// edge 只在 on 为真时有用：点「隐藏」按钮和拖到屏幕左边线都走 Left，拖到顶边线走 Top
+	void setHidden(bool on, BarEdge edge = BarEdge::Left);
 	bool getHidden() const { return isHidden; }
+	// 这会儿藏在哪条边上。放回来之后这个值没有意义，下次藏的时候重新给
+	BarEdge getBarEdge() const { return barEdge; }
 	// hover 时"露一下" / 收回去。只动窗口，isHidden 不动 —— 条本身要一直留着，
 	// 不然鼠标一离开条就没了，而"离开就收回去"正是这一套的行为
 	void peek(bool on);
@@ -132,8 +138,8 @@ public:
 	// 鼠标 / 键盘正落在这张贴图上（拖着窗口、正画一笔、文字编辑器开着）。
 	// 隐藏条那边靠它避开"用户正拿着这张图"的时刻，否则拖着拖着图就没了
 	bool isBusy() const;
-	// 当前藏着的贴图，按创建顺序 —— 隐藏条就按这个顺序自上而下画
-	static std::vector<WinPin*> getHiddenPins();
+	// 藏在 edge 那条边上的贴图，按创建顺序 —— 那一条边上的书签就按这个顺序排
+	static std::vector<WinPin*> getHiddenPins(BarEdge edge);
 private:
 	WinPin(int x, int y, int w, int h, const std::vector<BYTE>* data = nullptr,
 		const std::wstring& initToolId = L"");
@@ -239,6 +245,10 @@ private:
 	// 贴到当前显示器的某条边 / 搬到相邻显示器（dir = -1 左，+1 右），组内成员同步位移
 	void alignToEdge(UINT key);
 	void moveToMonitor(int dir);
+	// 光标这会儿压在屏幕的哪条边线上（都不在就没有值）。拖完窗口看它 —— 拖到边上松手
+	// 就是把这张图藏到那条边上。判的是光标而不是窗口：把窗口贴着边摆成 x=0 是很常见的停法，
+	// 那不该被当成"藏起来"；而光标推到屏幕最边上（系统不会再让它走出去）是明确的"推到头了"
+	std::optional<BarEdge> edgeAtCursor() const;
 	// 贴图组号。0 = 不成组
 	int groupId{ 0 };
 	// 另存为对话框会抢走前台并把 WinPin 激活，取消保存后用它把窗口层级和前台窗口恢复原样
@@ -312,9 +322,11 @@ private:
 	bool isLocked{ false };
 	// 鼠标穿透。同 round / lock 是实例态，但不落盘（见上面 getter 的注释）
 	bool isThrough{ false };
-	// 藏进左上角那条里了（窗口不可见，位置 / 底图 / 标注一概保留，见 setHidden）。
+	// 藏进屏幕边上那条里了（窗口不可见，位置 / 底图 / 标注一概保留，见 setHidden）。
 	// 刻意不落盘：下次启动照常摆回原位 —— 存了的话用户第二天会以为图丢了
 	bool isHidden{ false };
+	// 藏在左 / 上哪条边上，见 getBarEdge
+	BarEdge barEdge{ BarEdge::Left };
 	// 藏起来之前两条工具条是不是开着的。放回来时按原样恢复，用户自己右键收起的不替他打开
 	bool toolsWereVisible{ true };
 	// 隐藏条上那一条的颜色序号，见 getBarColorIndex

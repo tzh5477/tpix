@@ -589,13 +589,14 @@ bool WinPin::hasDrawTool() const
 	return toolMain && !toolMain->curId.empty() && toolMain->curId != L"pin" && toolMain->curId != L"pinCrop";
 }
 
-// 藏进屏幕左上角那条里（见 PinHiddenBar），再按一次就是放回来。
+// 藏进屏幕边上的那条书签条里（见 PinHiddenBar），再按一次就是放回来。
 // 藏起来的是"这扇窗"：位置、底图、标注一个都不动，所以鼠标移回那条上时它能原样回来
-void WinPin::setHidden(bool on)
+void WinPin::setHidden(bool on, BarEdge edge)
 {
 	if (isClosed || isHidden == on) return;
 	isHidden = on;
 	if (on) {
+		barEdge = edge;
 		// 编辑器与剪裁框画的都是"贴图窗口里的东西"，窗口一藏它们就没上下文了
 		if (editingShape) editingShape->finishEditing();
 		if (cropMask) toolMain->cancelSelect();
@@ -651,13 +652,30 @@ bool WinPin::isBusy() const
 	return isMouseDown || editingShape != nullptr || cropMask != nullptr || selDragging;
 }
 
-std::vector<WinPin*> WinPin::getHiddenPins()
+std::vector<WinPin*> WinPin::getHiddenPins(BarEdge edge)
 {
 	std::vector<WinPin*> out;
 	for (auto& pin : winPins) {
-		if (pin->isHidden) out.push_back(pin.get());
+		if (pin->isHidden && pin->barEdge == edge) out.push_back(pin.get());
 	}
 	return out;
+}
+
+// 见头文件上的注释：判的是光标，不是窗口
+std::optional<WinPin::BarEdge> WinPin::edgeAtCursor() const
+{
+	// 主显示器的工作区，与书签条摆的位置同源（见 PinHiddenBar 的构造函数）。
+	// 多显示器只认主显示器那两条边 —— 条本来就只画在左上角那一个角上
+	RECT wa{};
+	if (!SystemParametersInfo(SPI_GETWORKAREA, 0, &wa, 0)) return {};
+	// 容差取几个像素：光标被系统夹在屏幕边上不再往外走，光标贴到边上就是 0，
+	// 但手抖留一两个像素也是"推到头了"
+	constexpr int margin{ 4 };
+	POINT cur{};
+	if (!GetCursorPos(&cur)) return {};
+	if (cur.x <= wa.left + margin) return BarEdge::Left;
+	if (cur.y <= wa.top + margin) return BarEdge::Top;
+	return {};
 }
 
 // 水印工具一点开就把水印铺满整张图，不用再点一下截图区域（ToolSub 上的文字 / 字号 / 间距
@@ -1132,8 +1150,11 @@ void WinPin::onDown(POINT pos, BOOL isRight)
 	isMouseDown = true;
 	hasDragged = false;
 	SetCapture(hwnd);
-	// 没选画笔，或只开着贴图属性面板（都画不了），左键是拖窗口，拖的时候把工具条收起来
+	// 没选画笔，或只开着贴图属性面板（都画不了），左键是拖窗口，拖的时候把工具条收起来。
+	// 收之前先记下它这会儿开着没有：拖到屏幕边线上会顺势把图藏起来，那一次"藏"发生在抬手时，
+	// 工具条已经被这次按下收掉了，事后再问 isToolsVisible 一律是关 —— 记下的是"拖动之前"
 	if (!hasDrawTool()) {
+		toolsWereVisible = isToolsVisible();
 		toolMain->hide();
 		return;
 	}
@@ -1187,6 +1208,9 @@ void WinPin::onMove(POINT pos)
 			auto newX = x + pos.x - pressPos.x;
 			auto newY = y + pos.y - pressPos.y;
 			auto dx = newX - x, dy = newY - y;
+			// 光标一步没挪也会来 WM_MOUSEMOVE。抬手时要靠它区分"拖过"和"只是点了一下"：
+			// 只有真拖过才轮得到"拖到屏幕边线上就藏起来"那一条
+			if (pos.x != pressPos.x || pos.y != pressPos.y) hasDragged = true;
 			setPosition(newX, newY);
 			// 成组的贴图跟着一起挪，整组的相对位置不变
 			syncGroupPos(this, dx, dy);
@@ -1256,6 +1280,18 @@ void WinPin::onUp(POINT pos, BOOL isRight)
 	// 这一下按下有没有新建出一个留得住的元素：紧接着来第二下凑成双击时要把它撤掉（见 onDown）
 	prevPressCreatedShape = false;
 	if (!hasDrawTool()) {
+		// 拖到屏幕最左边 / 最顶上松手 = 把这张图藏到那条边上（左 / 上各挂一条书签，
+		// 见 PinHiddenBar）。藏起来之后窗口就没了，工具条自然也不该再请出来，所以到此为止
+		if (hasDragged) {
+			if (auto edge = edgeAtCursor()) {
+				// 按一次普通拖动的收尾把工具条摆回拖动前的样子（本次按下时收掉的），
+				// setHidden 记下的才是用户自己那套开 / 关 —— 否则 hover 回来的是一张
+				// 光秃秃的图，工具条要再点一下才出得来
+				if (toolsWereVisible) toolMain->show();
+				setHidden(true, *edge);
+				return;
+			}
+		}
 		// 没选画笔，这一下要么是拖完窗口（按新位置重排工具条），要么只是点了一下 ——
 		// 两种情况都把 ToolMain 显示出来：拖动期间它是藏着的，右键之后它也是藏着的，
 		// 左键点一下就是"我还要用工具条"。ToolSub 由 curId 驱动，这会儿仍然不该出来，
