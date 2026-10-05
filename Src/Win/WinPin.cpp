@@ -15,6 +15,8 @@
 #include "../Update.h"
 #include "../Setting.h"
 #include "../ShotHistory.h"
+#include "WinWatermarkPanel.h"
+#include "WinWatermarkText.h"
 
 using namespace Microsoft::WRL;
 using namespace winrt::Windows::Data::Json;
@@ -125,6 +127,11 @@ void WinPin::onClosed()
 	if (isClosed) return;
 	isClosed = true;
 	if (editingShape) editingShape->finishEditing();
+	// 竖排浮层与内容弹窗是独立顶层窗口，不随 toolSub 一起死。
+	// 不收的话它们会孤零零留在屏幕上：那上面的滑块调的是一个已经关掉的窗口的水印样式，
+	// 拖上去什么也不会发生，看着像程序卡了
+	WinWatermarkPanel::close();
+	WinWatermarkText::close();
 	// 先收起附属窗口，再让出 hover 指针 —— shapeHover 指向 history 里的元素，
 	// 而 history 现在归 drawing 所有（与 WinPin 同生共死），留着悬空指针没意义
 	if (toolSub) toolSub->close();

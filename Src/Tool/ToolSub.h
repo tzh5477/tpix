@@ -101,6 +101,18 @@ public:
 	float getWatermarkRotation() const;
 	float getWatermarkGapRatio() const;
 	int getWatermarkPos() const { return watermarkPos; }
+	// ---- 水印竖排浮层（WinWatermarkPanel）的读写口 ----
+	// 浮层只有"取初值"和"写回"两件事，都从这里走。刻意不在浮层里直接摸上面那几个字段：
+	// 值域、落盘的键名、以及"改完要让图上已有的水印重画"这三件事分散在两处的话，
+	// 改一处忘一处就是滑块动了图不变、或者改了没落盘
+	float getWatermarkAlpha() const { return (float)watermarkAlpha; }
+	float getWatermarkSize() const { return sliderVal; }
+	// 大小的值域查这个工具在配置表里那一档（与工具条上那个滑块同一个值域）
+	void getWatermarkSizeRange(float& min, float& max) const { min = sliderMin; max = sliderMax; }
+	float getWatermarkGap() const { return (float)watermarkGapPct; }
+	void setWatermarkAlpha(float v);
+	void setWatermarkSize(float v);
+	void setWatermarkGap(float v);
 private:
 	void onCreated() override;
 	void layout() override;
@@ -115,12 +127,11 @@ private:
 	// 只在同排摆着多个滑块时才需要 —— 一个滑块的工具光看数字就知道是什么
 	Ling::Slider* makeSlider(float min, float max, float val, std::function<void(float)> onChange,
 		const std::wstring& name = {});
-	// 水印的「时间」下拉：往水印文字末尾插一个时间占位符（原来那句不为空就先换行）。
-	// 列表里显示的是"按现在这一刻展开之后的样子"，比直接显示模板串好认
-	void makeWatermarkTimeBtn(Ling::TextBox* textBox);
 	// 水印的「旋转」按钮：非平铺时置灰并让它点了也不动 —— 角度只对平铺有意义。
 	// 位置一变（下拉里选的）就要重画一次按钮上的字与配色，所以单独抽出来
 	void syncWatermarkRotateBtn();
+	// 水印的「内容」按钮上显示什么：当前文字的第一行，截太长加省略号
+	void syncWatermarkContentBtn();
 	// 选中/未选中两套配色，与 ToolMain 的选中效果保持一致
 	void applyToggleStyle(Ling::Button* btn, bool selected);
 	// 建一个可切换的工具按钮：初始态从配置文件读（写回 flag），点击时翻转 flag、刷新配色并落盘。
@@ -170,7 +181,8 @@ private:
 	// 按内容算出窗口尺寸并应用。btnCount 只数工具按钮，不含颜色按钮。
 	// centerOnBtn 为 true 时窗口居中对齐到 ToolMain 上选中的那个按钮，否则与 ToolMain 左对齐。
 	// extraW 给文字输入框这类"宽度不是一格按钮"的控件预留。
-	// sliderCount 是要摆几个滑块：水印那一排不透明度 / 大小 / 间距三个并排，别的工具都是一个
+	// sliderCount 是要摆几个滑块，0 表示一个都不摆（水印那三个滑块搬去了竖排浮层，
+	// 工具条上一个不留）；别的工具都是一个
 	void initSize(int btnCount, bool withColors, bool centerOnBtn = false, float extraW = 0.f,
 		int sliderCount = 1);
 	// 内容不变、只是 dpi 变了：按上次 initSize 的入参重算一遍尺寸
@@ -187,9 +199,14 @@ private:
 	// sliderNames 与它一一对应，是提示里写在数值前面的那一截（单滑块的工具留空串）
 	std::vector<Ling::Slider*> sliders;
 	std::vector<std::wstring> sliderNames;
-	// 水印「旋转」按钮。与 slider 同理：切工具时随 contentNode 一起销毁，beginTool 里必须置空，
-	// 否则位置下拉回调里的 syncWatermarkRotateBtn 会往一个已删掉的按钮上写字
+	// 水印面板上的三枚按钮。与 slider 同理：切工具时随 contentNode 一起销毁，
+	// beginTool 里必须置空，否则各自的回调（syncWatermarkRotateBtn / syncWatermarkContentBtn、
+	// 以及浮层的 show）会往一个已删掉的按钮上写
 	Ling::Button* watermarkRotBtn{ nullptr };
+	// 「内容」：点开是水印内容编辑弹窗（文字 + 时间 + 字体）
+	Ling::Button* watermarkContentBtn{ nullptr };
+	// 「样式」：悬停或点击弹开竖排浮层（不透明度 / 大小 / 间距）
+	Ling::Button* styleBtn{ nullptr };
 	// 悬停提示。要 hwnd，所以在 onCreated 里才建得起来
 	std::unique_ptr<Tip> tip;
 	static constexpr float btnSize{ 32.f };
@@ -200,6 +217,9 @@ private:
 	// 宽度要从 initSize 的 extraW 里预留出来。字体下拉的最小宽度单独给，
 	// 按按钮宽度开会把"Microsoft YaHei UI Light"这类长名字截掉
 	static constexpr float fontBtnW{ 88.f };
+	// 水印「内容」按钮的固定宽度。同 fontBtnW 的道理：内容长短不一，交给 flex 会被挤扁。
+	// 比 fontBtnW 宽一点 —— 水印文字第一行常有 5~6 个汉字
+	static constexpr float contentBtnW{ 96.f };
 	static constexpr float fontPopupMinW{ 220.f };
 	static constexpr float fontMaxChars{ 6.f };    // 按钮上最多显示几个字符，超了截断
 	static constexpr float numberBoxW{ 46.f };

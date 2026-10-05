@@ -9,6 +9,7 @@
 #include "../Shape/ShapeNumber.h"
 #include "../Shape/ShapeWatermark.h"
 #include "../Tip.h"
+#include "../Win/WinWatermarkPanel.h"
 #include "../Win/WinWatermarkText.h"
 #include "ToolSub.h"
 #include "ToolMain.h"
@@ -93,7 +94,6 @@ const std::vector<ToolSub::FontItem>& ToolSub::commonFonts()
 	}
 	return list;
 }
-// 声明在 ToolSub.h 上：水印的内容编辑弹窗要用同一份
 float ToolSub::getWatermarkOpacity() const
 {
 	// 滑块给的是整数百分比，画的时候要 0~1
@@ -111,6 +111,33 @@ float ToolSub::getWatermarkGapRatio() const
 	// 间距是"文字尺寸的几成"：滑块 0~100 映射到 0~2 倍 —— 100 时两格之间空出两个文字宽，
 	// 默认 25（即 0.5 倍）与原「标准」档一致
 	return std::clamp(watermarkGapPct, 0, 100) / 100.f * 2.f;
+}
+
+// 竖排浮层（WinWatermarkPanel）改值走这三个。落盘的键名与工具条上那三个滑块完全一致 ——
+// 同一份样式只能有一个落盘处，两边各写一遍键名的话，改了工具条上的滑块浮层不跟着、
+// 反过来也一样，是最难查的那类"改了没反应"
+// 大小的键名是 curSliderKey（beginTool 从值域表里取出来的 fontSize），不写死
+
+void ToolSub::setWatermarkAlpha(float v)
+{
+	watermarkAlpha = (int)std::lround(v);
+	Setting::get()->setToolNum(L"watermark", L"alpha", v);
+	win->refresh();
+}
+
+void ToolSub::setWatermarkSize(float v)
+{
+	sliderVal = v;
+	Setting::get()->setToolNum(curToolId, curSliderKey, v);
+	// 水印不是选中态元素，没选中任何东西时也得重画才看得见
+	win->refresh();
+}
+
+void ToolSub::setWatermarkGap(float v)
+{
+	watermarkGapPct = (int)std::lround(v);
+	Setting::get()->setToolNum(L"watermark", L"gapPct", v);
+	win->refresh();
 }
 
 ToolSub::ToolSub(WinPin* win) :Ling::WinBase(), win(win)
@@ -192,8 +219,13 @@ void ToolSub::beginTool(const std::wstring& id)
 	sliderNames.clear();
 	numberBox = nullptr;
 	numberBoxSilent = false;
-	// 同上：水印的旋转按钮也只在水印面板里存在
+	// 同上：水印的旋转、内容、样式三枚按钮也只在水印面板里存在。
+	// 竖排浮层上一档工具就收：它上面那三个滑块调的是水印样式，
+	// 切到别的工具之后它还挂着就成了一组调不动作用的滑块
 	watermarkRotBtn = nullptr;
+	watermarkContentBtn = nullptr;
+	styleBtn = nullptr;
+	WinWatermarkPanel::close();
 	curToolId = id;
 	auto cfg = findSliderCfg(id);
 	if (!cfg) return;
@@ -327,17 +359,17 @@ int ToolSub::fontIndexOf(const std::wstring& family)
 	return -1;
 }
 
-// 界面上显示的名字：表里查得到就用表里的（中文显示名），查不到退回族名本身
 std::wstring ToolSub::fontShowName(const std::wstring& family)
 {
 	auto idx = fontIndexOf(family);
+	// 找不到就在列表里现查一遍显示名；机器上确实没这款字体（配置从别处搬来的）才退回族名本身
 	return idx >= 0 ? commonFonts()[idx].show : family;
 }
 
 void ToolSub::syncFontBtnText(Ling::Button* btn, const std::wstring& family)
 {
-	std::wstring show = fontShowName(family);
 	// 按钮只有一格宽，长名字截断 —— 下拉里显示的是全名
+	auto show = fontShowName(family);
 	if (show.size() > (size_t)fontMaxChars) {
 		show = show.substr(0, (size_t)fontMaxChars - 1) + L"\u2026";
 	}
@@ -830,43 +862,52 @@ void ToolSub::makeApplyAllBtn()
 void ToolSub::showWatermarkTools()
 {
 	beginTool(L"watermark");
-	// 三个按钮（位置 / 旋转 / 时间）+ 三个滑块（不透明度 / 大小 / 间距）+ 色板。
-	// extraW 里要算上文字输入框与它左右各一次的间距、以及固定宽度的字体按钮 ——
-	// initSize 只按滑块数算间距，这两个的得自己加
-	initSize(3, true, true, 150.f + fontBtnW + sliderMargin * 2, 3);
+	// 三个按钮（内容 / 位置 / 旋转 / 样式）+ 色板。extraW 里要算上固定宽度的内容按钮
+	// 与它左右各一次的间距 —— initSize 只按滑块数算间距，固定宽度的控件得自己加。
+	// 滑块数给 0：那三个滑块搬去竖排浮层了，这里一个都不建
+	initSize(4, true, true, contentBtnW + sliderMargin * 2, 0);
 	auto setting = Setting::get();
 	// 文字从配置读回：水印十有八九每张截图都写同一句，不该每次都重打
 	watermarkText = setting->getToolStr(L"watermark", L"text", L"");
 	// 位置也读回并夹一遍：配置可能是旧版写的（那时还没有这个键），也可能被手工改坏
 	watermarkPos = std::clamp((int)setting->getToolNum(L"watermark", L"pos", 0.f), 0, 7);
-	// 角度、不透明度、间距都是滑块 / 下拉给的连续量，同样从配置读回并夹紧 ——
-	// 这几个值会直接喂给 D2D（透明度的 alpha、平铺步长），越界要么看不见要么慢得离谱
+	// 角度、不透明度、间距同样从配置读回并夹紧 —— 这几个值会直接喂给 D2D
+	//（透明度的 alpha、平铺步长），越界要么看不见要么慢得离谱。
+	// 不透明度与间距另有用户可见的入口（竖排浮层上的滑块），改的是同一份
 	watermarkRotate = std::clamp((int)setting->getToolNum(L"watermark", L"rotate", 0.f), 0, 3);
 	watermarkAlpha = std::clamp((int)setting->getToolNum(L"watermark", L"alpha", 25.f), 5, 100);
 	// 间距的键名换成 gapPct：老配置里的 gap 是"三档下标"（0~2），沿用同名会被读成 0~2%
 	// ——那样平铺密得糊成一片。换个键名，老配置自然退回默认的 25%
 	watermarkGapPct = std::clamp((int)setting->getToolNum(L"watermark", L"gapPct", 25.f), 0, 100);
-	// 文字输入框的宽度已在 initSize 里预留（extraW），放最前面
-	auto textBox = contentNode->makeChild<Ling::TextBox>();
-	textBox->setHeight(btnSize - 2.5);
-	textBox->setWidth(150.f);
-	textBox->setVerticalCenter(true);
-	textBox->setFontSize(12.f);
-	textBox->setMarginLeft(sliderMargin);
-	textBox->setMarginRight(sliderMargin);
-	textBox->setPlaceholder(Lang::get(L"tool.watermarkTip"));
-	textBox->setText(watermarkText);
-	textBox->onTextChanged.add([this](Ling::TextBox*, const std::wstring& val) {
-		watermarkText = val;
-		// 没写完也落盘：下次打开工具条接着上次的写，符合"水印一般是固定那句"的用法
-		Setting::get()->setToolStr(L"watermark", L"text", val);
-		win->refresh();
+	// 「内容」按钮：点开是水印内容的编辑弹窗（多行文字 + 时间格式 + 字体，参考 pixpin）。
+	// 原来是工具条上的一个单行输入框 + 字体下拉 + 时间按钮三件套 —— 三个控件抢一条
+	// 32 像素高的窄条，文字框只剩 150 宽，写两行就装不下了，而"标题 + 时间"正是
+	// 水印最常见的写法。收进弹窗之后工具条上只剩它一个入口
+	watermarkContentBtn = contentNode->makeChild<Ling::Button>();
+	watermarkContentBtn->setHeight(btnSize - 2.5);
+	watermarkContentBtn->setWidth(contentBtnW);
+	watermarkContentBtn->setFontSize(12.f);
+	watermarkContentBtn->setBg(0);
+	watermarkContentBtn->setHoverBg(0xF2F2F2ff);
+	syncWatermarkContentBtn();
+	tip->bind(watermarkContentBtn, Lang::get(L"tool.watermarkContent"));
+	watermarkContentBtn->onClick.add([this, btn = watermarkContentBtn](Ling::Button*) {
+		// 弹窗可能翻到按钮上方，那时它正好压在悬停提示的位置上，先把提示收掉
+		tip->hide();
+		// 字体不在工具条上了，攒的是上一次在弹窗里选的那份 —— 每次开弹窗前读回来，
+		// 免得换个入口打开就退回默认字体
+		watermarkFont = Setting::get()->getToolStr(L"watermark", L"fontFamily", L"Microsoft YaHei");
+		WinWatermarkText::show(this, btn, watermarkText, watermarkFont,
+			[this](const std::wstring& text, const std::wstring& family) {
+				watermarkText = text;
+				// 字体族名与工具条上那份存同一个键：哪边改的都要认
+				watermarkFont = family;
+				Setting::get()->setToolStr(L"watermark", L"text", text);
+				Setting::get()->setToolStr(L"watermark", L"fontFamily", family);
+				syncWatermarkContentBtn();
+				win->refresh();
+				});
 		});
-	// 字体：与文本工具同一份常用十款，但存在 watermark 这一组 ——
-	// 水印一般是固定一款字体，不该被文字工具上一次的选择带着跑
-	makeFontBtn(L"watermark", watermarkFont, [this]() { win->refresh(); });
-	// 时间：往文字末尾插一个时间占位符
-	makeWatermarkTimeBtn(textBox);
 	// 位置：平铺 / 右下角 / 左下角 / 右上角 / 左上角 / 顶部居中 / 底部居中 / 居中。
 	// 原来这里只有一个"平铺"开关 —— 关了就只能以鼠标落点为中心摆一块，四角 / 上下中这些常用落点
 	// 一个都没有。改成表里的八档，一次点中
@@ -901,29 +942,48 @@ void ToolSub::showWatermarkTools()
 			});
 	}
 	syncWatermarkRotateBtn();
-	// 不透明度 / 大小 / 间距：三个横向滑块并排。原来这里是「25%」「标准」两个档位下拉 ——
-	// 三档五档之间只能跳，想微调没法微调；水印这几个量恰恰是要反复试的。
-	// 三个长得一模一样，所以各自带一个名字 —— 悬停提示里写成"不透明度 25"这种
-	makeSlider(5.f, 100.f, (float)watermarkAlpha, [this](float val) {
-		watermarkAlpha = (int)std::lround(val);
-		Setting::get()->setToolNum(curToolId, L"alpha", val);
-		win->refresh();
-		}, Lang::get(L"tool.watermarkOpacity"));
-	// 大小沿用这个工具在 config.json 里的 fontSize；值域同样查 .cpp 里那张表（beginTool 已填好）
-	slider = makeSlider(sliderMin, sliderMax, sliderVal, [this](float val) {
-		sliderVal = val;
-		Setting::get()->setToolNum(curToolId, curSliderKey, val);
-		// 正在编辑的文本要立刻跟着变字号
-		win->onToolStyleChanged();
-		// 与 initSlider 的唯一区别：水印不是选中态元素，没选中任何东西时也得重画才看得见
-		win->refresh();
-		}, Lang::get(L"tool.watermarkSize"));
-	makeSlider(0.f, 100.f, (float)watermarkGapPct, [this](float val) {
-		watermarkGapPct = (int)std::lround(val);
-		Setting::get()->setToolNum(curToolId, L"gapPct", val);
-		win->refresh();
-		}, Lang::get(L"tool.watermarkGap"));
+	// 不透明度 / 大小 / 间距搬到了竖排浮层（WinWatermarkPanel），hover 这一枚时弹在工具条下面。
+	// 这里只留"悬停即弹"这一个动作，滑块本身一个都不建 ——
+	// 工具条上原本是三个并排的横滑块，每个不到 60 宽，拖起来几乎挪不动
+	styleBtn = contentNode->makeChild<Ling::Button>();
+	styleBtn->setHeight(btnSize - 2.5);
+	styleBtn->setWidth(btnSize);
+	styleBtn->setFontSize(12.f);
+	styleBtn->setText(Lang::get(L"tool.watermarkStyleShort"));
+	styleBtn->setBg(0);
+	styleBtn->setHoverBg(0xF2F2F2ff);
+	tip->bind(styleBtn, Lang::get(L"tool.watermarkStyle"));
+	styleBtn->onEnter.add([this, b = styleBtn](Ling::Button*) {
+		// 浮层不是点击弹出的，是悬停就弹 —— 三个滑块要能直接拖，
+		// 先点一下才出现的话每次微调都要点两下
+		WinWatermarkPanel::show(this, b);
+		});
+	styleBtn->onClick.add([this, b = styleBtn](Ling::Button*) {
+		// 点一下也弹：有人是"看到了但没敢往按钮上悬"地找那一项，
+		// 与其让人以为按钮坏了，不如两条路都能弹
+		WinWatermarkPanel::show(this, b);
+		});
 	initColorBtns();
+}
+
+// 「内容」按钮上显示当前水印文字的第一行，截太长加省略号；没写文字时给个提示
+void ToolSub::syncWatermarkContentBtn()
+{
+	if (!watermarkContentBtn) return;
+	auto show = watermarkText;
+	// 换行截断：多行内容在这个一格宽的按钮上显示不出第二行
+	auto nl = show.find(L'\n');
+	if (nl != std::wstring::npos) show = show.substr(0, nl);
+	if (show.empty()) {
+		watermarkContentBtn->setText(Lang::get(L"tool.watermarkTip"));
+		watermarkContentBtn->setColor(0xAAAAAAFF);
+		return;
+	}
+	watermarkContentBtn->setColor(0x000000FF);
+	if (show.size() > (size_t)fontMaxChars) {
+		show = show.substr(0, (size_t)fontMaxChars - 1) + L"\u2026";
+	}
+	watermarkContentBtn->setText(show);
 }
 
 void ToolSub::syncWatermarkRotateBtn()
@@ -963,37 +1023,6 @@ Ling::Slider* ToolSub::makeSlider(float min, float max, float val, std::function
 	return s;
 }
 
-void ToolSub::makeWatermarkTimeBtn(Ling::TextBox* textBox)
-{
-	auto btn = contentNode->makeChild<Ling::Button>();
-	btn->setHeight(btnSize - 2.5);
-	btn->setFlexGrow(1.f);
-	btn->setFontSize(13.f);
-	btn->setBg(0);
-	btn->setHoverBg(0xF2F2F2ff);
-	// 按钮上就写"时间"两个字：图标字体里没有现成的时钟，硬凑一个码位大概率显示成方块
-	btn->setText(Lang::get(L"tool.watermarkTime"));
-	tip->bind(btn, Lang::get(L"tool.watermarkTime"));
-	btn->onClick.add([this, btn, textBox](Ling::Button*) {
-		tip->hide();
-		auto& fmts = ShapeWatermark::timeFormats();
-		// 列表里显示的是"按现在这一刻展开之后的样子"，比把 {yyyy}-{MM}-{dd} 直接摆出来好认
-		auto now = std::time(nullptr);
-		std::vector<std::wstring> items;
-		items.reserve(fmts.size());
-		for (auto& f : fmts) items.push_back(ShapeWatermark::expandTime(f, now));
-		SelectPopup::show(this, btn, items, -1, [this, textBox, &fmts](int picked) {
-			if (picked < 0 || picked >= (int)fmts.size()) return;
-			// 插在末尾。原来那句不为空就先换行 —— 时间单独占一行才是水印的常见写法
-			auto text = textBox->getText();
-			if (!text.empty() && text.back() != L'\n') text += L'\n';
-			text += fmts[picked];
-			// setText 会触发 onTextChanged（那边落盘 + 重画），不用自己再刷一遍
-			textBox->setText(text);
-			});
-		});
-}
-
 void ToolSub::initSlider()
 {
 	// 值域与当前值都从字段来：切换工具时滑块会被销毁重建，靠 beginTool 把配置里那份带过来
@@ -1029,7 +1058,9 @@ void ToolSub::initSize(int btnCount, bool withColors, bool centerOnBtn, float ex
 	sizeBtnCount = btnCount;
 	sizeWithColors = withColors;
 	sizeExtraW = extraW;
-	sizeSliderCount = std::max(1, sliderCount);
+	// 0 是合法值：水印那三个滑块搬去了竖排浮层，工具条上一个都不留。
+	// 早先这里写的是 max(1, ...)，水印传 0 也会被按回 1，窗口凭空宽出一格滑块
+	sizeSliderCount = std::max(0, sliderCount);
 	auto count = btnCount + (withColors ? static_cast<int>(colors.size()) : 0);
 	// 宽度只按内容算，边框画在内容之内（与 ToolMain 一致，那边宽度也只累加按钮）。
 	auto pxW = toPx(btnSize) * count + toPx(sliderSize) * sizeSliderCount
