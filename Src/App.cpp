@@ -155,7 +155,7 @@ void App::excludeFromCapture(HWND hwnd)
 
 App::App()
 {
-    Ling::init(L"ScreenCapture");
+    Ling::init(L"tpix");
     auto app = Ling::App::get();
     app->initArgs();
     Ling::D2D::addFonts({ L"icon.ttf" });

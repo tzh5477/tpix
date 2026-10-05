@@ -1,8 +1,8 @@
-[简体中文](https://github.com/xland/ScreenCapture/) | [English](./ReadMe.en-US.md) | Русский | [Bahasa Indonesia](./ReadMe.id-ID.md)
+[简体中文](https://github.com/tzh5477/tpix/) | [English](./ReadMe.en-US.md) | Русский | [Bahasa Indonesia](./ReadMe.id-ID.md)
 
 ![banner](./banner.png)
 
-**ScreenCapture** Мощный и компактный инструмент для создания скриншотов в Windows.
+**tpix** Мощный и компактный инструмент для создания скриншотов в Windows.
 
 ## Возможности
 
@@ -20,7 +20,7 @@
 
 ## Загрузка
 
-[Release](https://github.com/xland/ScreenCapture/releases/) (1MB)
+[Release](https://github.com/tzh5477/tpix/releases/) (1MB)
 
 ## Поддерживаемые операционные системы
 
@@ -30,31 +30,31 @@
 
 - Ветка main зависит от GUI-фреймворка [Ling](https://github.com/xland/Ling).
 - Проект может быть скомпилирован с помощью Visual Studio 2026 (с установленным набором инструментов для разработки на C++).
-- [2.4.25 (на основе D2D)](https://github.com/xland/ScreenCapture/tree/2.4.25) или [2.3.3 (на основе Qt)](https://github.com/xland/ScreenCapture/tree/2.3.3_qt) — предыдущие стабильные ветки.
+- [2.4.25 (на основе D2D)](https://github.com/tzh5477/tpix/tree/2.4.25) или [2.3.3 (на основе Qt)](https://github.com/tzh5477/tpix/tree/2.3.3_qt) — предыдущие стабильные ветки.
 
 ## Командная строка
 
 ```
 // Завершить процесс сразу после завершения съёмки.
-> ScreenCapture.exe --auto-quit=true
+> tpix.exe --auto-quit=true
 
 // После выделения области не показывать панель инструментов, а сразу перейти к указанной функции:
 // long — длинный снимок
-> ScreenCapture.exe --enter=long
+> tpix.exe --enter=long
 // video — запись экрана
-> ScreenCapture.exe --enter=video
+> tpix.exe --enter=video
 // ocr — распознавание текста
-> ScreenCapture.exe --enter=ocr
+> tpix.exe --enter=ocr
 // qr — распознавание QR-кода
-> ScreenCapture.exe --enter=qr
+> tpix.exe --enter=qr
 
 // Аргументы можно комбинировать, например: без значка в трее, процесс выходит сразу после длинного снимка.
-> ScreenCapture.exe --enter=long --auto-quit=true
+> tpix.exe --enter=long --auto-quit=true
 ```
 
 ## Плагин распознавания текста (OCR)
 
-Скачайте последнюю версию инструмента распознавания текста [ImageReader.exe](https://github.com/xland/ImageReader/releases) (около 25 МБ) и поместите этот файл в тот же каталог, где находится ScreenCapture.exe, либо в каталог `%appdata%\ScreenCapture\plugin`, затем перезапустите приложение.
+Скачайте последнюю версию инструмента распознавания текста [ImageReader.exe](https://github.com/xland/ImageReader/releases) (около 25 МБ) и поместите этот файл в тот же каталог, где находится tpix.exe, либо в каталог `%appdata%\tpix\plugin`, затем перезапустите приложение.
 
 ## Поддержать проект
 

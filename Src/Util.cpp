@@ -99,7 +99,7 @@ namespace {
 	}
 
 	// 插件的查找顺序：先本 exe 同目录（绿色包一起解压的情况），
-	// 再 %appdata%\ScreenCapture\plugin（后来单独下载的情况）
+	// 再 %appdata%\tpix\plugin（后来单独下载的情况）
 	std::filesystem::path findImageReader()
 	{
 		wchar_t buffer[MAX_PATH]{};

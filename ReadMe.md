@@ -2,7 +2,7 @@
 
 ![banner](./Doc/banner.png)
 
-**ScreenCapture** 一个小巧但功能强大的Windows截图工具。
+**tpix** 一个小巧但功能强大的Windows截图工具。
 
 ## 特性
 
@@ -20,7 +20,7 @@
 
 ## 下载
 
-[Release](https://github.com/xland/ScreenCapture/releases/) （1MB）
+[Release](https://github.com/tzh5477/tpix/releases/) （1MB）
 
 ## 常用功能与问题
 
@@ -37,45 +37,45 @@
 
 - main分支依赖 [Ling](https://github.com/xland/Ling) GUI 框架.
 - 使用 Visual Studio 2026（With C++ Desktop Dev Kit）即可编译项目。
-- [2.4.25（基于D2D）](https://github.com/xland/ScreenCapture/tree/2.4.25)或 [2.3.3（基于Qt）](https://github.com/xland/ScreenCapture/tree/2.3.3_qt)是以前的稳定分支。
+- [2.4.25（基于D2D）](https://github.com/tzh5477/tpix/tree/2.4.25)或 [2.3.3（基于Qt）](https://github.com/tzh5477/tpix/tree/2.3.3_qt)是以前的稳定分支。
 
 ## 命令行
 
 ```
 // 截图完成后即退出进程。
-> ScreenCapture.exe --auto-quit=true
+> tpix.exe --auto-quit=true
 
 // 框选完成后不显示工具条，直接进入指定功能：
 // pin 钉图/图像标记
-> ScreenCapture.exe --enter=pin
+> tpix.exe --enter=pin
 // long 长截图
-> ScreenCapture.exe --enter=long
+> tpix.exe --enter=long
 // video 屏幕录制
-> ScreenCapture.exe --enter=video
+> tpix.exe --enter=video
 // ocr 文字识别
-> ScreenCapture.exe --enter=ocr
+> tpix.exe --enter=ocr
 // qr 二维码识别
-> ScreenCapture.exe --enter=qr
+> tpix.exe --enter=qr
 // tray 仅注册托盘图标，不执行任何操作
-> ScreenCapture.exe --enter=tray
+> tpix.exe --enter=tray
 
 // 两个参数可以联合使用，比如：不注册托盘图标，截完长图后进程直接退出
-> ScreenCapture.exe --enter=long --auto-quit=true
+> tpix.exe --enter=long --auto-quit=true
 ```
 
 ## 文字识别插件
 
-下载最新版本的文字识别工具 [ImageReader.exe](https://github.com/xland/ImageReader/releases) (约25MB) 并把此文件放置到 `%appdata%\ScreenCapture\plugin`目录下，然后重启应用即可使用（或 `ScreenCapture.exe` 同目录下亦可）
+下载最新版本的文字识别工具 [ImageReader.exe](https://github.com/xland/ImageReader/releases) (约25MB) 并把此文件放置到 `%appdata%\tpix\plugin`目录下，然后重启应用即可使用（或 `tpix.exe` 同目录下亦可）
 
 ## 便携能力
 
-默认情况下 ScreenCapture 会从 `%appdata%\ScreenCapture\Lang` 目录下读取配置信息、语言文件及插件。
+默认情况下 tpix 会从 `%appdata%\tpix\Lang` 目录下读取配置信息、语言文件及插件。
 
-但用户可以在 `ScreenCapture.exe` 同目录下创建一个 `config.json` 的空文件，重启应用，`ScreenCapture` 即会在此文件中设置配置信息。
+但用户可以在 `tpix.exe` 同目录下创建一个 `config.json` 的空文件，重启应用，`tpix` 即会在此文件中设置配置信息。
 
-`ScreenCapture.exe` 同目录下创建一个 `Lang` 子目录，然后把语言文件放置到此目录下，`ScreenCapture` 即会读取此目录下的语言文件。
+`tpix.exe` 同目录下创建一个 `Lang` 子目录，然后把语言文件放置到此目录下，`tpix` 即会读取此目录下的语言文件。
 
-文字识别插件 `ImageReader.exe` 也可以放置在 `ScreenCapture.exe` 同目录下
+文字识别插件 `ImageReader.exe` 也可以放置在 `tpix.exe` 同目录下
 
 ## 赞助
 

@@ -64,7 +64,7 @@ Setting::Setting() :dataPath{ initDataPath() }, configPath{ initConfigPath() }
             configObj = obj;
             return;
         }
-        MessageBox(nullptr, L"config.json parse error，use default config", L"ScreenCapture", MB_OK | MB_ICONWARNING);
+        MessageBox(nullptr, L"config.json parse error，use default config", L"tpix", MB_OK | MB_ICONWARNING);
     }
     configObj = JsonObject::Parse(defaultConfig); 
 }
@@ -140,14 +140,14 @@ void Setting::setAutoStart(bool autoStart)
         std::wstring commandLine = std::format(L"\"{}\" --auto-start", curPath.wstring());
         HKEY hKey;
         if (RegOpenKeyEx(HKEY_CURRENT_USER, runKey.data(), 0, KEY_WRITE, &hKey) == ERROR_SUCCESS) {
-            RegSetValueEx(hKey, L"ScreenCapture", 0, REG_SZ, (const BYTE*)commandLine.data(), (DWORD)((commandLine.size() + 1) * sizeof(wchar_t)));
+            RegSetValueEx(hKey, L"tpix", 0, REG_SZ, (const BYTE*)commandLine.data(), (DWORD)((commandLine.size() + 1) * sizeof(wchar_t)));
             RegCloseKey(hKey);
         }
     }
     else {
         HKEY hKey;
         if (RegOpenKeyEx(HKEY_CURRENT_USER, runKey.data(), 0, KEY_WRITE, &hKey) == ERROR_SUCCESS) {
-            RegDeleteValue(hKey, L"ScreenCapture");
+            RegDeleteValue(hKey, L"tpix");
             RegCloseKey(hKey);
         }
     }
@@ -176,7 +176,7 @@ std::filesystem::path Setting::initDataPath()
     }
     auto dataPath = std::filesystem::path{ pathTmp };
     CoTaskMemFree(pathTmp);
-    dataPath.append("ScreenCapture");
+    dataPath.append("tpix");
     if (!std::filesystem::exists(dataPath)) {
         if (!std::filesystem::create_directories(dataPath)) {
             _ASSERT_EXPR(FALSE, L"create data path，error");

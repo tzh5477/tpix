@@ -29,8 +29,8 @@ x86/
 Win32/
 Release/
 Debug/
-ScreenCapture/x64/
-ScreenCapture/ScreenCapture/x64/
+tpix/x64/
+tpix/tpix/x64/
 [Bb]in/
 [Oo]bj/
 [Ll]og/

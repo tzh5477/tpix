@@ -1,8 +1,8 @@
-[简体中文](https://github.com/xland/ScreenCapture/) | English | [Русский](./ReadMe.ru-RU.md) | [Bahasa Indonesia](./ReadMe.id-ID.md)
+[简体中文](https://github.com/tzh5477/tpix/) | English | [Русский](./ReadMe.ru-RU.md) | [Bahasa Indonesia](./ReadMe.id-ID.md)
 
 ![banner](./banner.png)
 
-**ScreenCapture** A powerful and lightweight Windows screenshot tool.
+**tpix** A powerful and lightweight Windows screenshot tool.
 
 ## Features
 
@@ -20,7 +20,7 @@
 
 ## Download
 
-[Release](https://github.com/xland/ScreenCapture/releases/) (1MB)
+[Release](https://github.com/tzh5477/tpix/releases/) (1MB)
 
 ## Supported Operating Systems
 
@@ -30,31 +30,31 @@
 
 - The main branch depends on the [Ling](https://github.com/xland/Ling) GUI framework.
 - The project can be compiled with Visual Studio 2026 (installed with the C++ Desktop Development Kit).
-- [2.4.25 (based on D2D)](https://github.com/xland/ScreenCapture/tree/2.4.25) and [2.3.3 (based on Qt)](https://github.com/xland/ScreenCapture/tree/2.3.3_qt) are the previous stable branches.
+- [2.4.25 (based on D2D)](https://github.com/tzh5477/tpix/tree/2.4.25) and [2.3.3 (based on Qt)](https://github.com/tzh5477/tpix/tree/2.3.3_qt) are the previous stable branches.
 
 ## Command Line
 
 ```
 // Terminate the process immediately after the capture is finished.
-> ScreenCapture.exe --auto-quit=true
+> tpix.exe --auto-quit=true
 
 // Skip the toolbar once the region is selected and go straight into the specified feature:
 // long = scrolling capture (long screenshot)
-> ScreenCapture.exe --enter=long
+> tpix.exe --enter=long
 // video = screen recording
-> ScreenCapture.exe --enter=video
+> tpix.exe --enter=video
 // ocr = text recognition
-> ScreenCapture.exe --enter=ocr
+> tpix.exe --enter=ocr
 // qr = QR code recognition
-> ScreenCapture.exe --enter=qr
+> tpix.exe --enter=qr
 
 // The two arguments can be combined, for example: no tray icon, and the process quits right after the long screenshot is taken.
-> ScreenCapture.exe --enter=long --auto-quit=true
+> tpix.exe --enter=long --auto-quit=true
 ```
 
 ## Text Recognition (OCR) Plugin
 
-Download the latest version of the text recognition tool [ImageReader.exe](https://github.com/xland/ImageReader/releases) (about 25MB), place this file in the same directory as ScreenCapture.exe, or in the `%appdata%\ScreenCapture\plugin` directory, then restart the application to use it.
+Download the latest version of the text recognition tool [ImageReader.exe](https://github.com/xland/ImageReader/releases) (about 25MB), place this file in the same directory as tpix.exe, or in the `%appdata%\tpix\plugin` directory, then restart the application to use it.
 
 ## Sponsor
 

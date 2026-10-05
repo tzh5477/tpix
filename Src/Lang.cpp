@@ -8,7 +8,7 @@ std::unique_ptr<Lang> lang;
 
 namespace {
 	// 语言文件优先从 exe 同目录的 Lang 子目录加载（绿色部署 / 调试方便），
-	// 那个目录不存在才退回 %appdata%\ScreenCapture\Lang。
+	// 那个目录不存在才退回 %appdata%\tpix\Lang。
 	// directory_iterator 碰到不存在的目录会抛 filesystem_error，
 	// 所以用带 error_code 的重载，目录不在就当没有额外语言。
 	std::vector<std::filesystem::path> getLangFiles()
@@ -128,7 +128,7 @@ void Lang::initLang(const std::wstring& langCode)
 		}
 		else {
 			auto msg = L"lang pare error：" + pathStr + L"\n use English";
-			MessageBox(nullptr, msg.data(), L"ScreenCapture", MB_OK | MB_ICONWARNING);
+			MessageBox(nullptr, msg.data(), L"tpix", MB_OK | MB_ICONWARNING);
 		}
 		break;
 	}

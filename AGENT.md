@@ -2,15 +2,15 @@
 
 ## 1. 项目定位
 
-tpix（仓库名 ScreenCapture）是一个 **Windows 开源截图贴图工具**，对标 PixPin。
+tpix（仓库名 tpix）是一个 **Windows 开源截图贴图工具**，对标 PixPin。
 技术栈：**C++20 + Win32 + Direct2D + Windows Composition + 自研 GUI 框架 Ling（xland/Ling）**。无 Qt、无 MFC、无第三方 UI 库。
 
 命令行/工程布局：
 
 | 项 | 值 |
 | --- | --- |
-| 解决方案 | `ScreenCapture.slnx` |
-| 工程文件 | `Src/ScreenCapture.vcxproj` |
+| 解决方案 | `tpix.slnx` |
+| 工程文件 | `Src/tpix.vcxproj` |
 | 平台 | x64 / Win32，只有 **x64** 的日常配置可用（见下） |
 | 工具集 | `v145`（VS 2026）；本机若只有 VS 2022 的 `14.44`，需临时改成 `v143`/`v144` 才能编译 |
 | 预编译头 | `Src/pch.h`（`ClCompile` 里 `PrecompiledHeader=Use`，`pch.cpp` 为 `Create`） |
@@ -38,7 +38,7 @@ tpix（仓库名 ScreenCapture）是一个 **Windows 开源截图贴图工具**�
 Src/
   main.cpp            入口；Ling::init() -> App 事件循环
   App.h/.cpp          进程级能力：虚拟桌面矩形、热键、排除自录(excludeFromCapture)
-  Setting.h/.cpp      config.json 读写（%appdata%\ScreenCapture 或 exe 同目录便携版）
+  Setting.h/.cpp      config.json 读写（%appdata%\tpix 或 exe 同目录便携版）
   Util.h/.cpp         图像输出：剪切板(CF_DIBV5+CF_DIB+PNG)、存盘、抓屏、二维码、OCR插件
   Lang.h/.cpp         语言包 Lang/*.json（**UTF-16 LE 带 BOM**，结构为两级 map）
   History.h/.cpp      **只负责标注层的 undo/redo**，与"历史截图"无关（命名易误读，勿混淆）
@@ -76,7 +76,7 @@ Src/
 - **简洁优先**：不加未被要求的功能、不做一次性抽象、不为不会发生的异常写防护。
 - **精准修改**：不顺手重构相邻代码；每一行改动都要能追溯到具体需求。
 - **注释写"为什么"**：本仓库注释密度高且质量好，改动时维持这个水平——解释取舍背景、踩过的坑，而不是复述代码。
-- 新增 `.cpp` / `.h` 必须同步登记到 `Src/ScreenCapture.vcxproj` 的 `ClCompile` / `ClInclude` 节点，**否则不会被编译**。
+- 新增 `.cpp` / `.h` 必须同步登记到 `Src/tpix.vcxproj` 的 `ClCompile` / `ClInclude` 节点，**否则不会被编译**。
 - 新增 ToolSub 选项若需要图标：不要猜 iconfont 里有没有对应码位。**优先用短文本**（如 `L"圆"`/`L"ABC"`）并跳过 `setFontFamily(L"icon")`，这样走微软雅黑必定有字形。
 
 ## 6. 当前实施路线
@@ -267,7 +267,7 @@ Alt+方向 = 贴到屏幕边；Ctrl+Alt+左右 = 搬到相邻显示器。
 - **依赖**：ORT 1.30 已解到 `D:\sdk\onnxruntime`（`build\native\include` +
   `runtimes\win-x64\native`），工程按 gifski 那套绝对路径挂法接进去，另外加了一条
   PostBuildEvent 把 `onnxruntime*.dll` 拷到 `$(OutDir)` —— 它是动态库，不拷跑不起来。
-- **模型**：`slanet-plus.onnx`（7.4MB）**首次使用时**下到 `%appdata%\ScreenCapture`，
+- **模型**：`slanet-plus.onnx`（7.4MB）**首次使用时**下到 `%appdata%\tpix`，
   先写 `.downloading` 再改名（半截文件不能骗过下次的存在检查）。下不来就明说，不静默。
 - **前后处理（与 RapidTable 逐行对齐，别改）**：
   - 缩放到 488×488 的 letterbox，长边缩到 488、**短边截断**（不四舍五入），右下**补归一化
@@ -305,7 +305,7 @@ Alt+方向 = 贴到屏幕边；Ctrl+Alt+左右 = 搬到相邻显示器。
 cmd /c "call \"D:\ProgramFiles\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat\" >nul && \"D:\ProgramFiles\Microsoft Visual Studio\2022\BuildTools\MSBuild\Current\Bin\MSBuild.exe\" \"<proj>\" /p:PlatformToolset=v143 /p:Configuration=Release /p:Platform=x64 /v:minimal /nologo"
 ```
 
-- `<proj>` 取 `Src\ScreenCapture.vcxproj`（不必走 `.slnx`）。
+- `<proj>` 取 `Src\tpix.vcxproj`（不必走 `.slnx`）。
 - 工程默认工具集是 `v145`（VS 2026），本机只有 VS 2022 的 `14.44`，所以**必须显式传 `/p:PlatformToolset=v143`**，否则报找不到工具集。
 - 产出在 `Src\x64\Release\`。
 
@@ -319,7 +319,7 @@ AI/自动化会话里跑构建有两个坑：**内联拼 `cmd /c "call ... && ..
 1. **先杀运行中的进程**（否则链接器写不进 exe，报 LNK1104）：
 
    ```powershell
-   Get-Process ScreenCapture -ErrorAction SilentlyContinue | Stop-Process -Force
+   Get-Process tpix -ErrorAction SilentlyContinue | Stop-Process -Force
    ```
 
 2. **构建脚本** `%TEMP%\opencode\main_build.cmd`（纯 ASCII，无 BOM；路径按本机调整）：
@@ -327,7 +327,7 @@ AI/自动化会话里跑构建有两个坑：**内联拼 `cmd /c "call ... && ..
    ```bat
    @echo off
    call "D:\ProgramFiles\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat" >nul
-   "D:\ProgramFiles\Microsoft Visual Studio\2022\BuildTools\MSBuild\Current\Bin\MSBuild.exe" "F:\personal\project\github\tpix\Src\ScreenCapture.vcxproj" /p:PlatformToolset=v143 /p:Configuration=Release /p:Platform=x64 /v:minimal /nologo /t:Rebuild
+   "D:\ProgramFiles\Microsoft Visual Studio\2022\BuildTools\MSBuild\Current\Bin\MSBuild.exe" "F:\personal\project\github\tpix\Src\tpix.vcxproj" /p:PlatformToolset=v143 /p:Configuration=Release /p:Platform=x64 /v:minimal /nologo /t:Rebuild
    ```
 
    - `/t:Rebuild` 是全量重编（改了 vcxproj 或怀疑陈旧产物时用）；日常增量可去掉，省一半时间。
@@ -349,7 +349,7 @@ AI/自动化会话里跑构建有两个坑：**内联拼 `cmd /c "call ... && ..
    Get-Content $log -Tail 8
    ```
 
-   - 成功标志：退出码 0、`error` 零条、尾部出现 `ScreenCapture.vcxproj -> ...Src\x64\Release\ScreenCapture.exe`。
+   - 成功标志：退出码 0、`error` 零条、尾部出现 `tpix.vcxproj -> ...Src\x64\Release\tpix.exe`。
    - 警告**预期只有 1 条**：`D:\project\Ling\include\Util.h(44,45) C4244`（外部框架，不修）；
      出现其它 `warning C\d+` 才是本次引入的。
    - 过滤警告用 `warning C\d` 而不是裸 `warning`：MSBuild 的进度上下文行（`with`、`[` 开头的行）会误命中。
@@ -359,7 +359,7 @@ AI/自动化会话里跑构建有两个坑：**内联拼 `cmd /c "call ... && ..
 5. **冒烟测试**（确认能启动，3 秒存活即可，程序是托盘常驻不会自己退出）：
 
    ```powershell
-   $p = Start-Process "F:\personal\project\github\tpix\Src\x64\Release\ScreenCapture.exe" -PassThru
+   $p = Start-Process "F:\personal\project\github\tpix\Src\x64\Release\tpix.exe" -PassThru
    Start-Sleep 3
    if ($p.HasExited) { "失败 code=$($p.ExitCode)" } else { "OK"; Stop-Process -Id $p.Id -Force }
    ```

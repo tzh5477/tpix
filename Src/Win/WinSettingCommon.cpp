@@ -42,7 +42,7 @@ namespace {
         COMDLG_FILTERSPEC filter[]{ { L"JSON", L"*.json" } };
         dialog->SetFileTypes(1, filter);
         dialog->SetDefaultExtension(L"json");
-        if (save) dialog->SetFileName(L"ScreenCapture-config.json");
+        if (save) dialog->SetFileName(L"tpix-config.json");
         if (FAILED(dialog->Show(hwnd))) return false;
         Microsoft::WRL::ComPtr<IShellItem> item;
         if (FAILED(dialog->GetResult(item.GetAddressOf()))) return false;
@@ -151,7 +151,7 @@ void WinSettingCommon::initLangCtrls()
     btn->onClick.add([this, langs, items, moreIdx](Ling::Button* b) {
         SelectPopup::show(win, b, items, -1, [this, langs, moreIdx](int i) {
             if (i == moreIdx) {
-                std::wstring url{ L"https://github.com/xland/ScreenCapture/tree/main/Lang" };
+                std::wstring url{ L"https://github.com/tzh5477/tpix/tree/main/Lang" };
                 ShellExecute(win->hwnd, L"open", url.data(), nullptr, nullptr, SW_SHOWNORMAL);
                 return;
             }

@@ -7,7 +7,7 @@
 - 增加框选截图区域后的功能入口，取消托盘图标菜单功能入口，精简快捷键设置（只保留框选截图区域的快捷键）。
 - 支持命令行设置“用完即走”（--auto-quit），无论完成什么工作（截图、录屏、文字识别等），进程随即退出。
 - 允许用户调整截图区域的位置和大小（该功能回归了）
-- 支持绿色便携特性：允许把配置文件config.json放置到ScreenCapture.exe所在目录。
+- 支持绿色便携特性：允许把配置文件config.json放置到tpix.exe所在目录。
 - 内存占用优化（节省了5MB）
 - 解决系统缩放比例DPI变化时导致工具窗口定位不准的问题
 - 允许 Ctrl+鼠标滚轮 缩放钉图窗口
@@ -17,7 +17,7 @@
 - 鼠标在线条、橡皮擦线条、马赛克线条上面移动时，只有移动到这些线条边缘时，才会触发编辑\移动功能
 - 按住 Ctrl 框选截图区域，直接进入钉图（标记）窗口
 - 钉图窗口，鼠标按下之后马上弹起，不应绘制任何元素
-- 支持**绿色便携**特性：直接在ScreenCapture.exe所在目录创建一个空的config.json即可。
+- 支持**绿色便携**特性：直接在tpix.exe所在目录创建一个空的config.json即可。
 - 钉图窗口上，鼠标点击右键，控制显隐工具栏。
 - 按下Enter键或Ctrl+C，钉图、录屏、长图图像写入剪切板，相关窗口关闭，Ctrl+S保存图像或视频
 - 全屏录制时，不录制工具栏，工具栏不出现在最终生成的视频中
@@ -27,14 +27,14 @@
 
 开源地址：
 
-[https://github.com/xland/ScreenCapture](https://github.com/xland/ScreenCapture)
-[https://gitee.com/horsejs_admin/ScreenCapture](https://gitee.com/horsejs_admin/ScreenCapture)
+[https://github.com/tzh5477/tpix](https://github.com/tzh5477/tpix)
+[https://gitee.com/horsejs_admin/tpix](https://gitee.com/horsejs_admin/tpix)
 
 项目说明：
 
-**ScreenCapture** 一个小巧但功能强大的Windows截图工具。
+**tpix** 一个小巧但功能强大的Windows截图工具。
 
-![ScreenCapture](./banner.png)
+![tpix](./banner.png)
 
 ## 特性
 
@@ -56,7 +56,7 @@
 
 ## 下载
 
-[Release](https://github.com/xland/ScreenCapture/releases/) （1MB）
+[Release](https://github.com/tzh5477/tpix/releases/) （1MB）
 
 ## 支持的操作系统
 
@@ -66,18 +66,18 @@
 
 - main分支依赖 [Ling](https://github.com/xland/Ling) GUI 框架.
 - 使用 Visual Studio 2026（With C++ Desktop Dev Kit）即可编译项目。
-- [2.4.25（基于D2D）](https://github.com/xland/ScreenCapture/tree/2.4.25)或 [2.3.3（基于Qt）](https://github.com/xland/ScreenCapture/tree/2.3.3_qt)是以前的稳定分支。
+- [2.4.25（基于D2D）](https://github.com/tzh5477/tpix/tree/2.4.25)或 [2.3.3（基于Qt）](https://github.com/tzh5477/tpix/tree/2.3.3_qt)是以前的稳定分支。
 
 ## 命令行
 
 ```
 // 截图完成后即退出进程。
-> ScreenCapture.exe --auto-quit=true
+> tpix.exe --auto-quit=true
 ```
 
 ## 文字识别插件
 
-下载最新版本的文字识别工具 [ImageReader.exe](https://github.com/xland/ImageReader/releases) (约25MB) 并把此文件放置到ScreenCapture.exe同目录下，或者放置到`%appdata%\ScreenCapture\plugin`目录下，然后重启应用即可使用
+下载最新版本的文字识别工具 [ImageReader.exe](https://github.com/xland/ImageReader/releases) (约25MB) 并把此文件放置到tpix.exe同目录下，或者放置到`%appdata%\tpix\plugin`目录下，然后重启应用即可使用
 
 
 ​
