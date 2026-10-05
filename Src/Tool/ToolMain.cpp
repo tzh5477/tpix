@@ -127,6 +127,18 @@ void ToolMain::cancelSelect()
 	win->layoutTools();
 }
 
+void ToolMain::refreshToolSub()
+{
+	if (curId.empty()) return;
+	// 重建会把「编号」输入框一起重来（showNumberTools -> initNumberBox 把下一个编号拨回 1），
+	// 而"把工具条请回来"不该动用户填过的起始号，所以进度先存下来、重建完写回去
+	const int next = win->toolSub->peekNumberVal();
+	// 复用 selectTool 那套派发：它按 curId 重建 ToolSub 的内容并重排整组。
+	// 对同一个 id 再走一遍是幂等的（配色复位后又被设回选中色）
+	selectTool(curId);
+	win->toolSub->setNumberVal(next);
+}
+
 void ToolMain::onClick(Ling::Button* btn)
 {
 	// 关闭整个贴图窗口。WinPin 的 onDestroy 里会连带关掉 ToolMain / ToolSub，

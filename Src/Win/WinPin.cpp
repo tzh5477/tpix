@@ -397,9 +397,10 @@ void WinPin::setThumbMode(bool on)
 		SetWindowPos(hwnd, nullptr, savedX, savedY, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
 		if (toolsHiddenByThumb) {
 			toolsHiddenByThumb = false;
-			// hideTools 只是置了标志，ToolSub 得重建内容才出得来。
-			// 只在当时正显示 pin 面板时重建 —— showPinTools 会把当前工具切到 pin
-			if (toolMain->curId == L"pin") toolSub->showPinTools();
+			// hideTools 把 ToolSub 的内容一起作废了，得按当前工具重建一遍才出得来。
+			// 原先这里只认 pin 面板，别的工具（序号、颜色、字体那一堆）从缩略图还原之后
+			// 子工具条就再也回不来了 —— 正是"工具栏自己藏起来不见了"的一种
+			toolMain->refreshToolSub();
 			toolMain->show();
 		}
 		layoutTools();
@@ -640,14 +641,20 @@ void WinPin::layoutTools()
 	const auto usedH = showSub ? groupH : mainH;
 
 	float mainY;
+	// 工具条是落在 WinPin 外面还是压在里面。压在里面（overlay）时要额外把工具条提到最前，
+	// 见本函数末尾 —— 那底下盖着的是 WinPin 自己
+	bool overlay;
 	if (winRect.bottom + gap + groupH <= wa.bottom) {         // bottom
 		mainY = winRect.bottom + gap;
+		overlay = false;
 	}
 	else if (winRect.top - gap - groupH >= wa.top) {          // top
 		mainY = winRect.top - gap - usedH;
+		overlay = false;
 	}
 	else {                                                    // overlay
 		mainY = winRect.bottom - gap - usedH;
+		overlay = true;
 	}
 	auto mainX = static_cast<float>(winRect.right) - toolMain->w;
 	// 垂直方向按整组当前高度裁剪，避免 WinPin 超出工作区时把 ToolSub 挤到屏幕外
@@ -658,12 +665,61 @@ void WinPin::layoutTools()
 	else {
 		toolSub->hideTools();
 	}
+	// 重叠模式下工具条压在底图里头。而本窗口的 hwnd 是在两条工具条之后才建的
+	//（ToolMain / ToolSub 在 WinPin 构造函数里就 createNativeWindow 了），
+	// topmost 组内后建者在上 —— 不提一次的话整条工具条被底图盖得干干净净，
+	// 全屏贴图必然如此，用户看着就是"工具栏自己藏起来了"。
+	// 只在重叠状态**变化**时动手：本函数在拖动窗口 / 调尺寸时每个鼠标事件都要跑一遍，
+	// 而 SetWindowPos 是同步打进窗口管理器的，白调一次就是白等一次
+	if (overlay != toolsOverlay) {
+		toolsOverlay = overlay;
+		if (overlay) raiseTools();
+	}
 	// 换了工具就把选中态收掉：选中的那一笔是上一个工具留下的，留着它会让工具条上的
 	// 样式改动（WinPin::onToolStyleChanged）落到它身上。水印最典型 —— 它是铺满整张图的
 	// 一层，一直挂着选中态的话，后面随便调个颜色都作用在它身上
 	if (drawing && drawing->selected && drawing->selected->toolId != toolMain->curId) {
 		drawing->selected = nullptr;
 	}
+}
+
+void WinPin::raiseTools()
+{
+	// 只动 Z 序：位置尺寸归 layoutTools 管，激活状态更不能碰
+	//（一激活本窗口就收 WM_KILLFOCUS，正在编辑的文字会被打断）
+	if (toolMain && IsWindow(toolMain->hwnd)) {
+		SetWindowPos(toolMain->hwnd, HWND_TOPMOST, 0, 0, 0, 0,
+			SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+	}
+	if (toolSub && IsWindow(toolSub->hwnd) && IsWindowVisible(toolSub->hwnd)) {
+		SetWindowPos(toolSub->hwnd, HWND_TOPMOST, 0, 0, 0, 0,
+			SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+	}
+}
+
+bool WinPin::isToolsVisible() const
+{
+	return toolMain && IsWindowVisible(toolMain->hwnd);
+}
+
+// 工具栏整组显隐（空格键）。与右键收起**不是**一回事：右键是"专注看图"，顺带把画笔也放掉；
+// 空格只是把面板收起来 / 请回来，手里选着的工具、ToolSub 上的设置一概保持原样。
+// 所以这里只动窗口，不碰 curId
+void WinPin::setToolsVisible(bool on)
+{
+	if (!toolMain) return;
+	if (!on) {
+		toolMain->hide();
+		toolSub->hideTools();
+		return;
+	}
+	// 缩略图 / 贴边细条这两种收法本来就没给工具条留位置，先还原再谈显示
+	if (isThumb) setThumbMode(false);
+	if (isMinimized) setMinimized(false);
+	// hideTools 把 ToolSub 的内容一起作废了，得按当前工具重建一遍才出得来
+	toolMain->refreshToolSub();
+	toolMain->show();
+	layoutTools();
 }
 
 WinPin::~WinPin()
@@ -739,6 +795,10 @@ void WinPin::onCreated()
     d2d->deviceContext->CreateSolidColorBrush(D2D1::ColorF(0x000000, 0.46f), brushTipBg.GetAddressOf());
     d2d->deviceContext->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::White), brushTipText.GetAddressOf());
     show();
+    // 本窗口的 hwnd 是刚刚才建的，压在两条工具条之上（见 layoutTools 末尾）。
+    // 构造期那次 layoutTools 已经把 toolsOverlay 算出来了，但那时本窗口还没建窗口、提也没用，
+    // 到这里补一次，工具条才真的浮在全屏底图上面
+    if (toolsOverlay) raiseTools();
 }
 
 void WinPin::layout()
@@ -829,15 +889,17 @@ void WinPin::onDown(POINT pos, BOOL isRight)
 		// 右键在"有工具条"和"只剩图"这两个状态之间来回切。
 		// 藏着的时候（上一次右键收起来的）就把它请回来。位置先重排一遍：
 		// 藏着的这段时间里窗口可能被 Ctrl+滚轮缩放过，工具条的落点跟着变了
-		if (!IsWindowVisible(toolMain->hwnd)) {
+		if (!isToolsVisible()) {
 			layoutTools();
+			toolMain->refreshToolSub();
 			toolMain->show();
 			return;
 		}
 		// 显示着：清掉画笔选中态，把两条工具条一起收起来，只剩图本身。
 		// cancelSelect 里已经顺手隐藏了 ToolSub 并重排整组，但它在 curId 本来就空时会提前返回，
 		// 所以 ToolSub 这一下自己再收一次，右键的效果与当时选没选画笔无关。
-		// 左键点一下（抬手时，见 onUp）也能把 ToolMain 请回来
+		// 左键点一下（抬手时，见 onUp）也能把 ToolMain 请回来。
+		// 空格键是另一套：它只收放面板，不动画笔（见 setToolsVisible）
 		toolMain->cancelSelect();
 		toolMain->hide();
 		toolSub->hideTools();
@@ -1163,8 +1225,13 @@ void WinPin::onKey(UINT key)
 	else if (ctrl && key == 'M') {  // Ctrl+M：收成贴边细条 / 展开。悬停细条也会展开
 		setMinimized(!isMinimized);
 	}
-	else if (hasAnim() && key == VK_SPACE) {   // 空格：动图播放 / 暂停。静态贴图不认这个键
-		toggleAnim();
+	// 空格：显示 / 隐藏整组工具条。工具条被右键收掉、被缩略图收掉、或者在全屏贴图上被
+	// 底图盖住看不见的时候，它都是"把工具条找回来"的那一下。
+	// 只有"工具条正显示着"且"贴的是动图"时空格仍是老语义（播放 / 暂停）——
+	// 那种情况要收工具条用右键
+	else if (key == VK_SPACE) {
+		if (hasAnim() && isToolsVisible()) toggleAnim();
+		else setToolsVisible(!isToolsVisible());
 	}
 	else if (key == VK_ESCAPE) {
 		close();

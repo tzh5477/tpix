@@ -41,6 +41,11 @@ public:
 	// 启动时把上次退出前的贴图摆回原位，属性一并恢复
 	static void restoreAll();
 	void layoutTools();
+	// 工具栏整组显示 / 隐藏（ToolMain + ToolSub）。空格键走它。
+	// 只动窗口、不动 curId：再显示时手里选着的工具还在，ToolSub 按它重建出来。
+	// （右键收起是另一套语义，那边会顺带把画笔放掉）
+	void setToolsVisible(bool on);
+	bool isToolsVisible() const;
 	// 把底图与所有未撤销的 shape 合成后写入剪切板，成功即关窗
 	void copyToClipboard();
 	// 弹另存为对话框，把合成结果存成 PNG，成功即关窗；用户取消或失败则保持窗口
@@ -111,6 +116,9 @@ private:
 	void onMove(POINT pos);
 	void onUp(POINT pos, BOOL isRight);
 	void onKey(UINT key);
+	// 把两条工具条重新提到 topmost 组的最前面。工具条比 WinPin 先建窗口，
+	// 而 topmost 组内后建者在上 —— 两者重叠时（全屏贴图的 overlay 模式）工具条会被底图整条盖住
+	void raiseTools();
 	void onTimerCB(UINT id);
 	void onClosed();
 	// 当前选中的是不是"能在图上画东西的"标注工具。curId 为空（什么都没选）与 curId 为
@@ -145,6 +153,9 @@ private:
 	// 收成细条 / 缩略图前的位置与尺寸，还原时恢复。两个模式互斥，共用这一组字段
 	bool isMinimized{ false };
 	bool isThumb{ false };
+	// 上一次 layoutTools 算出来的是不是"工具条落在 WinPin 内部"（overlay）模式。
+	// 重叠状态一变就得把工具条重新提到最前面，见 raiseTools
+	bool toolsOverlay{ false };
 	int savedX{ 0 }, savedY{ 0 }, savedW{ 0 }, savedH{ 0 };
 	// 缩略图模式下画底图用的倍数。0 表示不在缩略图模式，此时用 scale
 	float thumbScale{ 0.f };

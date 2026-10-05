@@ -14,6 +14,11 @@ public:
 	void selectTool(const std::wstring& id);
 	// 取消当前选中：清空 curId、把所有按钮恢复常态配色，并重排工具组（curId 空了 ToolSub 会隐藏）。
 	void cancelSelect();
+	// 重新显示工具条时用。ToolSub 的 hideTools 只是把窗口藏起来并置掉 hasTools 标志，
+	// 之后它就再也不会自己出来（updatePosition 见 hasTools 为假直接返回），
+	// 必须按当前 curId 重跑一遍 show*Tools 才重建得出来。
+	// 从缩略图 / 贴边细条还原时正是这种"curId 还在、子工具条却没了"的情况
+	void refreshToolSub();
 public:
 	std::wstring curId;
 private:
