@@ -106,9 +106,14 @@ public:
 	// 值域、落盘的键名、以及"改完要让图上已有的水印重画"这三件事分散在两处的话，
 	// 改一处忘一处就是滑块动了图不变、或者改了没落盘
 	float getWatermarkAlpha() const { return (float)watermarkAlpha; }
-	float getWatermarkSize() const { return sliderVal; }
-	// 大小的值域查这个工具在配置表里那一档（与工具条上那个滑块同一个值域）
-	void getWatermarkSizeRange(float& min, float& max) const { min = sliderMin; max = sliderMax; }
+	// 水印字号（逻辑像素）。用独立的一份，**不能借 sliderVal** ——
+	// sliderVal 是"当前工具"的滑块值，切到文本工具就被换成文本字号了，
+	// 而水印绘制每帧都读它，于是"改文本字号，水印跟着变大"
+	float getWatermarkSize() const { return watermarkFontSize; }
+	// 给绘制用：D2D 要物理像素（与原来 getSliderVal 的语义一致，内部乘 dpi）
+	float getWatermarkFontSizePx() const { return watermarkFontSize * dpi; }
+	// 大小的值域查配置表里 watermark 那一档（不借 sliderMin/Max，那是随工具切的）
+	void getWatermarkSizeRange(float& min, float& max) const;
 	float getWatermarkGap() const { return (float)watermarkGapPct; }
 	void setWatermarkAlpha(float v);
 	void setWatermarkSize(float v);
@@ -258,6 +263,9 @@ private:
 	std::wstring fontFamily;
 	// 水印字体族名，存 config.json 里 watermark 那一组
 	std::wstring watermarkFont;
+	// 水印字号（逻辑像素），落盘在 watermark 组的 fontSize 键。
+	// 单独一份的理由见上面 getWatermarkSize 的注释：它与其它工具共用的 sliderVal 不是一回事
+	float watermarkFontSize{ 24.f };
 	UINT selectColorIndex{ 0 };
 	// 滑块值。每次切换工具都由 beginTool 从 config.json 里换成那个工具自己的那份。
 	float sliderVal{ 2.f };

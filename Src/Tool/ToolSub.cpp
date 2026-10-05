@@ -116,7 +116,23 @@ float ToolSub::getWatermarkGapRatio() const
 // 竖排浮层（WinWatermarkPanel）改值走这三个。落盘的键名与工具条上那三个滑块完全一致 ——
 // 同一份样式只能有一个落盘处，两边各写一遍键名的话，改了工具条上的滑块浮层不跟着、
 // 反过来也一样，是最难查的那类"改了没反应"
-// 大小的键名是 curSliderKey（beginTool 从值域表里取出来的 fontSize），不写死
+// 大小的键名写死 L"fontSize"：它必须落在 watermark 这一组，不能跟着 curSliderKey 走 ——
+// 浮层若在别的工具下被打开，curSliderKey 就成了那个工具的键名，字号会被写进别人的组里
+
+void ToolSub::getWatermarkSizeRange(float& min, float& max) const
+{
+	// 查配置表里 watermark 那一档，不借 sliderMin / sliderMax ——
+	// 那两个是随当前工具切来切去的
+	auto cfg = findSliderCfg(L"watermark");
+	if (!cfg) {
+		// 表里漏了 watermark 这一项才会走到这（本文件内的字面量，正常不会发生）。
+		// 给一个保守值域，别让浮层拿到未初始化的 min/max
+		min = 10.f; max = 72.f;
+		return;
+	}
+	min = cfg->min;
+	max = cfg->max;
+}
 
 void ToolSub::setWatermarkAlpha(float v)
 {
@@ -127,8 +143,10 @@ void ToolSub::setWatermarkAlpha(float v)
 
 void ToolSub::setWatermarkSize(float v)
 {
-	sliderVal = v;
-	Setting::get()->setToolNum(curToolId, curSliderKey, v);
+	// 只动水印自己这一份，不碰 sliderVal —— 那个是"当前工具"的滑块值，
+	// 改水印字号把它一起改了的话，切回原工具会发现它的线宽 / 字号被顶掉了
+	watermarkFontSize = v;
+	Setting::get()->setToolNum(L"watermark", L"fontSize", v);
 	// 水印不是选中态元素，没选中任何东西时也得重画才看得见
 	win->refresh();
 }
@@ -879,6 +897,12 @@ void ToolSub::showWatermarkTools()
 	// 间距的键名换成 gapPct：老配置里的 gap 是"三档下标"（0~2），沿用同名会被读成 0~2%
 	// ——那样平铺密得糊成一片。换个键名，老配置自然退回默认的 25%
 	watermarkGapPct = std::clamp((int)setting->getToolNum(L"watermark", L"gapPct", 25.f), 0, 100);
+	// 字号自己读回并夹紧。原来它是借 sliderVal（"当前工具"的滑块值）的，切到文本工具
+	// 就被换成文本字号，而水印每帧都读它 —— 于是"改文本字号，水印跟着变大"。
+	// 默认值与值域都取自配置表里 watermark 那一档，不再在别处另写一份
+	if (auto cfg = findSliderCfg(L"watermark")) {
+		watermarkFontSize = std::clamp(setting->getToolNum(L"watermark", cfg->key, cfg->def), cfg->min, cfg->max);
+	}
 	// 「内容」按钮：点开是水印内容的编辑弹窗（多行文字 + 时间格式 + 字体，参考 pixpin）。
 	// 原来是工具条上的一个单行输入框 + 字体下拉 + 时间按钮三件套 —— 三个控件抢一条
 	// 32 像素高的窄条，文字框只剩 150 宽，写两行就装不下了，而"标题 + 时间"正是

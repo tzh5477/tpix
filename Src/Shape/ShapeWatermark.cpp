@@ -111,9 +111,11 @@ bool ShapeWatermark::makeLayout()
 		stamp = std::time(nullptr);
 	}
 	auto text = expandTime(raw, stamp);
-	// getSliderVal 返回的已经是物理像素（内部乘过 dpi），这里再乘一次会变成 dpi² ——
-	// 150% 缩放下 24 号被算成 54，字被放大、平铺步长跟着变大，看着就是"稀得看不见字"
-	auto fontSize = sub->getSliderVal();
+	// 取水印自己的字号，不要 getSliderVal：那个返回的是"当前工具"的滑块值 ——
+	// 切到文本工具后它就是文本字号，水印会跟着一起变大（作者实测的正是这个）。
+	// getWatermarkFontSizePx 内部已乘 dpi，给的就是物理像素，这里不能再乘一次，
+	// 否则 150% 缩放下 24 号被算成 54，字被放大、平铺步长跟着变大，看着就是"稀得看不见字"
+	auto fontSize = sub->getWatermarkFontSizePx();
 	layout = Ling::D2D::makeTextLayout(text, fontSize);
 	if (!layout) return false;
 	// 字体名要在建完 layout 之后单独设：Ling 的 makeTextLayout 用的是系统字体集合，
