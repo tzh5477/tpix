@@ -94,6 +94,13 @@ public:
 	int numberStyle{ 0 }, numberRing{ 0 };
 	// 箭头样式：0 = 普通（首尾等粗、平口尾），1 = 尖尾渐变。同 ShapeArrow 的枚举
 	int arrowStyle{ 0 };
+	// 线条类型：0 = 直角折线（默认，拖拽时按鼠标轨迹吸附成横平竖直），1 = 普通线条（自由画）。
+	// 同 ShapeLine::Kind 的枚举
+	int lineKind{ 0 };
+	// 线条两端的形状。0~9 对应 ShapeLine 里那张端点表（无 / 末端实心箭头 / … / 两端细箭头）
+	int lineEnd{ 0 };
+	// 线条样式：0 实线 / 1 虚线 / 2 波浪线 / 3 点状线 / 4 长短虚线 / 5 删除线。同 ShapeLine::Style
+	int lineStyle{ 0 };
 	// 贴图不透明度的当前档位（下标进 .cpp 里的 pinOpacitySteps 表），值本身落盘
 	int pinOpacity{ 0 };
 	// 水印。文字 / 位置是状态本体；透明度、角度、间距的档位存下标，换算表在 .cpp 里

@@ -56,6 +56,44 @@ namespace {
 		static const std::vector<std::wstring> items{ L"\ue909", L"\ue90a" };
 		return items;
 	}
+	// 线条类型只有两项，按钮上写汉字，所以走语言包
+	std::vector<std::wstring> lineKindItems()
+	{
+		return { Lang::get(L"tool.lineKind0"), Lang::get(L"tool.lineKind1") };
+	}
+	// 端点的十档，顺序 = config.json 里 line/end 的落盘值，也是 ShapeLine 里那张表的顺序。
+	// 按钮上画不了小图，只能用符号示意：● 圆点、▶ 实心箭头、→ 细箭头。
+	// 这几枚符号在雅黑 / Segoe UI 里都有，不必跟着语言包走
+	const std::vector<std::wstring>& lineEndItems()
+	{
+		static const std::vector<std::wstring> items{
+			L"\u2014\u2014\u2014",       // 无
+			L"\u2014\u25b6",             // 末端实心箭头
+			L"\u25cf\u2014\u25b6",       // 起点圆点 + 末端实心箭头
+			L"\u2014\u2192",             // 末端细箭头
+			L"\u25cf\u2014\u2192",       // 起点圆点 + 末端细箭头
+			L"\u2014\u25cf",             // 末端圆点
+			L"\u25cf\u2014",             // 起点圆点
+			L"\u25cf\u2014\u25cf",       // 两端圆点
+			L"\u25c0\u2014\u25b6",       // 两端实心箭头
+			L"\u2190\u2014\u2192",       // 两端细箭头
+		};
+		return items;
+	}
+	// 线条样式六档，顺序 = config.json 里 line/style 的落盘值：
+	// 实线 / 虚线 / 波浪线 / 点状线 / 长短虚线 / 删除线。同样只能符号示意，
+	// 全部用 ASCII 与 Latin-1 的字符，任何字体都不缺字
+	const std::vector<std::wstring>& lineStyleItems()
+	{
+		static const std::vector<std::wstring> items{
+			L"___", L"- -", L"~~~", L"\u00b7\u00b7\u00b7", L"-\u00b7-", L"-\u00b7\u00b7"
+		};
+		return items;
+	}
+	// 线条工具条上三个下拉按钮的宽度。线条类型写的是"直角折线"四个汉字，端点 / 线条样式
+	// 写的是两个符号，都比一格按钮（btnSize）宽 —— 交给 flex 分会被压到放不下
+	constexpr float lineKindW{ 60.f };
+	constexpr float lineChoiceW{ 42.f };
 	// 贴图不透明度的四档。index 落盘的是下标，百分比文本由 showPinTools 按这张表生成
 	const float pinOpacitySteps[]{ 1.f, 0.75f, 0.5f, 0.25f };
 	// 水印的旋转档位（角度只有在平铺下才有意义）
@@ -343,7 +381,21 @@ void ToolSub::showNumberTools()
 void ToolSub::showLineTools()
 {
 	beginTool(L"line");
-	initSize(1, true);
+	// 三个下拉（线条类型 / 端点 / 线条样式）+ 半透明开关。线条类型只有两档，按两态约定
+	// 单击即切换、不弹列表；另外两个都上十档，走下拉。
+	// 三个按钮的宽度差额从 extraW 里补给它们（initSize 只按按钮数算宽度）
+	initSize(4, true, false, lineKindW + lineChoiceW * 2 - btnSize * 3);
+	// 宽度写死，不让 flex 分：这三个放的是汉字与成对的符号，压到一格按钮宽就糊成一团
+	auto fixW = [](Ling::Button* btn, float w) {
+		btn->setFlexGrow(0.f);
+		btn->setFlexShrink(0.f);
+		btn->setWidth(w);
+	};
+	// 类型排在最前：它管的是"这一笔怎么长出来"，端点和线型都是它下游的样式。
+	// 三个都不带"改完立刻套到图上"的收尾 —— 作者定了只影响之后新画的（要改已有的用「全」）
+	fixW(makeSelectBtn(L"tool.lineKind", L"kind", &lineKind, lineKindItems(), nullptr, false, false), lineKindW);
+	fixW(makeSelectBtn(L"tool.lineEnd", L"end", &lineEnd, lineEndItems(), nullptr, false, false), lineChoiceW);
+	fixW(makeSelectBtn(L"tool.lineStyle", L"style", &lineStyle, lineStyleItems(), nullptr, false, false), lineChoiceW);
 	makeToggleBtn(L"\ue607", &isLineTransparent, L"tool.semiTransparent", L"semiTransparent");
 	initSlider();
 	initColorBtns();

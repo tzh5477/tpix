@@ -11,6 +11,54 @@
 namespace {
 	std::unique_ptr<WinHistory> winHistory;
 	constexpr float cardW{ 168.f }, cardH{ 160.f }, gap{ 10.f };
+	// 预览区高度。缩略图"铺满"这件事只在 cover 的算法里，不依赖它，但改这里要连带看一眼
+	constexpr float previewH{ 102.f };
+
+	// 缩略图画布：按 cover 把图铺满整块预览区。
+	//
+	// 为什么不用 Ling::ImageBox：它内层的 Image 只会等比**收缩**（contain），
+	// 一条 5:1 的宽扁截图塞进 156×102 的框里只占三成高度，其余七成是预览区的灰底
+	// —— 作者报的"图片预览没有占满预留的矩形框"就是这个。自己画一层，按 cover 放大、
+	// 居中，溢出窗口的那部分由画布边界自然裁掉，四边不再留灰边
+	class CoverImage : public Ling::Canvas
+	{
+	public:
+		CoverImage(Ling::WinBase* win) :Ling::Canvas(win) {}
+		void loadImg(const std::wstring& path)
+		{
+			std::vector<BYTE> data;
+			DWORD w{ 0 }, h{ 0 };
+			if (!Util::loadImageBytes(path, data, w, h)) return;
+			// decodeWicFrame 给的是**不带预乘**的 BGRA，所以这里按 IGNORE 用 —— 截图没有
+			// 有意义的 alpha，标成 PREMULTIPLIED 会让半透明处整片发黑
+			D2D1_BITMAP_PROPERTIES1 props{};
+			props.pixelFormat = D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_IGNORE);
+			props.bitmapOptions = D2D1_BITMAP_OPTIONS_NONE;
+			props.dpiX = props.dpiY = 96.f;
+			Ling::D2D::get()->deviceContext->CreateBitmap(
+				D2D1::SizeU(w, h), data.data(), w * 4, props, bitmap.ReleaseAndGetAddressOf());
+		}
+	protected:
+		void layout() override
+		{
+			Ling::Canvas::layout();
+			auto ctx = startPaint();
+			if (!ctx) return;
+			ctx->Clear(0);
+			if (bitmap) {
+				auto size = bitmap->GetPixelSize();
+				// cover：取"两维各自铺满所需倍率"里更大的那个，于是短的那一维溢出、由边界裁掉
+				auto scale = std::max(w / (float)size.width, h / (float)size.height);
+				auto dw{ size.width * scale }, dh{ size.height * scale };
+				auto dx{ (w - dw) / 2.f }, dy{ (h - dh) / 2.f };
+				ctx->DrawBitmap(bitmap.Get(), D2D1::RectF(dx, dy, dx + dw, dy + dh), 1.f,
+					D2D1_INTERPOLATION_MODE_HIGH_QUALITY_CUBIC, nullptr);
+			}
+			finishPaint();
+		}
+	private:
+		Microsoft::WRL::ComPtr<ID2D1Bitmap1> bitmap;
+	};
 }
 
 WinHistory::WinHistory() : Ling::WinBase()
@@ -163,10 +211,11 @@ Ling::Node* WinHistory::makeCard(Ling::Node* parent, const ShotHistory::Item& it
 	card->setMargin(gap / 2.f);
 
 	auto preview = card->makeChild<Ling::Node>();
-	preview->setHeight(102.f);
+	preview->setHeight(previewH);
 	preview->setWidthPercent(100.f);
 	preview->setAlignItems(Ling::Align::Center);
 	preview->setJustifyContent(Ling::Justify::Center);
+	// 灰底只剩"图没加载出来"时的兜底：正常情况整块被 cover 的缩略图盖满
 	preview->setBg(0xF7F7F7FF);
 
 	Ling::Button* clickable{ nullptr };
@@ -182,15 +231,22 @@ Ling::Node* WinHistory::makeCard(Ling::Node* parent, const ShotHistory::Item& it
 	}
 	else {
 		auto thumb = ShotHistory::get()->thumbPath(item);
-		// 没生成缩略图（原图本身就窄）就直接拿原图，ImageBox 会自己等比收缩
+		// 没生成缩略图（原图本身就窄）就直接拿原图
 		auto path = thumb.empty() ? ShotHistory::get()->imagePath(item) : thumb;
 		if (!path.empty()) {
-			auto box = preview->makeChild<Ling::ImageBox>();
+			auto box = preview->makeChild<CoverImage>();
 			box->setSizePercent(100.f, 100.f);
 			box->loadImg(path);
 		}
 		// 按钮建在图之后，才压在图上接得到点击（Ling 没有 bringToFront）
 		clickable = preview->makeChild<Ling::Button>();
+		// 必须脱离 flex 流。preview 是"居中"的容器，两个各占 100% 高的兄弟会被拼成
+		// 204 逻辑高再整体居中 —— 图被顶到框上方 51 处（上半截被 Scroller 裁掉）、
+		// 按钮被推到框下方 51 处，框里下半截只剩预览区的灰底。作者报的"图片预览没有
+		// 占满预留的矩形框"正是这么来的：图只占满了框的上 88/127
+		clickable->setPositionType(Ling::Position::Absolute);
+		clickable->setPosition(Ling::Edge::Left, 0.f);
+		clickable->setPosition(Ling::Edge::Top, 0.f);
 	}
 	clickable->setSizePercent(100.f, 100.f);
 	clickable->setBg(0);
@@ -219,7 +275,14 @@ Ling::Node* WinHistory::makeCard(Ling::Node* parent, const ShotHistory::Item& it
 		btn->setHoverBg(0xF2F2F2ff);
 		return btn;
 	};
-	auto copyBtn = iconBtn(bottom, L"\ue6ad");
+	// 复制：原来是一枚对勾图标，看着像"选定 / 采用这张"，而它干的是往剪贴板放一份 ——
+	// 作者要求直接写成字，省掉这份猜测。宽度按两个字给足，交给 flex 会被时间那一段挤扁
+	auto copyBtn = bottom->makeChild<Ling::Button>();
+	copyBtn->setText(Lang::get(L"history.copy"));
+	copyBtn->setFontSize(12.f);
+	copyBtn->setSize(42.f, 26.f);
+	copyBtn->setBg(0);
+	copyBtn->setHoverBg(0xF2F2F2ff);
 	copyBtn->onClick.add([this, id = item.id](Ling::Button*) { this->copyItem(id); });
 	auto delBtn = iconBtn(bottom, L"\ue62d");
 	delBtn->onClick.add([this, id = item.id](Ling::Button*) { this->removeItem(id); });
