@@ -45,10 +45,13 @@ namespace {
 			body->setFlexDirection(Ling::FlexDirection::Column);
 			body->setPadding(pad, pad, pad, pad);
 
-			// 标题行：左标题右 ×。窗口是 WS_POPUP 没有系统标题栏，这一行就是标题栏
+			// 标题行：左标题右 ×。窗口是 WS_POPUP 没有系统标题栏，这一行就是标题栏。
+			// 必须显式 Row：yoga 默认是 Column，不写的话标题与 × 会上下叠着，
+			// × 跑到标题底下居中（label 有 flexGrow，在 Column 下撑的是高度）
 			auto titleRow = body->makeChild<Ling::Node>();
 			titleRow->setHeight(titleH);
 			titleRow->setWidthPercent(100.f);
+			titleRow->setFlexDirection(Ling::FlexDirection::Row);
 			titleRow->setAlignItems(Ling::Align::Center);
 			auto title = titleRow->makeChild<Ling::Label>();
 			title->setText(Lang::get(L"wmText.title"));
@@ -81,10 +84,12 @@ namespace {
 				if (focused) box->selectAll();
 				});
 
-			// 底部一行：时间格式、字体、应用、取消
+			// 底部一行：时间格式、字体、应用、取消。同上，不写 Row 的话这几项会竖排，
+			// 一行的高度装不下四行，确定 / 取消被挤出窗外（作者报"确定按钮看不到了"就是这个）
 			auto bottom = body->makeChild<Ling::Node>();
 			bottom->setHeight(bottomH);
 			bottom->setWidthPercent(100.f);
+			bottom->setFlexDirection(Ling::FlexDirection::Row);
 			bottom->setAlignItems(Ling::Align::Center);
 
 			auto timeLabel = bottom->makeChild<Ling::Label>();
