@@ -30,8 +30,9 @@ D2D1_RECT_F ShapeBase::actionBtnRect(const int i) const
 	auto rad{ draggerSize * 0.9f };
 	// 离框多远。角上正压着八向手柄，而 WinPin::onDown 里 hitActionBtn 排在 shape 派发之前：
 	// 两者贴太近时，瞄着角手柄去 resize 就会先被按钮截住（点 × 直接把元素删了）。
-	// 3.2 个手柄宽 = 按钮内边缘离角手柄外边缘还有约 2 个手柄宽，鼠标走过去不会中途改判
-	auto gap{ draggerSize * 3.2f };
+	// 3 个手柄宽 = 按钮内边缘离角手柄外边缘还有约 1.8 个手柄宽，鼠标走过去不会中途改判。
+	// 从 3.2 收到 3.0 是作者实测后定的：三个角离框太远时，整排按钮看着像飘在元素外面
+	auto gap{ draggerSize * 3.0f };
 	// 图标之间留一点缝
 	auto step{ rad * 2.f + draggerSize * 0.5f };
 	auto last{ actionBtnTotal() - 1 };
@@ -142,8 +143,8 @@ void ShapeBase::updateRotateDragger()
 		return;
 	}
 	auto rad{ draggerSize * 0.9f };
-	// 与 actionBtnRect 用同一个 gap：三个角离框的距离一致，摆在一起才像一排
-	auto gap{ draggerSize * 3.2f };
+	// 与 actionBtnRect 用同一个 gap（3.0f，见那里的说明）：三个角离框的距离一致，摆在一起才像一排
+	auto gap{ draggerSize * 3.0f };
 	auto cx{ b.right + gap }, cy{ b.bottom + gap };
 	// 贴到画布下边缘 / 右边缘就翻到内侧 —— 否则手柄被裁掉，鼠标够不着也就没法转
 	auto img = win->getImgSize();
