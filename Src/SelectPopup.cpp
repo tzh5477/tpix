@@ -27,6 +27,22 @@ namespace
 	Ling::WinBase* ownerWin{ nullptr };
 	winrt::event_token movedTok{};
 
+	// 列表的窗口过程外面套的那一层，只拦 WM_MOUSEACTIVATE 一条。
+	// WS_EX_NOACTIVATE 只管得住"程序主动激活"（ShowWindow / 不带 SWP_NOACTIVATE 的
+	// SetWindowPos，见 show 里那段说明）；**鼠标点上来**的激活它管不住 ——
+	// DefWindowProc 处理 WM_MOUSEACTIVATE 时一律回 MA_ACTIVATE，不认这个扩展样式。
+	// 于是点一下列表，激活就从宿主挪到了列表上：宿主（水印内容弹窗这种"失焦即收"
+	// 的弹层）立刻收到 WM_KILLFOCUS，在下拉还开着的时候把自己收掉、正在编辑的内容
+	// 被还原成打开时的值 —— 用户看到的就是"选个时间 / 换个字体，刚输入的文字没了"。
+	// Ling 不转派 WM_MOUSEACTIVATE，所以在 tpix 侧挂一层：答 MA_NOACTIVATE，
+	// 鼠标消息照旧送到列表里，激活不动。只有列表会被套上，别的窗口不受影响
+	WNDPROC popupPrevProc{ nullptr };
+	LRESULT CALLBACK popupProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp)
+	{
+		if (msg == WM_MOUSEACTIVATE) return MA_NOACTIVATE;
+		return CallWindowProcW(popupPrevProc, hwnd, msg, wp, lp);
+	}
+
 	class Popup : public Ling::WinBase
 	{
 	public:
@@ -38,6 +54,9 @@ namespace
 			// 不激活：弹出列表不该把输入焦点从宿主那儿抢走，否则文本框会丢光标、
 			// 贴图窗口也可能因为失焦把自己收了。TOPMOST 保证它盖在宿主之上
 			createNativeWindow(WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, WS_POPUP);
+			// 换掉窗口过程（见 popupProc）：只为了让鼠标点上来这一下不激活本窗口
+			popupPrevProc = reinterpret_cast<WNDPROC>(
+				SetWindowLongPtrW(hwnd, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(&popupProc)));
 			onDestroy.add([this]() {
 				// 不能在销毁回调里同步 reset 自己
 				Ling::App::get()->dq.TryEnqueue([this]() {
