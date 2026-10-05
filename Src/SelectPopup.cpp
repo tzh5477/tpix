@@ -148,12 +148,23 @@ void SelectPopup::show(Ling::WinBase* owner, Ling::Node* anchor,
 	anchorRect = RECT{ (int)(ox + anchor->x), (int)(oy + anchor->y),
 		(int)(ox + anchor->x + anchor->w), (int)(oy + anchor->y + anchor->h) };
 	popup = std::make_unique<Popup>(items, cur, std::move(onPick), fontFamily);
-	// 必须走 setter，不能直接给 x/y/w/h 赋值：createNativeWindow 在构造里就已经按
-	// 当时还是 0 的 w/h 把 hwnd 建好了，事后改成员不会动窗口 —— ShowWindow 出来的
-	// 是个 0×0 的窗口，看着就是"点了没反应"
-	popup->setSize(listW, listH);    // setter 收逻辑像素，内部乘 dpi
-	popup->setPosition(left, top);   // 屏幕物理像素
-	popup->show();
+	// 这里刻意不走 popup->setSize / setPosition / show()：Ling 的 setSize / setPosition
+	// 用的是不带 SWP_NOACTIVATE 的 SetWindowPos，show() 是 ShowWindow(SW_SHOW)，
+	// 两个都会把这个带 WS_EX_NOACTIVATE 的窗口真正激活（连尚未显示、只是摆尺寸时都会），
+	// 于是当前持有焦点的宿主立刻收到 WM_KILLFOCUS。宿主若是"失焦即关"的弹层
+	// （水印内容弹窗就是），就会在下拉还开着的时候被关掉、下一轮消息循环里被释放；
+	// 之后点列表里任意一项，回调就落在已释放的宿主上（SelectPopup::close 里的
+	// ownerWin->onMoved，以及宿主自己的 onPick 闭包）—— 直接是访问违例。
+	// 所以尺寸 / 位置 / 置顶 / 显示合并成一次调用，全程带 SWP_NOACTIVATE，不碰前台。
+	// （实测：不带 SWP_NOACTIVATE 的 SetWindowPos 之后前台就是这个弹窗了，
+	//  带上的话新窗口可见、前台仍是宿主、宿主也不收 WM_KILLFOCUS）
+	// x/y/w/h 仍要写回成员：Ling 的命中判定与布局读的是它们
+	popup->x = left;
+	popup->y = top;
+	popup->w = listW * dpi;   // 逻辑像素 → 物理像素，与 WinBase::setSize / setPosition 口径一致
+	popup->h = listH * dpi;
+	SetWindowPos(popup->hwnd, HWND_TOPMOST, left, top, (int)popup->w, (int)popup->h,
+		SWP_NOACTIVATE | SWP_SHOWWINDOW);
 	ownerWin = owner;
 	movedTok = owner->onMoved.add([]() { SelectPopup::close(); });
 	mouseHook = SetWindowsHookEx(WH_MOUSE_LL, hookProc, nullptr, 0);

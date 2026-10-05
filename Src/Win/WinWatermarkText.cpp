@@ -29,6 +29,12 @@ namespace {
 			origText = this->text;
 			origFamily = this->family;
 			createNativeWindow(WS_EX_TOPMOST | WS_EX_TOOLWINDOW, WS_POPUP);
+			// 时间 / 字体两个下拉是独立顶层窗口，不随本弹窗一起死 —— 本弹窗被收掉
+			// （Esc / × / 取消 / 失焦 / 宿主 WinPin 关闭）时必须先把它收掉。不收的话
+			// 它会带着指回本对象的 ownerWin 继续活着，而下面那句在下一轮消息循环就
+			// 把本对象释放了；之后点列表里那一项（SelectPopup::close 里的
+			// ownerWin->onMoved、以及 pickTime / pickFont 的闭包）全是 use-after-free
+			onDestroy.add([]() { SelectPopup::close(); });
 			onDestroy.add([this]() {
 				// 不能在销毁回调里同步 reset 自己
 				Ling::App::get()->dq.TryEnqueue([this]() { onDlgDestroy(this); });
