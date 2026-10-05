@@ -9,8 +9,10 @@
 #include "../Shape/ShapeWatermark.h"
 #include "WinPin.h"
 #include "WinCap.h"
+#include "CutMask.h"
 #include "History.h"
 #include "../App.h"
+#include "../Lang.h"
 #include "../Util.h"
 #include "../Update.h"
 #include "../Setting.h"
@@ -114,6 +116,9 @@ WinPin::WinPin(int x, int y, int w, int h, const std::vector<BYTE>* data, const 
 	});
 	onTimer.add([this](UINT id) {this->onTimerCB(id);});
 	onKeyDown.add([this](UINT key) {this->onKey(key);});
+	// 被激活同样会把本窗口提到 topmost 同类的最前面（Alt+Tab、别的窗口让位给它……），
+	// 这一条兜住所有"不是点出来的"激活，道理与 onDown 开头那次一样
+	onFocus.add([this]() { this->raiseTools(); });
 	onDestroy.add([this]() { this->onClosed(); });
 }
 
@@ -305,9 +310,14 @@ void WinPin::applyWinSize()
 
 POINT WinPin::toImgPos(const POINT& pos) const
 {
+	// 出来的坐标是"标注坐标系"里的，不是底图像素 —— 剪过一刀之后两者差一个
+	// drawing->imgOrigin（见 Canvas.h）。shape 存的、认的、画的一律是前者，所以这里要加回来；
+	// 而剪裁框量的是屏幕上的位置，它除回倍数就行，不加这个偏移（见 confirmCrop）
 	auto vs = viewScale();
-	if (vs == 1.f) return pos;
-	return POINT{ static_cast<LONG>(std::lround(pos.x / vs)), static_cast<LONG>(std::lround(pos.y / vs)) };
+	const auto& o = drawing->imgOrigin;
+	if (vs == 1.f) return POINT{ pos.x + o.x, pos.y + o.y };
+	return POINT{ static_cast<LONG>(std::lround(pos.x / vs)) + o.x,
+		static_cast<LONG>(std::lround(pos.y / vs)) + o.y };
 }
 
 float WinPin::clampScale(float v) const
@@ -558,7 +568,8 @@ void WinPin::setMouseThrough(bool on)
 
 bool WinPin::hasDrawTool() const
 {
-	return toolMain && !toolMain->curId.empty() && toolMain->curId != L"pin";
+	// pinCrop 也不是画笔：它是"对整张图动刀"，鼠标归剪裁框，路径见 onDown / onMove
+	return toolMain && !toolMain->curId.empty() && toolMain->curId != L"pin" && toolMain->curId != L"pinCrop";
 }
 
 // 水印工具一点开就把水印铺满整张图，不用再点一下截图区域（ToolSub 上的文字 / 字号 / 间距
@@ -581,8 +592,11 @@ void WinPin::updateNumberPreview(const POINT& imgPos)
 	// 只在标号工具下预览，而且只预览"落在空白处"的那一下 —— 光标压在已有元素上时，
 	// 这一下是选中它（见 onDown），预览一个将要落下的号会误导
 	auto sz = drawing->getImgSize();
-	if (toolMain->curId != L"number" || imgPos.x < 0 || imgPos.y < 0
-		|| imgPos.x >= (LONG)sz.width || imgPos.y >= (LONG)sz.height) {
+	// 比的是底图范围，而 imgPos 是标注坐标：剪过一刀之后两者差一个 imgOrigin
+	const auto& o = drawing->imgOrigin;
+	const auto imgX = imgPos.x - o.x, imgY = imgPos.y - o.y;
+	if (toolMain->curId != L"number" || imgX < 0 || imgY < 0
+		|| imgX >= (LONG)sz.width || imgY >= (LONG)sz.height) {
 		hideNumberPreview();
 		return;
 	}
@@ -621,6 +635,9 @@ void WinPin::setPinTitle(const std::wstring& t)
 void WinPin::layoutTools()
 {
 	if (!toolMain || !toolSub) return;
+	// 剪裁态与 curId 是同一件事的两面，在这里收口：selectTool / cancelSelect / 右键收起 /
+	// ESC 退一步最后都会走到本函数，不必给每条路各挂一个回调
+	syncCropMode();
 	// WinPin 的 hwnd 此时可能还没创建（本函数会在构造期调用），所以用矩形而不是窗口句柄找显示器。
 	RECT winRect{ x, y, x + static_cast<int>(w), y + static_cast<int>(h) };
 	MONITORINFO mi{ .cbSize = sizeof(MONITORINFO) };
@@ -809,12 +826,17 @@ void WinPin::layout()
     if (!ctx) return;
     ctx->Clear(0);
     auto sz = drawing->screenImg->GetSize();
-    D2D1_RECT_F destRect = D2D1::RectF(0, 0, sz.width, sz.height);
+    // 底图在"标注坐标系"里的位置：剪过一刀之后这张图从 imgOrigin 处开始铺
+    //（shape 的坐标没被搬动，靠这个偏移让图和标注重新对齐）
+    const auto& o = drawing->imgOrigin;
+    D2D1_RECT_F destRect = D2D1::RectF((float)o.x, (float)o.y, (float)o.x + sz.width, (float)o.y + sz.height);
     // 底图和 shape 都是按底图像素画的，放大缩小整个交给这个变换，
     // 笔宽、夹点跟着一起缩 —— 鼠标坐标进来时也除掉了倍数，所以命中判定天然对得上。
-    // 倍数取 viewScale：缩略图模式下窗口被缩成小图，画的时候也得跟着缩，否则只剩左上角一块
+    // 倍数取 viewScale：缩略图模式下窗口被缩成小图，画的时候也得跟着缩，否则只剩左上角一块。
+    // 先平移再缩放（D2D 是行向量、左乘先作用），于是标注坐标系 → 窗口坐标一步到位
     auto vs = viewScale();
-    ctx->SetTransform(D2D1::Matrix3x2F::Scale(vs, vs));
+    ctx->SetTransform(D2D1::Matrix3x2F::Translation(-(float)o.x, -(float)o.y)
+        * D2D1::Matrix3x2F::Scale(vs, vs));
     ctx->DrawBitmap(drawing->screenImg.Get(), destRect);
 	for (auto& shape : drawing->history->shapes)
 	{
@@ -849,6 +871,12 @@ void WinPin::layout()
 	ctx->DrawRectangle(D2D1::RectF(0.f, 0.f, w, h), borderBrush.Get(), 2*dpi);
 	paintTitle(ctx);
 	paintScaleTip(ctx);
+	// 剪裁框与提示同样是窗口装饰，用窗口坐标画（上面已经把缩放变换收回来了）。
+	// 蒙层会把选区以外的整块压暗，正好把"这一刀要留下哪一块"标出来
+	if (cropMask) {
+		cropMask->paint(ctx);
+		paintCropTip(ctx);
+	}
     canvas->finishPaint();
 }
 
@@ -869,6 +897,27 @@ void WinPin::onMinMaxInfo(MINMAXINFO* mmi)
 
 void WinPin::onDown(POINT pos, BOOL isRight)
 {
+	// 点上一下就把本窗口激活了（WM_MOUSEACTIVATE -> SetForegroundWindow），而激活会把这个
+	// topmost 窗口提到同类的最前面 —— 于是它压住了自己的两条工具条。工具条通常落在窗口外面，
+	// 看不出来；全屏贴图的 overlay 模式下工具条整条盖在底图里头，一点图就"工具条没了"，
+	// 而且点不到（命中测试落在底图上）。layoutTools 里那次 raiseTools 只在重叠状态**变化**时跑，
+	// 管不到"激活导致的重排"，所以每次点到图上都补一次
+	raiseTools();
+	// 剪裁态：鼠标整个交给剪裁框（右键 = 放弃这一刀，与长截图那边的剪裁一致）。
+	// 必须排在下面所有分支之前 —— 这一下既不是画画，也不是拖窗口，更不该被算进双击
+	if (cropMask) {
+		if (isRight) {
+			toolMain->cancelSelect();   // 走它是因为它最后会到 layoutTools -> syncCropMode
+			return;
+		}
+		cropDragging = true;
+		// 已经有框了就是调它（startAdjust 自己会按落点认边认角），没有才是新框一道
+		cropAdjusting = cropMask->hasRect();
+		if (cropAdjusting) cropMask->startAdjust(pos);
+		else cropMask->startMakeRect(pos);
+		refresh();
+		return;
+	}
 	// 锁定后图上什么都不许动。右键单独放开：收/放工具条是解锁的入口，
 	// 全拦了的话锁死的贴图就只能靠任务栏找回工具条
 	if (isLocked && !isRight) return;
@@ -982,6 +1031,14 @@ void WinPin::onDown(POINT pos, BOOL isRight)
 
 void WinPin::onMove(POINT pos)
 {
+	// 剪裁态：拖剪裁框。放在最前面 —— 缩略图 / 细条那两套收法在进剪裁时就已经还原了
+	if (cropMask) {
+		if (!cropDragging) return;
+		if (cropAdjusting) cropMask->adjust(pos);
+		else cropMask->makeRect(pos);
+		refresh();
+		return;
+	}
 	// 缩略图上不做 hover / 命中：点一下是"还原"，夹点也没有地方摆
 	if (isThumb) return;
 	// 收成细条时鼠标一碰就展开 —— 这是细条唯一的展开方式
@@ -1044,6 +1101,12 @@ void WinPin::onMove(POINT pos)
 
 void WinPin::onUp(POINT pos, BOOL isRight)
 {
+	// 剪裁态：这一下只是把剪裁框放稳，没有 capture、也没有新建元素要收尾
+	if (cropMask) {
+		cropDragging = false;
+		cropAdjusting = false;
+		return;
+	}
 	// 右键按下时什么都没抓（既没置 isMouseDown 也没 SetCapture，见 onDown），抬手也就没什么要收的。
 	// 更要紧的是不能往下走：下面那条"拖窗结束"的路会把 ToolMain 显示出来，
 	// 而右键刚刚才把它收起来 —— 一按一放就等于什么都没做
@@ -1176,6 +1239,13 @@ void WinPin::applyStyleToAllShapes()
 
 void WinPin::onKey(UINT key)
 {
+	// 剪裁态只认两个键：回车落这一刀，ESC 放弃。其余快捷键这会儿都用不上，
+	// 尤其不能让 Ctrl+C（复制并关窗）和 Delete（删元素）插进来
+	if (cropMask) {
+		if (key == VK_RETURN) confirmCrop();
+		else if (key == VK_ESCAPE) toolMain->cancelSelect();
+		return;
+	}
 	if (isLocked) return;
 	// 编辑文本时所有按键都归 TextBox：否则 Ctrl+C 复制的是截图、回车会保存并关窗、
 	// Delete 删掉的是整个 shape、ESC 直接把窗口关了。ESC 结束编辑由 TextBox 自己处理。
@@ -1242,6 +1312,119 @@ void WinPin::onKey(UINT key)
 	}
 }
 
+// 剪裁。底图裁一块出来当新底图，已经画好的标注一个都不搬 —— 坐标映射整体挪过去
+//（Canvas::imgOrigin），于是剪完还能接着改样式、撤销、导出，剪掉的只是"图"那部分。
+// 这一条是作者点名的语义：剪裁不该把标注烘死
+void WinPin::syncCropMode()
+{
+	const bool want = toolMain && toolMain->curId == L"pinCrop";
+	if (want == isCropping()) return;
+	if (want) beginCrop();
+	else endCrop();
+}
+
+void WinPin::beginCrop()
+{
+	// 先把标志立起来（isCropping 看的就是 cropMask），因为下面 setThumbMode / setMinimized
+	// 会回调 layoutTools，而 layoutTools 又转回这里 —— 标志没立就会自己叠自己
+	cropMask = std::make_unique<CutMask>(this);
+	// 细条 / 缩略图这两种收法都没给剪裁框留位置，先还原再谈剪裁
+	if (isThumb) setThumbMode(false);
+	if (isMinimized) setMinimized(false);
+	// 尺寸必须自由：截图那边的「固定区域」不能把剪裁框钉成别的大小
+	cropMask->ignoreFixedSize = true;
+	// 标签量的是窗口坐标，而用户关心的是剪下来还剩多少像素，缩放之后两者对不上，藏掉
+	cropMask->hideLabel = true;
+	if (editingShape) editingShape->finishEditing();
+	drawing->shapeHover = nullptr;
+	drawing->selected = nullptr;
+	cropTip = Ling::D2D::get()->makeTextLayout(Lang::get(L"tool.pinCropTip"), 13.f * dpi);
+	layoutTools();
+	refresh();
+}
+
+void WinPin::endCrop()
+{
+	cropMask.reset();
+	cropTip = nullptr;
+	cropDragging = false;
+	cropAdjusting = false;
+	refresh();
+}
+
+void WinPin::confirmCrop()
+{
+	if (!cropMask || !cropMask->hasRect()) return;
+	auto sz = getImgSize();
+	if (sz.width == 0 || sz.height == 0) return;
+	auto& r = cropMask->maskRect;
+	// 剪裁框量的是屏幕上看到的那块图，所以除回倍数就是底图像素 —— 这里**不加** imgOrigin，
+	// 那个偏移是"标注坐标 → 底图像素"的事，与屏幕上看到的位置无关
+	const int x0 = std::clamp((int)std::lround(r.left / scale), 0, (int)sz.width);
+	const int y0 = std::clamp((int)std::lround(r.top / scale), 0, (int)sz.height);
+	const int x1 = std::clamp((int)std::lround(r.right / scale), 0, (int)sz.width);
+	const int y1 = std::clamp((int)std::lround(r.bottom / scale), 0, (int)sz.height);
+	const int nw = x1 - x0, nh = y1 - y0;
+	if (nw <= 0 || nh <= 0) return;
+	ComPtr<ID2D1Bitmap1> bmp;
+	{
+		D2D1_BITMAP_PROPERTIES1 props{};
+		// 像素格式与 DPI 都必须跟源位图一模一样，差一点 CopyFromBitmap 就报 E_INVALIDARG。
+		// 截图那条路进来的底图是 ALPHA_MODE_IGNORE（抓屏数据没有 alpha，见 WinCap::getCutImg），
+		// 长图那条路是 PREMULTIPLIED —— 不能写死一个，照抄源位图的
+		props.pixelFormat = drawing->screenImg->GetPixelFormat();
+		drawing->screenImg->GetDpi(&props.dpiX, &props.dpiY);
+		props.bitmapOptions = D2D1_BITMAP_OPTIONS_NONE;
+		auto hr = Ling::D2D::get()->deviceContext->CreateBitmap(D2D1::SizeU((UINT32)nw, (UINT32)nh),
+			nullptr, 0, &props, bmp.GetAddressOf());
+		if (FAILED(hr)) return;
+	}
+	// 只在 GPU 内部搬一块，不走 CPU：拷贝的是底图自己的一块矩形。
+	// srcRect 要的是指针，所以先落成一个具名局部量（D2D1::RectU 给的是右值）
+	const D2D1_RECT_U srcRect = D2D1::RectU((UINT32)x0, (UINT32)y0, (UINT32)x1, (UINT32)y1);
+	auto hrc = bmp->CopyFromBitmap(nullptr, drawing->screenImg.Get(), &srcRect);
+	if (FAILED(hrc)) return;
+	// 换了底图，动图那套帧序列就对不上了（帧尺寸与底图是钉死的），一并丢掉停播
+	killTimer(102);
+	frames.clear();
+	frames.shrink_to_fit();
+	frameIndex = 0;
+	animPlaying = false;
+	animSrc.clear();
+	drawing->screenImg = bmp;
+	// 标注坐标不用动：把偏移加上被裁掉的那一块，图与标注就重新对齐了。
+	// 落在新图外面的那一截不用管 —— 画到目标位图上天然会被裁掉
+	drawing->imgOrigin.x += x0;
+	drawing->imgOrigin.y += y0;
+	// 剪完回 100%：尺寸一变，原来那个倍数下的锚点已经没有意义了
+	scale = 1.f;
+	applyWinSize();
+	// 窗口跟着选区走：保留下来的那一块在屏幕上停在原处，用户看到的是"框住的那块变成了整张图"。
+	// 不跟的话整张图会突然缩到原来窗口的左上角去，框了半天不知道东西跑哪了
+	setPosition(x + (int)std::lround(r.left), y + (int)std::lround(r.top));
+	// 退出剪裁态。cancelSelect -> layoutTools -> syncCropMode 会把 cropMask 收掉，
+	// 顺手也把工具按钮的选中态复位
+	toolMain->cancelSelect();
+	layoutTools();
+	refresh();
+}
+
+void WinPin::paintCropTip(ID2D1DeviceContext* ctx)
+{
+	if (!cropTip || !brushTipBg) return;
+	DWRITE_TEXT_METRICS tm{};
+	if (FAILED(cropTip->GetMetrics(&tm))) return;
+	auto pad = 8.f * dpi;
+	D2D1_RECT_F bar{ w / 2.f - tm.width / 2.f - pad, pad,
+		w / 2.f + tm.width / 2.f + pad, pad + tm.height + pad * 2 };
+	// 图窄到装不下时贴左边画，别画到窗口外面去
+	if (bar.left < pad) bar.left = pad;
+	if (bar.right > w - pad) bar.right = w - pad;
+	ctx->FillRectangle(bar, brushTipBg.Get());
+	ctx->DrawTextLayout({ bar.left + pad, bar.top + pad }, cropTip.Get(), brushTipText.Get(),
+		D2D1_DRAW_TEXT_OPTIONS_NONE);
+}
+
 // ESC 的"退一步"。顺序是"先收手、再放掉东西"：拿着画笔时按 ESC，用户要的是"不画了"，
 // 一次就该收起整套工具面板（连续标号那种批量操作尤其如此）；没拿画笔、只是点选着某个
 // 元素时才轮到放掉选中。返回是否消费掉了这一次 ESC，false 表示已经退无可退，可以关窗了
@@ -1306,6 +1489,8 @@ bool WinPin::swapImage(const std::vector<BYTE>& data, const int w, const int h)
 		w * 4, &props, bmp.GetAddressOf()))) return false;
 	drawing->screenImg = bmp;
 	scale = 1.f;
+	// 整张图换掉了，标注坐标系与底图之间那个剪裁偏移也就没意义了
+	drawing->imgOrigin = POINT{ 0, 0 };
 	drawing->history->shapes.clear();
 	drawing->shapeHover = nullptr;
 	drawing->selected = nullptr;
@@ -1420,10 +1605,13 @@ bool WinPin::getImagePixels(std::vector<BYTE>& pixels, D2D1_SIZE_U& size)
 	if (FAILED(hr)) return false;
 
 	ctx->SetTarget(targetBmp.Get());
-	ctx->SetTransform(D2D1::Matrix3x2F::Identity());
+	// 同 layout()：标注坐标系要比底图多一个 imgOrigin 的平移，导出的图才和屏幕上看到的一致
+	const auto& o = drawing->imgOrigin;
+	ctx->SetTransform(D2D1::Matrix3x2F::Translation(-(float)o.x, -(float)o.y));
 	ctx->BeginDraw();
 	ctx->Clear(D2D1::ColorF(0, 0.0f));
-	ctx->DrawBitmap(drawing->screenImg.Get(), D2D1::RectF(0.f, 0.f, (float)imgSize.width, (float)imgSize.height));
+	ctx->DrawBitmap(drawing->screenImg.Get(),
+		D2D1::RectF((float)o.x, (float)o.y, (float)o.x + (float)imgSize.width, (float)o.y + (float)imgSize.height));
 	for (auto& shape : drawing->history->shapes)
 	{
 		if (!shape->isUndo) {
@@ -1431,6 +1619,8 @@ bool WinPin::getImagePixels(std::vector<BYTE>& pixels, D2D1_SIZE_U& size)
 		}
 	}
 	hr = ctx->EndDraw();
+	// 变换收回单位阵再解绑：这个 deviceContext 是全程共用的，留着上面那个平移会带到别处的绘制上
+	ctx->SetTransform(D2D1::Matrix3x2F::Identity());
 	// 解绑，下面 CopyFromBitmap 才能把它当 source 读
 	ctx->SetTarget(nullptr);
 	if (FAILED(hr)) return false;
@@ -1464,6 +1654,38 @@ bool WinPin::getImagePixels(std::vector<BYTE>& pixels, D2D1_SIZE_U& size)
 
 BOOL WinPin::setCursor()
 {
+	// 剪裁态：光标落在剪裁框的哪一块 —— 边 / 角给对应的双向箭头，内部给四向，其余给十字。
+	// 与长截图那边的剪裁一套手感
+	if (cropMask) {
+		POINT pos{};
+		GetCursorPos(&pos);
+		ScreenToClient(hwnd, &pos);
+		switch (cropMask->hitTest(pos))
+		{
+		case MaskHit::TopLeft:
+		case MaskHit::BottomRight:
+			SetCursor(LoadCursor(nullptr, IDC_SIZENWSE));
+			return TRUE;
+		case MaskHit::TopRight:
+		case MaskHit::BottomLeft:
+			SetCursor(LoadCursor(nullptr, IDC_SIZENESW));
+			return TRUE;
+		case MaskHit::Top:
+		case MaskHit::Bottom:
+			SetCursor(LoadCursor(nullptr, IDC_SIZENS));
+			return TRUE;
+		case MaskHit::Left:
+		case MaskHit::Right:
+			SetCursor(LoadCursor(nullptr, IDC_SIZEWE));
+			return TRUE;
+		case MaskHit::Inside:
+			SetCursor(LoadCursor(nullptr, IDC_SIZEALL));
+			return TRUE;
+		default:
+			SetCursor(LoadCursor(nullptr, IDC_CROSS));
+			return TRUE;
+		}
+	}
 	// 编辑文本时光标形状交给 TextBox 决定（文本区 I 形、滚动条箭头）。
 	// 本函数覆写了基类且不调用它，TextBox 挂在 onCursor 上的那个订阅不会自己被触发，得手动发一次。
 	if (editingShape) {

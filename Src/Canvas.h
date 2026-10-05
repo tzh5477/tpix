@@ -41,6 +41,12 @@ public:
 	~Canvas();
 	// 底图位图。ShapeMosaic / ShapeEraser 把它当取样源，形状与像素格式都跟它一致
 	Microsoft::WRL::ComPtr<ID2D1Bitmap1> screenImg;
+	// 「标注坐标 - 这张偏移 = 底图像素」。正常是 0；贴图窗口剪裁一刀之后底图变小了，
+	// 而已经画下的标注不能被搬动（搬就要给每个 shape 加一套平移，十来个类各改一遍），
+	// 于是改成把这个偏移记在画布上：底图和标注的映射整体挪一挪，shape 的坐标一个都不动。
+	// 谁用到它：绘制 / 导出时给这一层的变换加个平移（WinPin::layout、getImagePixels），
+	// 以及马赛克那几个要按坐标回读底图像素的地方（ShapeMosaicPaint::renderBackground）
+	POINT imgOrigin{ 0, 0 };
 	// 标注图层。undo / redo 与 shape 的生命周期都在这里
 	std::unique_ptr<History> history;
 	// 鼠标悬停上的那个元素。跟鼠标走，移出即清 —— 只做提示，不承载选中态

@@ -92,12 +92,16 @@ bool ShapeMosaicPaint::renderBackground(const D2D1_RECT_F bounds, const int expa
 	auto d2d = Ling::D2D::get();
 	auto ctx = d2d->deviceContext.Get();
 
-	// 四周各外扩 expand 像素再夹到窗口范围内
-	const int winW = (int)win->getWidth(), winH = (int)win->getHeight();
-	int left = std::max(0, std::min((int)std::floor(bounds.left) - expand, winW));
-	int top = std::max(0, std::min((int)std::floor(bounds.top) - expand, winH));
-	int right = std::max(0, std::min((int)std::ceil(bounds.right) + expand + 1, winW));
-	int bottom = std::max(0, std::min((int)std::ceil(bounds.bottom) + expand + 1, winH));
+	// 四周各外扩 expand 像素再夹到图片范围内。
+	// bounds 给的是"标注坐标"，而底图在标注坐标系里是从 imgOrigin 开始铺的那一块
+	//（贴图窗口剪过一刀就有偏移，见 Canvas::imgOrigin），所以窗口范围要按它算
+	const auto& io = win->imgOrigin;
+	const int imgL = io.x, imgT = io.y;
+	const int imgR = imgL + (int)win->getWidth(), imgB = imgT + (int)win->getHeight();
+	int left = std::max(imgL, std::min((int)std::floor(bounds.left) - expand, imgR));
+	int top = std::max(imgT, std::min((int)std::floor(bounds.top) - expand, imgB));
+	int right = std::max(imgL, std::min((int)std::ceil(bounds.right) + expand + 1, imgR));
+	int bottom = std::max(imgT, std::min((int)std::ceil(bounds.bottom) + expand + 1, imgB));
 	if (left >= right || top >= bottom) return false;
 
 	origin = { (float)left, (float)top };
@@ -119,7 +123,7 @@ bool ShapeMosaicPaint::renderBackground(const D2D1_RECT_F bounds, const int expa
 	ctx->SetTransform(D2D1::Matrix3x2F::Translation(-origin.x, -origin.y));
 	ctx->BeginDraw();
 	ctx->Clear(D2D1::ColorF(0, 0.0f));
-	ctx->DrawBitmap(win->screenImg.Get(), D2D1::RectF(0, 0, win->getWidth(), win->getHeight()));
+	ctx->DrawBitmap(win->screenImg.Get(), D2D1::RectF((float)imgL, (float)imgT, (float)imgR, (float)imgB));
 	for (auto& shape : win->history->shapes)
 	{
 		auto cur = shape.get();

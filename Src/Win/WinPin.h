@@ -11,6 +11,7 @@ class ShapeText;
 class ShapeNumber;
 class History;
 class Canvas;
+class CutMask;
 class WinPin : public Ling::WinBase, public CanvasHost
 {
 public:
@@ -106,6 +107,8 @@ public:
 	// 水印工具选中时把水印层铺上（没有才建）。整张图一层，所以不进"点击才落笔"那条路。
 	// ToolMain 切到水印工具时调（ToolMain.cpp 的 selectTool）
 	void ensureWatermark();
+	// 剪裁态：底图裁一块，标注原地不动、继续可编辑（ToolMain 上那个剪裁按钮进的就是这里）
+	bool isCropping() const { return cropMask != nullptr; }
 private:
 	WinPin(int x, int y, int w, int h, const std::vector<BYTE>* data = nullptr,
 		const std::wstring& initToolId = L"");
@@ -132,6 +135,17 @@ private:
 	// 落笔之前就看得见号是多少（参考 pixpin）。预览实例不进 history、也不占号
 	void updateNumberPreview(const POINT& imgPos);
 	void hideNumberPreview();
+	// 剪裁态与工具选中态是同一件事的两面：curId 变成 / 不再是 "pinCrop" 时为真 / 为假。
+	// 本函数由 layoutTools 收口调用 —— selectTool、cancelSelect、右键收起、ESC 退一步
+	// 最后都会走到 layoutTools，收在这里就不必给每条路各挂一个回调
+	void syncCropMode();
+	void beginCrop();
+	void endCrop();
+	// 把剪裁框里那一块从底图上裁出来换成新底图。标注一个都不动 —— 坐标映射整体挪过去
+	//（Canvas::imgOrigin），所以剪完还能接着改样式、撤销
+	void confirmCrop();
+	// 剪裁态顶部那条操作提示（拖拽框选 / 回车确认 / ESC 取消）
+	void paintCropTip(ID2D1DeviceContext* ctx);
 	BOOL setCursor() override;
 	// 离屏合成出最终图像的像素（BGRA、top-down、行步长紧凑为 size.width*4）。
 	// 只画底图和未撤销的 shape，不含蓝色边框和夹点。
@@ -208,6 +222,10 @@ private:
 	// 只在鼠标停在图上、且没落在别的元素上时显示（见 updateNumberPreview）
 	std::unique_ptr<ShapeNumber> numberPreview;
 	bool numberPreviewOn{ false };
+	// 剪裁框。非空即"剪裁态"，见 isCropping
+	std::unique_ptr<CutMask> cropMask;
+	bool cropDragging{ false }, cropAdjusting{ false };
+	Microsoft::WRL::ComPtr<IDWriteTextLayout> cropTip;
 	Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> borderBrush;
 	// 右上角的倍数提示。非空即显示，缩放停手一会儿由定时器清掉
 	Microsoft::WRL::ComPtr<IDWriteTextLayout> scaleTip;
