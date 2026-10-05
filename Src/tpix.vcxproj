@@ -258,6 +258,7 @@
       <PreprocessorDefinitions>QUIRC_MAX_REGIONS=65534;%(PreprocessorDefinitions)</PreprocessorDefinitions>
     </ClCompile>
     <ClCompile Include="Win\CutMask.cpp" />
+    <ClCompile Include="Win\PinHiddenBar.cpp" />
     <ClCompile Include="Win\CapLong.cpp" />
     <ClCompile Include="Win\WinPin.cpp" />
     <ClCompile Include="Win\WinCap.cpp" />
@@ -328,6 +329,7 @@
     <ClInclude Include="Win\ClickFx.hpp" />
     <ClInclude Include="Win\KeyFx.hpp" />
     <ClInclude Include="Win\CutMask.h" />
+    <ClInclude Include="Win\PinHiddenBar.h" />
     <ClInclude Include="Win\CapLong.h" />
     <ClInclude Include="Win\WinPin.h" />
     <ClInclude Include="Win\WinCap.h" />

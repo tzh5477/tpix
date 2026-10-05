@@ -109,6 +109,22 @@ public:
 	void ensureWatermark();
 	// 剪裁态：底图裁一块，标注原地不动、继续可编辑（ToolMain 上那个剪裁按钮进的就是这里）
 	bool isCropping() const { return cropMask != nullptr; }
+	// ---- 藏进左上角那条"书签条"（见 PinHiddenBar）----
+	// 开关：藏着的时候再按一次就是放回来。藏起来的是"这扇窗"，位置、底图、标注一概不动。
+	// 条上的 hover 只是把窗口临时显出来（peek），不改这个状态
+	void setHidden(bool on);
+	bool getHidden() const { return isHidden; }
+	// hover 时"露一下" / 收回去。只动窗口，isHidden 不动 —— 条本身要一直留着，
+	// 不然鼠标一离开条就没了，而"离开就收回去"正是这一套的行为
+	void peek(bool on);
+	// 隐藏条上那一条的颜色序号：新建贴图时按创建顺序轮转分配，之后不再变 ——
+	// 藏了放、放了藏，同一张图前后得是同一个颜色
+	int getBarColorIndex() const { return barColorIndex; }
+	// 鼠标 / 键盘正落在这张贴图上（拖着窗口、正画一笔、文字编辑器开着）。
+	// 隐藏条那边靠它避开"用户正拿着这张图"的时刻，否则拖着拖着图就没了
+	bool isBusy() const;
+	// 当前藏着的贴图，按创建顺序 —— 隐藏条就按这个顺序自上而下画
+	static std::vector<WinPin*> getHiddenPins();
 private:
 	WinPin(int x, int y, int w, int h, const std::vector<BYTE>* data = nullptr,
 		const std::wstring& initToolId = L"");
@@ -239,6 +255,13 @@ private:
 	bool isLocked{ false };
 	// 鼠标穿透。同 round / lock 是实例态，但不落盘（见上面 getter 的注释）
 	bool isThrough{ false };
+	// 藏进左上角那条里了（窗口不可见，位置 / 底图 / 标注一概保留，见 setHidden）。
+	// 刻意不落盘：下次启动照常摆回原位 —— 存了的话用户第二天会以为图丢了
+	bool isHidden{ false };
+	// 藏起来之前两条工具条是不是开着的。放回来时按原样恢复，用户自己右键收起的不替他打开
+	bool toolsWereVisible{ true };
+	// 隐藏条上那一条的颜色序号，见 getBarColorIndex
+	int barColorIndex{ 0 };
 	std::wstring pinTitle;
 	Microsoft::WRL::ComPtr<IDWriteTextLayout> titleLayout;
 	// onDpiChanged 与 onSizeChanged 之间的接力标记，见构造函数里的注释

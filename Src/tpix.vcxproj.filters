@@ -201,6 +201,9 @@
     <ClCompile Include="Win\CutMask.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
+    <ClCompile Include="Win\PinHiddenBar.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
     <ClCompile Include="Win\CapLong.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
@@ -397,6 +400,9 @@
       <Filter>头文件</Filter>
     </ClInclude>
     <ClInclude Include="Win\CutMask.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Win\PinHiddenBar.h">
       <Filter>头文件</Filter>
     </ClInclude>
     <ClInclude Include="Win\CapLong.h">

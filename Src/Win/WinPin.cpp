@@ -10,6 +10,7 @@
 #include "WinPin.h"
 #include "WinCap.h"
 #include "CutMask.h"
+#include "PinHiddenBar.h"
 #include "History.h"
 #include "../App.h"
 #include "../Lang.h"
@@ -26,6 +27,9 @@ namespace {
 	std::vector<std::unique_ptr<WinPin>> winPins;
 	// 下一个可用的贴图组号。0 留给"不成组"，所以从 1 起
 	int nextGroupId{ 1 };
+	// 左上角隐藏条上那个颜色序号的分发器。按创建顺序发，所以同一张图从头到尾一个颜色，
+	// 不会因为中途放掉别的贴图就换色（见 WinPin::getBarColorIndex）
+	int nextBarColorIndex{ 0 };
 
 	int clampPos(float val, float size, int min, int max)
 	{
@@ -62,6 +66,8 @@ WinPin::WinPin(int x, int y, int w, int h, const std::vector<BYTE>* data, const 
 	this->y = y;
 	this->w = (float)w;
 	this->h = (float)h;
+	// 隐藏条上那一条的颜色在这里就定下来，之后不再变
+	barColorIndex = nextBarColorIndex++;
 	if (data) {
 		// 外部像素建底图。马赛克那两个会把它当取样源，属性与 getCutImg() 出来的保持一致
 		D2D1_BITMAP_PROPERTIES1 props{};
@@ -144,9 +150,16 @@ void WinPin::onClosed()
 	drawing->shapeHover = nullptr;
 	drawing->selected = nullptr;
 	editingShape = nullptr;
+	// 藏着的贴图被复制 / 存盘关掉了，它那条书签得跟着消失。先把标志放掉再 sync：
+	// sync 是按这个标志决定条数的，而对象要下一轮消息循环才从 winPins 里摘掉
+	isHidden = false;
+	PinHiddenBar::sync();
 	// screenImg / canvas / drawing 都是成员（canvas 挂在 body 的子节点上），随下面这次 erase 一并释放
 	Ling::App::get()->dq.TryEnqueue([this]() {
 		std::erase_if(winPins, [this](const std::unique_ptr<WinPin>& p) { return p.get() == this; });
+		// 真正摘掉了再对一次账：隐藏条那边存着"露出来的是哪一张"的裸指针，
+		// 它就是在这次 sync 里发现那张已经不在了、把指针清掉的
+		PinHiddenBar::sync();
 		// 用完即走模式下，最后一个贴图窗口关掉就退出进程，不驻留在系统里。
 		// 贴图可以同时开好几个（标注、长截图各来一张），所以得等它们都没了才退
 		if (winPins.empty()) {
@@ -570,6 +583,77 @@ bool WinPin::hasDrawTool() const
 {
 	// pinCrop 也不是画笔：它是"对整张图动刀"，鼠标归剪裁框，路径见 onDown / onMove
 	return toolMain && !toolMain->curId.empty() && toolMain->curId != L"pin" && toolMain->curId != L"pinCrop";
+}
+
+// 藏进屏幕左上角那条里（见 PinHiddenBar），再按一次就是放回来。
+// 藏起来的是"这扇窗"：位置、底图、标注一个都不动，所以鼠标移回那条上时它能原样回来
+void WinPin::setHidden(bool on)
+{
+	if (isClosed || isHidden == on) return;
+	isHidden = on;
+	if (on) {
+		// 编辑器与剪裁框画的都是"贴图窗口里的东西"，窗口一藏它们就没上下文了
+		if (editingShape) editingShape->finishEditing();
+		if (cropMask) toolMain->cancelSelect();
+		// 两条工具条是独立窗口，不跟着收就是浮在桌面上的一排按钮，点下去还不知道点的哪张图
+		toolsWereVisible = isToolsVisible();
+		toolMain->hide();
+		toolSub->hideTools();
+		hide();
+	}
+	else {
+		show();
+		// 藏起来之前工具条是开着的才请回来。这里不走 setToolsVisible：那个会把缩略图 /
+		// 贴边细条一并还原，而"放回来"不该顺手改用户收图的形态
+		if (toolsWereVisible) {
+			toolMain->show();
+			// hideTools 把 ToolSub 的内容一并作废了，按当前工具重建一遍才出得来。
+			// curId 为空时它自己就返回（那时候本来也没有子面板）
+			toolMain->refreshToolSub();
+		}
+		layoutTools();
+		refresh();
+	}
+	PinHiddenBar::sync();
+}
+
+// hover 那条时"露一下"。只把窗口显出来，isHidden 不动 —— 条本身得一直留着，
+// 否则鼠标一离开条就没了，而"离开就收回去"正是这一套的行为
+void WinPin::peek(bool on)
+{
+	if (isClosed || !isHidden) return;
+	if (on) {
+		show();
+		if (toolsWereVisible) {
+			toolMain->show();
+			toolMain->refreshToolSub();
+		}
+		layoutTools();
+		// 工具条要压在贴图上（全屏贴图那种重叠摆法），而 show() 把本窗口提到了 topmost
+		// 组的最前面 —— 不补一次，两条工具条整条被底图盖住
+		raiseTools();
+		refresh();
+	}
+	else {
+		toolMain->hide();
+		toolSub->hideTools();
+		hide();
+	}
+}
+
+bool WinPin::isBusy() const
+{
+	// 手上正拿着这张图：拖着窗口 / 正在画一笔 / 文字编辑器开着 / 剪裁框拉着
+	return isMouseDown || editingShape != nullptr || cropMask != nullptr;
+}
+
+std::vector<WinPin*> WinPin::getHiddenPins()
+{
+	std::vector<WinPin*> out;
+	for (auto& pin : winPins) {
+		if (pin->isHidden) out.push_back(pin.get());
+	}
+	return out;
 }
 
 // 水印工具一点开就把水印铺满整张图，不用再点一下截图区域（ToolSub 上的文字 / 字号 / 间距

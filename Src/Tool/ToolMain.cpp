@@ -141,6 +141,9 @@ void ToolMain::refreshToolSub()
 
 void ToolMain::onClick(Ling::Button* btn)
 {
+	// 悬停提示是系统 tooltip 控件，不会跟着工具条一起 hide —— 按钮把窗口收起来之后
+	// 它会孤零零浮在原地，直到下一轮鼠标移动才消失。和 ToolCap 那边一样，动手之前先收掉
+	tip->hide();
 	// 关闭整个贴图窗口。WinPin 的 onDestroy 里会连带关掉 ToolMain / ToolSub，
 	// 但 C++ 对象的释放被推迟到下一轮消息循环，所以这里 return 之后栈上访问 this 仍是安全的。
 	if (btn->id == L"close") {
@@ -163,6 +166,12 @@ void ToolMain::onClick(Ling::Button* btn)
 	}
 	else if (btn->id == L"clipboard") {
 		win->copyToClipboard();
+		return;
+	}
+	// 藏进屏幕左上角那条（再按一次就是放回来）。两态开关，同开 / 关那些：点一下翻一下，
+	// 不弹列表。藏的期间贴图窗口与这两条工具条一起收起来，鼠标移到左上角那条上它就露回来
+	else if (btn->id == L"pinHide") {
+		win->setHidden(!win->getHidden());
 		return;
 	}
 	// 再次点击已选中的按钮 = 取消选中（开关式）。cancelSelect 里已经做了配色复位、

@@ -15,6 +15,7 @@
 #include "./Win/WinDelay.h"
 #include "./Win/WinOverlay.h"
 #include "./Win/WinPin.h"
+#include "./Win/PinHiddenBar.h"
 #include "./Win/WinHistory.h"
 #include "./Win/WinOcr.h"
 #include "./Win/WinBall.h"
@@ -96,6 +97,7 @@ void App::dispose()
     // 所以趁这里把还开着的窗口先放掉。下拉列表是独立窗口，也得单独收
     SelectPopup::close();
     WinPin::dispose();
+    PinHiddenBar::dispose();
     WinCap::dispose();
     WinDelay::dispose();    // 倒计时窗口：退出时可能正倒数到一半
     WinOverlay::dispose();  // 屏幕辅助层：铺满整屏的窗口，留着会挡住退出的观感
