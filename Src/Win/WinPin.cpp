@@ -803,6 +803,12 @@ void WinPin::toggleAnim()
 void WinPin::onCreated()
 {
     disableBorderRadius();
+    // 边缘阴影交给 DWM（DwmExtendFrameIntoClientArea + DWMWA_NCRENDERING_POLICY，见 Ling 的
+    // WinBase::enableShadow，倒数窗口那类小窗口也是这么来的）。之所以不自己画：那要在窗口四周
+    // 留一圈 margin，底图与 shape 的坐标、命中、剪裁框、工具条的落点全都得跟着缩一圈，
+    // 改动面比这一行大得多，还容易在缩放 / 贴边这些路子上漏一处。
+    // 阴影画在窗口矩形**之外**，由合成器负责，所以窗口尺寸和上面那套坐标一概不动
+    enableShadow();
     auto d2d = Ling::D2D::get();
     // 画布铺满窗口，走 swap chain（双缓冲）后端，避免拖动 shape 时整帧闪烁
     canvas = body->makeChild<Ling::Canvas>();
