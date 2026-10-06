@@ -18,9 +18,9 @@ ShapeMosaicLine::~ShapeMosaicLine()
 
 }
 
-std::unique_ptr<ShapeBase> ShapeMosaicLine::clone(const float dx, const float dy) const
+std::unique_ptr<ShapeBase> ShapeMosaicLine::clone(const float dx, const float dy, Canvas* target) const
 {
-	return cloneSelf(*this, dx, dy);
+	return cloneSelf(*this, dx, dy, target);
 }
 
 void ShapeMosaicLine::fixupCopy()

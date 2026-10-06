@@ -84,9 +84,9 @@ ShapeNumber::~ShapeNumber()
 {
 }
 
-std::unique_ptr<ShapeBase> ShapeNumber::clone(const float dx, const float dy) const
+std::unique_ptr<ShapeBase> ShapeNumber::clone(const float dx, const float dy, Canvas* target) const
 {
-	return cloneSelf(*this, dx, dy);
+	return cloneSelf(*this, dx, dy, target);
 }
 
 void ShapeNumber::fixupCopy()

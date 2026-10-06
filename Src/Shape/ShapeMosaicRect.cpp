@@ -23,9 +23,9 @@ ShapeMosaicRect::~ShapeMosaicRect()
 
 }
 
-std::unique_ptr<ShapeBase> ShapeMosaicRect::clone(const float dx, const float dy) const
+std::unique_ptr<ShapeBase> ShapeMosaicRect::clone(const float dx, const float dy, Canvas* target) const
 {
-	return cloneSelf(*this, dx, dy);
+	return cloneSelf(*this, dx, dy, target);
 }
 
 void ShapeMosaicRect::fixupCopy()

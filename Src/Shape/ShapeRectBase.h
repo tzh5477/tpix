@@ -35,7 +35,8 @@ public:
 	// 矩形/圆之间互转的那一枚图标。马赛克与擦除同样从这个基类派生，
 	// 它们没有"换个形状"这回事，所以由 allowShapeToggle 分开
 	int actionCount() const override { return allowShapeToggle ? 1 : 0; }
-	void paintActionIcon(ID2D1DeviceContext* ctx, const int i, const D2D1_POINT_2F& c, const float rad) override;
+	void paintActionIcon(ID2D1DeviceContext* ctx, const int i, const D2D1_POINT_2F& c,
+		const float rad, ID2D1Brush* brush, const float strokeW) override;
 	void onAction(const int i) override;
 protected:
 	// 复制（见 ShapeBase::clone）。这一族只多两件事：rect 挪开、自己那支画刷重建一份，

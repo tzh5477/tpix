@@ -32,9 +32,9 @@ ShapeText::~ShapeText()
 
 }
 
-std::unique_ptr<ShapeBase> ShapeText::clone(const float dx, const float dy) const
+std::unique_ptr<ShapeBase> ShapeText::clone(const float dx, const float dy, Canvas* target) const
 {
-	return cloneSelf(*this, dx, dy);
+	return cloneSelf(*this, dx, dy, target);
 }
 
 void ShapeText::fixupCopy()

@@ -15,5 +15,5 @@ public:
 	// 复制（见 ShapeBase::clone）：矩形与圆共用同一套几何，各写一行 cloneSelf
 	// 定下"复制出来还是我自己这一类"
 	bool copyable() const override { return true; }
-	std::unique_ptr<ShapeBase> clone(const float dx, const float dy) const override;
+	std::unique_ptr<ShapeBase> clone(const float dx, const float dy, Canvas* target = nullptr) const override;
 };

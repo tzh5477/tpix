@@ -84,27 +84,29 @@ void ShapeBase::paintActionBtns(ID2D1DeviceContext* ctx)
 		if (box.right <= box.left) continue;
 		auto c = D2D1::Point2F((box.left + box.right) / 2.f, (box.top + box.bottom) / 2.f);
 		auto rad{ (box.right - box.left) / 2.f };
-		// 与序号那四个动作按钮同一套画法：先垫一层白圆再描边，压在底图上才看得清
-		ctx->FillEllipse(D2D1::Ellipse(c, rad, rad), brushDraggerFill.Get());
-		ctx->DrawEllipse(D2D1::Ellipse(c, rad, rad), brushDragger.Get(), win->getDpi());
+		// 不再垫白色圆底、也不再描那个圆框（作者：只保留圆圈内部的小图标）。
+		// 图标统一走"白描边 + 原色"两遍（paintIconHaloed），压在任意底图上都读得出来
 		if (i == last) {
 			auto k{ rad * 0.42f };
 			auto stroke{ draggerSize * 0.15f };
-			ctx->DrawLine({ c.x - k, c.y - k }, { c.x + k, c.y + k }, brushDragger.Get(), stroke);
-			ctx->DrawLine({ c.x - k, c.y + k }, { c.x + k, c.y - k }, brushDragger.Get(), stroke);
+			paintIconHaloed(ctx, stroke, [&](ID2D1Brush* b, float w) {
+				ctx->DrawLine({ c.x - k, c.y - k }, { c.x + k, c.y + k }, b, w);
+				ctx->DrawLine({ c.x - k, c.y + k }, { c.x + k, c.y - k }, b, w);
+			});
 		}
 		else if (hasCopy && i == actionCount()) {
-			// 复制：两枚叠着的方框。后面那枚只描边，前面那枚填白再描边压在它上面 ——
-			// 不填白的话两条边在重叠处交叉成一团花，看不出是"两张纸叠着"
+			// 复制：两枚叠着的方框。没有圆底之后两枚都只描边 —— 再把前面那枚填白的话，
+			// 后一枚压在下半截的边会被整块盖掉，反倒看不出是"两张纸叠着"
 			auto k{ rad * 0.46f }, off{ rad * 0.32f };
-			ctx->DrawRectangle(D2D1::RectF(c.x - k - off, c.y - k - off, c.x + k - off, c.y + k - off),
-				brushDragger.Get(), win->getDpi());
-			auto front = D2D1::RectF(c.x - k + off, c.y - k + off, c.x + k + off, c.y + k + off);
-			ctx->FillRectangle(front, brushDraggerFill.Get());
-			ctx->DrawRectangle(front, brushDragger.Get(), win->getDpi());
+			paintIconHaloed(ctx, win->getDpi(), [&](ID2D1Brush* b, float w) {
+				ctx->DrawRectangle(D2D1::RectF(c.x - k - off, c.y - k - off, c.x + k - off, c.y + k - off), b, w);
+				ctx->DrawRectangle(D2D1::RectF(c.x - k + off, c.y - k + off, c.x + k + off, c.y + k + off), b, w);
+			});
 		}
 		else {
-			paintActionIcon(ctx, i, c, rad);
+			paintIconHaloed(ctx, win->getDpi(), [&](ID2D1Brush* b, float w) {
+				paintActionIcon(ctx, i, c, rad, b, w);
+			});
 		}
 	}
 }
@@ -202,10 +204,7 @@ void ShapeBase::paintRotateHandle(ID2D1DeviceContext* ctx)
 	auto dpi = win->getDpi();
 	auto c = D2D1::Point2F((rotateDragger.left + rotateDragger.right) / 2.f,
 		(rotateDragger.bottom + rotateDragger.top) / 2.f);
-	// 圆底与另外两枚角标同大：三个角看上去是同一套按钮，而不是"手柄 + 图标"两样东西
-	auto r{ draggerSize * 0.9f };
-	ctx->FillEllipse(D2D1::Ellipse(c, r, r), brushDraggerFill.Get());
-	ctx->DrawEllipse(D2D1::Ellipse(c, r, r), brushDragger.Get(), dpi);
+	// 不再垫白圆底（作者：只保留圆圈内部的小图标）。
 	// 图标：半弧 + 一支箭头（转圈的意思），与另外两个角标的画法一样用浅蓝。
 	// 弧从右下角起、越过顶部、停在左侧（正对屏幕左边），末端一支箭头顺着走向往下 ——
 	// 一眼就是"转"，而不是原来那种两头箭头的整圆
@@ -227,7 +226,6 @@ void ShapeBase::paintRotateHandle(ID2D1DeviceContext* ctx)
 	}
 	arcSink->EndFigure(D2D1_FIGURE_END_OPEN);
 	arcSink->Close();
-	ctx->DrawGeometry(rotateArc.Get(), brushDragger.Get(), dpi);
 	// 末端那一支箭头：沿圆弧该点的切向指出去，两腰落在切向的法向上
 	d2d->d2dFactory->CreatePathGeometry(rotateArrows.ReleaseAndGetAddressOf());
 	ComPtr<ID2D1GeometrySink> headSink;
@@ -249,5 +247,12 @@ void ShapeBase::paintRotateHandle(ID2D1DeviceContext* ctx)
 		headSink->EndFigure(D2D1_FIGURE_END_CLOSED);
 	}
 	headSink->Close();
+	// 两段几何先一起白描边打底，再上原色：弧描边、箭头填充（描边那遍把箭头的轮廓也描上，
+	// 填充之后外圈仍留一道白边）
+	paintIconHaloed(ctx, dpi, [&](ID2D1Brush* b, float w) {
+		ctx->DrawGeometry(rotateArc.Get(), b, w);
+		ctx->DrawGeometry(rotateArrows.Get(), b, w);
+	});
+	ctx->DrawGeometry(rotateArc.Get(), brushDragger.Get(), dpi);
 	ctx->FillGeometry(rotateArrows.Get(), brushDragger.Get());
 }

@@ -427,17 +427,19 @@ void ShapeRectBase::applyStyle()
 	isFill = kind == Kind::Ellipse ? toolSub->isEllipseFill : toolSub->isRectFill;
 }
 
-void ShapeRectBase::paintActionIcon(ID2D1DeviceContext* ctx, const int i, const D2D1_POINT_2F& c, const float rad)
+void ShapeRectBase::paintActionIcon(ID2D1DeviceContext* ctx, const int i, const D2D1_POINT_2F& c,
+	const float rad, ID2D1Brush* brush, const float strokeW)
 {
 	if (i != 0) return;
 	// 画的是"点一下会变成的形状"：现在是矩形就画个圆，反之画个方框。
-	// 用线画而不是字形 —— 图标字体里有没有现成的码位靠猜，短文本又得跟着语言包走
+	// 用线画而不是字形 —— 图标字体里有没有现成的码位靠猜，短文本又得跟着语言包走。
+	// 笔与笔宽由基类传进来（它要拿同一份几何先描一遍白边，见 paintIconHaloed）
 	auto k{ rad * 0.55f };
 	if (kind == Kind::Rect) {
-		ctx->DrawEllipse(D2D1::Ellipse(c, k, k), brushDragger.Get(), win->getDpi());
+		ctx->DrawEllipse(D2D1::Ellipse(c, k, k), brush, strokeW);
 	}
 	else {
-		ctx->DrawRectangle(D2D1::RectF(c.x - k, c.y - k, c.x + k, c.y + k), brushDragger.Get(), win->getDpi());
+		ctx->DrawRectangle(D2D1::RectF(c.x - k, c.y - k, c.x + k, c.y + k), brush, strokeW);
 	}
 }
 

@@ -420,9 +420,9 @@ void ShapeArrow::setCursor()
 	SetCursor(LoadCursor(nullptr, IDC_SIZEALL));
 }
 
-std::unique_ptr<ShapeBase> ShapeArrow::clone(const float dx, const float dy) const
+std::unique_ptr<ShapeBase> ShapeArrow::clone(const float dx, const float dy, Canvas* target) const
 {
-	return cloneSelf(*this, dx, dy);
+	return cloneSelf(*this, dx, dy, target);
 }
 
 // 画刷重建一份：ComPtr 拷过来是同一支，改一方的颜色会连另一方一起改

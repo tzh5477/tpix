@@ -240,9 +240,9 @@ ShapeLine::~ShapeLine()
 
 }
 
-std::unique_ptr<ShapeBase> ShapeLine::clone(const float dx, const float dy) const
+std::unique_ptr<ShapeBase> ShapeLine::clone(const float dx, const float dy, Canvas* target) const
 {
-	return cloneSelf(*this, dx, dy);
+	return cloneSelf(*this, dx, dy, target);
 }
 
 // 外观：颜色、半透明、线宽。滚轮调粗细也走这里，所以它不能顺手改档位

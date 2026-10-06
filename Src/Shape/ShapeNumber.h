@@ -44,7 +44,7 @@ public:
 	static std::wstring serializeVal(const int val, const NumStyle style);
 	// 复制（见 ShapeBase::clone）。复制出来的是同一个编号 —— 作者要的是"一模一样的一份"
 	bool copyable() const override { return true; }
-	std::unique_ptr<ShapeBase> clone(const float dx, const float dy) const override;
+	std::unique_ptr<ShapeBase> clone(const float dx, const float dy, Canvas* target = nullptr) const override;
 protected:
 	void fixupCopy() override;
 	void translate(const float dx, const float dy) override;

@@ -35,7 +35,7 @@ public:
 	bool getShapeBounds(D2D1_RECT_F& out) const override;
 	// 复制（见 ShapeBase::clone）
 	bool copyable() const override { return true; }
-	std::unique_ptr<ShapeBase> clone(const float dx, const float dy) const override;
+	std::unique_ptr<ShapeBase> clone(const float dx, const float dy, Canvas* target = nullptr) const override;
 protected:
 	void fixupCopy() override;
 	void translate(const float dx, const float dy) override;

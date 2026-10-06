@@ -45,8 +45,11 @@ public:
 	// 分成四个角而不是挤在一条边上：挤在一起时相邻两枚挨得太近，
 	// 鼠标移过去点错一个就是误删或者误改形状
 	virtual int actionCount() const { return 0; }
-	// 画第 i 枚动作图标（i 只会在 actionCount 范围内被调到）。c 是圆心、rad 是圆半径
-	virtual void paintActionIcon(ID2D1DeviceContext* ctx, const int i, const D2D1_POINT_2F& c, const float rad) {}
+	// 画第 i 枚动作图标（i 只会在 actionCount 范围内被调到）。c 是图标中心、rad 是原来那个
+	// 圆底的半径（图标尺寸按它算）。笔与笔宽由调用方给，不写死在派生类里 ——
+	// 没有圆底之后同一份几何要"先白描边、再上原色"画两遍（见 paintIconHaloed）
+	virtual void paintActionIcon(ID2D1DeviceContext* ctx, const int i, const D2D1_POINT_2F& c,
+		const float rad, ID2D1Brush* brush, const float strokeW) {}
 	// 第 i 枚动作图标被点了
 	virtual void onAction(const int i) {}
 	// 这一样元素能不能复制（见 clone）。默认不行 —— 左上角那枚复制按钮只在覆写成真
@@ -54,8 +57,11 @@ public:
 	virtual bool copyable() const { return false; }
 	// 复制一份自己：几何、样式、画刷颜色都照搬，整体往 (dx, dy) 挪开（底图像素）。
 	// 复制出来的这一份还没有归属，由调用方（History::addShape）收下。
-	// 派生类写一行 `return cloneSelf(*this, dx, dy);` 就够 —— 那套骨架见 cloneSelf
-	virtual std::unique_ptr<ShapeBase> clone(const float dx, const float dy) const { return nullptr; }
+	// 派生类写一行 `return cloneSelf(*this, dx, dy, target);` 就够 —— 那套骨架见 cloneSelf。
+	// target 非空表示"粘到另一个画布上"：先把这一份的宿主换成它，再跑善后 ——
+	// 马赛克那几支的善后（以及 translate 里的重算）要按宿主回读画面，
+	// 宿主还指着已经关掉的那个窗口就是访问违例
+	virtual std::unique_ptr<ShapeBase> clone(const float dx, const float dy, Canvas* target = nullptr) const { return nullptr; }
 	// 整排图标的枚数（含末尾那枚 × 与左上角那枚复制）
 	int actionBtnTotal() const { return actionCount() + (copyable() ? 2 : 1); }
 	// 第 i 枚图标的方框（底图坐标）。末尾那枚是右上角的 ×，actionCount() 那枚是左上角的
@@ -64,8 +70,20 @@ public:
 	D2D1_RECT_F actionBtnRect(const int i) const;
 	// 命中的是第几枚图标，没命中返回 -1
 	int hitActionBtn(const float x, const float y) const;
-	// 画整排图标：白底圆 + 浅蓝边
+	// 画整排图标：只有图标本身，不再垫白色圆底
 	void paintActionBtns(ID2D1DeviceContext* ctx);
+	// 动作图标的统一画法：先把同一份几何用白笔加粗描一遍当衬底，再用原色笔画上去。
+	// 去掉圆底之后浅蓝图标压在浅色底图上会读不出来，垫一圈白边就任何底图都看得清。
+	// 用模板而不是 std::function：每帧都要画几枚，省掉一层类型擦除开销
+	template <class F>
+	void paintIconHaloed(ID2D1DeviceContext* ctx, const float strokeW, const F& paint)
+	{
+		// halo 用"图标自己的尺度"算，不跟 dpi 走（这个模板在头文件里，Canvas 只有前置声明，
+		// 调不到 win->getDpi）。0.27 × draggerSize ≈ 每个图标都有一圈很细的白边；
+		// 再宽就糊成一团白，反倒又成了原来的"白圆底"
+		paint(brushDraggerFill.Get(), strokeW + draggerSize * 0.27f);
+		paint(brushDragger.Get(), strokeW);
+	}
 	// 命中之后分发：末尾那枚 = 删掉自己，actionCount() 那枚 = 复制一份，其余交给 onAction
 	void onActionBtn(const int i);
 protected:
@@ -75,13 +93,15 @@ protected:
 	// 画刷绝不能跟着拷贝共享：ComPtr 拷过来是同一支画刷，改一方的颜色会连另一方一起改。
 	// static 是因为调用它的 clone() 是 const 的，非静态成员函数收不下一个 const this
 	template <class T>
-	static std::unique_ptr<ShapeBase> cloneSelf(const T& src, const float dx, const float dy)
+	static std::unique_ptr<ShapeBase> cloneSelf(const T& src, const float dx, const float dy, Canvas* target = nullptr)
 	{
 		auto c = std::make_unique<T>(src);
 		// 经 ShapeBase& 去调那两个虚函数：命名类才是 ShapeBase，protected 才访问得到。
 		// 直接 c->fixupCopy() 的话名字查到的是派生类里那份重声明（命名类变成派生类），
 		// 而从基类的成员里访问派生类的 protected 成员是不许的
 		ShapeBase& base = *c;
+		// 换宿主必须排在 fixupCopy / translate 之前：那两个都要按画布算（见 clone 的说明）
+		if (target) base.win = target;
 		base.isUndo = false;
 		base.hoverDraggerIndex = -1;
 		base.fixupCopy();
