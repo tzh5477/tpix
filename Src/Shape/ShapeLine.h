@@ -7,7 +7,8 @@
 //      后者维持自由画（每个鼠标位置塞一个顶点）
 //   2) 两端的形状 —— 无 / 实心箭头 / 细箭头 / 圆点 的十种组合
 //   3) 线条样式 —— 实线 / 虚线 / 波浪线 / 点状线 / 长短虚线 / 删除线
-// 三样都从 ToolSub 现取，改完只影响之后新画的（要批量改图上已有的用「全」）
+// 三样都从 ToolSub 现取。改完立刻套到图上选中的那一笔上（没选中就只影响之后新画的）；
+// 要批量改图上同类的用「全」
 class ShapeLine : public ShapeLineBase
 {
 public:
@@ -15,7 +16,7 @@ public:
 	enum class Kind { Ortho = 0, Free };
 	// 线条样式。同上，顺序 = ToolSub::lineStyle 的落盘值
 	enum class Style { Solid = 0, Dash, Wave, Dot, DashDot, DashDotDot };
-	// 一端的形状。实心箭头是短宽的实心三角，细箭头是开口的 V
+	// 一端的形状。实心箭头是短宽的实心三角，细箭头是长而窄的开口 V，圆点是个比线粗一圈的实心圆
 	enum class EndMark { None = 0, Arrow, Thin, Dot };
 	ShapeLine(Canvas* win);
 	~ShapeLine();
@@ -29,6 +30,8 @@ private:
 	bool isOrtho() const;
 	// 把这次拖拽的鼠标轨迹压成一条横平竖直的折线
 	void snapTrail();
+	// 已经画好的这一笔改成直角折线：拿它现有的顶点重吸附一遍（见 .cpp）
+	void snapExisting();
 	// 当前端点档位下两端各画什么
 	struct EndPair { EndMark start, end; };
 	EndPair ends() const;

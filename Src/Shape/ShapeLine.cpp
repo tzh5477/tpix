@@ -61,10 +61,28 @@ void ShapeLine::applyStyle()
 	}
 	brush->SetColor(color);
 	strokeWidth = toolSub->getSliderVal();
+	auto wasOrtho{ isOrtho() };
 	kind = (Kind)toolSub->lineKind;
 	lineStyle = (Style)toolSub->lineStyle;
 	endIndex = toolSub->lineEnd;
 	makeStrokeStyle();
+	// 类型从"普通线条"切到"直角折线"：拿已画的那串顶点重新吸附一遍。反向不做 ——
+	// 原始的自由轨迹已经丢了，还原不回去，只能保持现状。作者要的"改完同步到选中的那一笔"
+	// 只有这一半有结果，另一半（切回普通线条）本来就是"没有可改的东西"
+	if (isOrtho() && !wasOrtho) snapExisting();
+}
+
+// 已经画好的自由线条改成直角折线：它的 linePoints 就是一串鼠标位置，正好是 snapTrail 要的
+// 输入，借 trail 递进去重吸附一遍即可
+void ShapeLine::snapExisting()
+{
+	if (linePoints.size() < 2) return;
+	trail = linePoints;
+	snapTrail();
+	trail.clear();
+	makePath();
+	// 顶点动了，两端的夹点得跟着挪，不然拖端点会拖空
+	makeDraggers();
 }
 
 bool ShapeLine::isOrtho() const
@@ -76,7 +94,8 @@ ShapeLine::EndPair ShapeLine::ends() const
 {
 	// 顺序 = config.json 里 line/end 的落盘值，也是「端点」下拉里的顺序：
 	// 无 / 末端实心箭头 / 起点圆点+末端实心箭头 / 末端细箭头 / 起点圆点+末端细箭头 /
-	// 末端圆点 / 起点圆点 / 两端圆点 / 两端实心箭头 / 两端细箭头
+	// 末端圆点 / 起点圆点 / 两端圆点 / 两端实心箭头 / 两端细箭头。
+	// 三种端点标记（实心箭头 / 细箭头 / 圆点）的两两组合，加上"起点有、末端有"叠出来的这些
 	static const EndPair table[]{
 		{ EndMark::None,  EndMark::None  },
 		{ EndMark::None,  EndMark::Arrow },

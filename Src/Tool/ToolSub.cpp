@@ -382,7 +382,7 @@ void ToolSub::showLineTools()
 {
 	beginTool(L"line");
 	// 三个下拉（线条类型 / 端点 / 线条样式）+ 半透明开关。线条类型只有两档，按两态约定
-	// 单击即切换、不弹列表；另外两个都上十档，走下拉。
+	// 单击即切换、不弹列表；另外两个走下拉列表。
 	// 三个按钮的宽度差额从 extraW 里补给它们（initSize 只按按钮数算宽度）
 	initSize(4, true, false, lineKindW + lineChoiceW * 2 - btnSize * 3);
 	// 宽度写死，不让 flex 分：这三个放的是汉字与成对的符号，压到一格按钮宽就糊成一团
@@ -392,10 +392,12 @@ void ToolSub::showLineTools()
 		btn->setWidth(w);
 	};
 	// 类型排在最前：它管的是"这一笔怎么长出来"，端点和线型都是它下游的样式。
-	// 三个都不带"改完立刻套到图上"的收尾 —— 作者定了只影响之后新画的（要改已有的用「全」）
-	fixW(makeSelectBtn(L"tool.lineKind", L"kind", &lineKind, lineKindItems(), nullptr, false, false), lineKindW);
-	fixW(makeSelectBtn(L"tool.lineEnd", L"end", &lineEnd, lineEndItems(), nullptr, false, false), lineChoiceW);
-	fixW(makeSelectBtn(L"tool.lineStyle", L"style", &lineStyle, lineStyleItems(), nullptr, false, false), lineChoiceW);
+	// 三个都是改完立刻套到图上选中的那一笔上（没选中就只影响之后新画的）。
+	// 类型的作用面窄一些 —— 只有"普通线条 → 直角折线"这一半改得动已画的那一笔（见 snapExisting）
+	auto applyNow = [this]() { win->onToolStyleChanged(); };
+	fixW(makeSelectBtn(L"tool.lineKind", L"kind", &lineKind, lineKindItems(), applyNow, false, false), lineKindW);
+	fixW(makeSelectBtn(L"tool.lineEnd", L"end", &lineEnd, lineEndItems(), applyNow, false, false), lineChoiceW);
+	fixW(makeSelectBtn(L"tool.lineStyle", L"style", &lineStyle, lineStyleItems(), applyNow, false, false), lineChoiceW);
 	makeToggleBtn(L"\ue607", &isLineTransparent, L"tool.semiTransparent", L"semiTransparent");
 	initSlider();
 	initColorBtns();
