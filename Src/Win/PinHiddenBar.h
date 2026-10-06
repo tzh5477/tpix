@@ -65,6 +65,10 @@ private:
 	static constexpr UINT tickId{ 100 };
 	// 离开宽限：第一次发现鼠标离开后，连续这么久仍不在场才收回去（spec 第 4 节）
 	static constexpr UINT peekGraceMs{ 800 };
+	// 「用户把这张图从条上拖出来了」的判定阈值（物理像素）：回显的摆位是 reveal 时记下的
+	// peekX/peekY，位置离开它超过这个量就算拖出来了。留几像素是免得窗口被系统挪一像素
+	// 就误判成拖动
+	static constexpr int dragOutSlop{ 2 };
 	// 离开时刻（GetTickCount）。0 = 在场。每跳轮询里记 / 清
 	DWORD leaveAt{ 0 };
 	std::vector<Ling::Node*> bars;

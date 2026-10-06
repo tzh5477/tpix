@@ -239,6 +239,18 @@ void PinHiddenBar::onTimerCB(UINT id)
 		killTimer(tickId);
 		return;
 	}
+	// 用户把这张图从条上拖走了 —— 他就是要它留在桌面上。这一刻就"放回来"（isHidden 置假，
+	// 两条工具条一并请回来），不回原位、也不等满 800ms 再收回边上：拖出来又被自动收回去，
+	// 正是作者报的那条。判"拖过没有"看的是位置还与本次回显的摆位对不对得上。
+	// 只在没拿着它的时候判：拖着的那几跳位置本来就在变，那时候收手是不对的
+	if (!peek->isBusy()
+		&& std::max(std::abs((float)(peek->x - peekX)), std::abs((float)(peek->y - peekY))) > dragOutSlop) {
+		auto pin = peek;
+		peek = nullptr;
+		killTimer(tickId);
+		pin->setHidden(false);
+		return;
+	}
 	// 在场判定：鼠标压在图 / 两条工具条 / 本条上，或图正被拖着 / 正在编辑 —— 都视作在场
 	if (peek->isBusy() || isOverPeek()) {
 		leaveAt = 0;
