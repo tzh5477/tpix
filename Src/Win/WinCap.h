@@ -86,9 +86,10 @@ private:
 	void getPixImg(POINT pos);
 	void paintPix(ID2D1DeviceContext* ctx);
 	void onKey(UINT key);
-	// Enter 用：把当前阶段手上的图存进剪切板，效果与 Ctrl+C 一致。
+	// 把当前阶段手上的图存进剪切板，效果与 Ctrl+C 一致。
 	// 三个阶段各有各的图（选区像素 / 拼好的长图 / 录到的视频），
-	// 还在拖框取色（Select）时手上什么都没有，什么也不做
+	// 还在拖框取色（Select）时手上什么都没有，什么也不做。
+	// 注意：Adjust 阶段不从这里走 —— 那个阶段回车改成了"收放工具条"（见 onKey）
 	void copyCurrentStage();
 	void onDown(POINT pos, bool isRight);
 	void onMove(POINT pos);
@@ -107,6 +108,14 @@ private:
 	// 两个工具条（下方横排 + 右侧竖排）一起按当前选区重新定位。
 	// 选区一动它们就得跟着走，三处调用点共用这一份，免得哪处漏摆一个
 	void relayoutToolCap();
+	// 选区定下来之后工具条是常显的（作者定的）：单击截图区域不再让它消失，
+	// 只有回车才收放 —— 收起来之后回车能请回来。
+	// 两个工具条是一对，show / hide / 重新压回最上层都成对处理
+	void setToolCapShown(bool on);
+	// 把两个工具条重新压回 topmost 组的最前面。本窗口也是 topmost 且没有 NOACTIVATE，
+	// 点它一下系统就会把它提到同组最前，底图随即把工具条整条盖住 ——
+	// 那就是"单击截图区域工具栏会消失"的成因（见 WinCap::onDown 里的调用）
+	void raiseToolCap();
 	// 命令行给了 --enter=xxx（long / video / ocr / qr / pin）时，框完选区不出 ToolCap，
 	// 直接走对应的那条路 —— 等于替用户点了工具条上的那个按钮。
 	// 返回是否已经接手；值不认识（拼错了）就返回 false，照常出工具条
@@ -123,6 +132,9 @@ private:
 	enum class CapStage { Select, Adjust, Long, Video };
 	CapStage stage{ CapStage::Select };
 	std::unique_ptr<ToolCap> toolCap;
+	// 工具条这会儿该不该露着（回车收放的那一档）。false 时不摆位也不请回来 ——
+	// 藏着的时候拖选区又让它冒出来一半，就没法"回车藏着看整张图"了
+	bool toolCapShown{ true };
 	// 选区右边缘外的竖排工具条（长截图 / 录屏 / OCR / 二维码）。
 	// 与 toolCap 是两个窗口，凡是 show / hide / close / 重排都得成对处理
 	std::unique_ptr<ToolCapStage> toolCapStage;

@@ -358,6 +358,13 @@ void WinCap::onKey(UINT key)
     else if (key == VK_RETURN) {
         // 剪裁中回车是"就剪这一块"，不是复制
         if (longConfirmCrop()) return;
+        // 选区定下来之后（Adjust）回车改成收放工具条（作者定的）：按一下收起来看清整张图，
+        // 再按一下请回来。这个阶段里原来的"回车 = 复制"让位给双击选区 / Ctrl+C /
+        // 工具条上那枚复制按钮，三处都还在
+        if (stage == CapStage::Adjust) {
+            setToolCapShown(!toolCapShown);
+            return;
+        }
         copyCurrentStage();
     }
 }
@@ -512,6 +519,10 @@ void WinCap::onDown(POINT pos, bool isRight)
         captureMouse();
         cutMask->startAdjust(pos);
         relayoutToolCap();
+        // 本窗口是 topmost 且没有 NOACTIVATE：这一下已经被系统提到了同组最前，
+        // 底图正把工具条整条盖住。relayoutToolCap 救不了这个 ——
+        // 位置没变时它直接早退（见 layoutTool 末尾），得专门把工具条提回去
+        raiseToolCap();
     }
     else if (stage == CapStage::Long && capLong) {
         // 只有剪裁阶段要按下：滚动那会儿光标归被截的窗口，本窗口收不到按下
@@ -627,6 +638,9 @@ void WinCap::stopIfRecording()
 
 void WinCap::makeToolCap()
 {
+    // 新的一轮框选，工具条一律照常露出来（上一次回车收起的状态不带过来）。
+    // 必须排在下面的 relayoutToolCap 之前：收着的时候那一句不摆位
+    toolCapShown = true;
     if (toolCap) {
         relayoutToolCap();
         toolCap->show();
@@ -645,8 +659,37 @@ void WinCap::makeToolCap()
 
 void WinCap::relayoutToolCap()
 {
+    // 回车收起工具条的时候不摆位：位置一动就会惊动窗口管理器（Ling 的 setPosition 会请它出来），
+    // "回车藏着看整张图"就废了。收着的时候选区照样能拖 —— 重新露出来那一下会按当时的选区摆一次
+    if (!toolCapShown) return;
     if (toolCap) layoutTool(toolCap.get());
     if (toolCapStage) layoutToolSide(toolCapStage.get());
+}
+
+void WinCap::setToolCapShown(bool on)
+{
+    if (toolCapShown == on) return;
+    toolCapShown = on;
+    // 请回来之前先按当前选区摆好位 —— 藏着的那段时间里选区可能已经被拖到别处去了
+    if (on) relayoutToolCap();
+    for (auto tool : { static_cast<Ling::WinBase*>(toolCap.get()),
+                      static_cast<Ling::WinBase*>(toolCapStage.get()) }) {
+        if (!tool || !tool->hwnd) continue;
+        if (on) tool->show();
+        else tool->hide();
+    }
+}
+
+void WinCap::raiseToolCap()
+{
+    if (!toolCapShown) return;
+    // 只提层级、不挪位置也不激活：位置那一段由 layoutTool 负责（它还带"没变就不动"的判断），
+    // 这里管的是另一件事 —— 本窗口被点一下就会被系统提到 topmost 组最前，工具条得跟着回来
+    for (auto tool : { static_cast<Ling::WinBase*>(toolCap.get()),
+                      static_cast<Ling::WinBase*>(toolCapStage.get()) }) {
+        if (!tool || !tool->hwnd) continue;
+        SetWindowPos(tool->hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+    }
 }
 
 bool WinCap::enterByArg()
