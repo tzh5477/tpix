@@ -26,7 +26,8 @@ namespace {
 Tray::Tray()
 {
 	auto lingApp = Ling::App::get();
-	lingApp->initTray(100, L"Screen Capture");
+	// 托盘悬停时显示的名字 = 产品名（改名之后这里漏了，一直是旧的 Screen Capture）
+	lingApp->initTray(100, L"tpix");
 	Setting::get()->initShortcutKeys();
 	// 左键单击 / 双击 都进入截图
 	lingApp->onTrayMouseEvent.add([this](bool isDown, bool isRight) {
