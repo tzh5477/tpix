@@ -121,6 +121,14 @@ public:
 	// curId 会换成那个元素的工具（ToolSub 的面板才切得过去），若拿 curId 当判据，
 	// 第二次点选就把自己判没了。开与关都发生在 ToolMain::onClick（用户按工具条那一下）
 	bool selectMode{ false };
+	// ---- 「选择器」的第二个子模式（见 ToolSub::showSelectorTools）----
+	// 0 = 选择对象（默认），1 = 选择画布。只有 curId == selector 时才有意义
+	int selectorSub{ 0 };
+	bool canvasSelecting() const { return selectMode && selectorSub == 1; }
+	// 切换子模式唯一的入口：改状态 + 收掉另一套的选中 / 选区 + 通知 ToolSub 刷新高亮
+	void setSelectorSub(const int sub);
+	// 按下 Ctrl 就切到「选择器-选择对象」（作者定的默认快捷键，见 onKey）
+	void enterSelector();
 	// 水印工具选中时把水印层铺上（没有才建）。整张图一层，所以不进"点击才落笔"那条路。
 	// ToolMain 切到水印工具时调（ToolMain.cpp 的 selectTool）
 	void ensureWatermark();
@@ -351,7 +359,60 @@ private:
 	// 抬手就清 —— 它只在一次拖拽期间有效
 	bool marqueeOn{ false };
 	POINT marqueeAnchor{ 0, 0 }, marqueeCur{ 0, 0 };
+	// ---- 「选择画布」（选择器的第二个子模式）----
+	// 作用对象是底图 drawing->screenImg 的像素。刻意不走 swapImage：那条路是"整张图换掉了"，
+	// 会把标注一并清掉；这里只是把底图的某一块挪个位置，标注不该跟着没
+	//
+	// 选区（底图像素）。用浮点而不是无符号整型：搬画面时允许拖出画布外，
+	// 负坐标存进 UINT32 会绕成天文数字。right <= left 表示还没框出选区
+	D2D1_RECT_F selRect{ 0.f, 0.f, 0.f, 0.f };
+	bool hasSel() const;
+	// 0 没在交互 / 1 正拉新框 / 2 正搬画面 / 3 正改选区大小
+	int selDrag{ 0 };
+	int selHandle{ -1 };
+	// 按下点与按下时选区的左上角（底图像素），搬移 / 改大小都按它们算绝对位置
+	D2D1_POINT_2F selDown{ 0.f, 0.f };
+	D2D1_POINT_2F selBaseLT{ 0.f, 0.f };
+	// 从底图上抠下来的那块画面：CPU 一份（抬手落回去用）、GPU 一份（拖动期间预览）。
+	// 抠图发生在第一次真正拖动时（见 canvasSelectMove）—— 只在选区里点一下不该剪一刀
+	std::vector<BYTE> selBlockPx;
+	int selBlockW{ 0 }, selBlockH{ 0 };
+	Microsoft::WRL::ComPtr<ID2D1Bitmap1> selFloat;
+	void canvasSelectDown(const POINT& imgPos);
+	void canvasSelectMove(const POINT& imgPos);
+	void canvasSelectUp();
+	void paintCanvasSelection(ID2D1DeviceContext* ctx);
+	// 选区上 8 个采样点的中心（0 左上 / 1 上 / 2 右上 / 3 右 / 4 右下 / 5 下 / 6 左下 / 7 左）
+	void selHandleCenters(D2D1_POINT_2F (&centers)[8]) const;
+	int selHandleAt(const POINT& imgPos) const;
+	// 选区上那两枚动作图标（0 复制 / 1 删除），都没命中返回 -1
+	int selActionAt(const POINT& imgPos) const;
+	D2D1_RECT_F selActionRect(const int i) const;
+	// 把选区那块从底图上抠下来（原位填白），放进 selBlockPx / selFloat
+	void pickUpSelection();
+	// 把抠下来的画面落到底图的当前选区位置（超出画布的部分裁掉，作者定的）
+	void dropSelection();
+	void deleteSelection();
+	void copySelectionToClipboard();
+	// 底图整块像素替换。保留标注（不碰 history）—— 与 swapImage 那条"换整张图"的路不同
+	bool writeScreenImg(const std::vector<BYTE>& px, const int w, const int h);
+	// 底图的一级撤销：搬画面 / 删除都是一次性破坏性操作，留一步可退（见 onKey 的 Ctrl+Z）
+	std::vector<BYTE> canvasUndoPx;
+	int canvasUndoW{ 0 }, canvasUndoH{ 0 };
+	void pushCanvasUndo();
+	bool restoreCanvasUndo();
+	// ---- 对象剪贴板（Ctrl+C / Ctrl+X / Ctrl+V）----
+	// 现在有选中的标注吗（框选那一批优先，其次单选）。Ctrl+C 靠它分流：
+	// 有选中的复制标注，一个都没有才是老语义"复制整张图并关窗"
+	bool hasSelectedShapes() const;
+	// cut = 真时是剪切：先复制进内部剪贴板，再走 undoShapes 把原件撤掉（可 Ctrl+Y 找回）
+	void copySelectedShapes(bool cut);
+	// 把内部剪贴板里的形状粘到当前画布。每粘一次都重新 clone，所以能连着粘
+	void pasteShapes();
 	Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> borderBrush;
+	// 「选择画布」的采样点填充与图标白描边用的白色。单独一支：别的白刷各有各的用途，
+	// 哪天改了色不该把选区一起带偏
+	Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brushSelWhite;
 	// 右上角的倍数提示。非空即显示，缩放停手一会儿由定时器清掉
 	Microsoft::WRL::ComPtr<IDWriteTextLayout> scaleTip;
 	Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brushTipBg, brushTipText;

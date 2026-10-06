@@ -32,6 +32,14 @@ namespace {
 	// 左上角隐藏条上那个颜色序号的分发器。按创建顺序发，所以同一张图从头到尾一个颜色，
 	// 不会因为中途放掉别的贴图就换色（见 WinPin::getBarColorIndex）
 	int nextBarColorIndex{ 0 };
+	// ---- tpix 内部的对象剪贴板（Ctrl+C / Ctrl+X / Ctrl+V）----
+	// 存的是 clone 出来的形状本体而不是指针：源窗口关掉之后这份还在，粘到别的贴图窗口也成立。
+	// 刻意不用系统剪贴板 —— 那边在贴图窗口里是"复制整张图"的通道（Ctrl+C 无选中、双击、
+	// 工具条「复制」都往那儿写），两套混在一起必然互相覆盖。
+	// 每次粘贴都从这份原件再 clone 一份，所以可以连着粘好几次
+	std::vector<std::unique_ptr<ShapeBase>> shapeClipboard;
+	// 已经粘过几次。第一份就落在原处会跟原件完全重叠，看着像"什么都没发生"，按这个数错开落点
+	int clipPasteCount{ 0 };
 
 	int clampPos(float val, float size, int min, int max)
 	{
@@ -664,6 +672,435 @@ void WinPin::paintSelection(ID2D1DeviceContext* ctx)
 	}
 }
 
+// ---- 「选择画布」（「选择器」的第二个子模式）----
+// 作用对象是底图 drawing->screenImg 的像素。刻意不走 swapImage：那条路是"整张图换掉了"，
+// 会把标注一并清掉；这里只是把底图的某一块挪个位置，标注不该跟着没
+bool WinPin::hasSel() const
+{
+	return selRect.right > selRect.left && selRect.bottom > selRect.top;
+}
+
+// 8 个采样点的中心：四角 + 四边中点。顺序与剪裁那 8 个点一致（0 左上、顺时针）
+void WinPin::selHandleCenters(D2D1_POINT_2F (&centers)[8]) const
+{
+	const auto& r = selRect;
+	auto mx{ (r.left + r.right) / 2.f }, my{ (r.top + r.bottom) / 2.f };
+	centers[0] = { r.left, r.top };
+	centers[1] = { mx, r.top };
+	centers[2] = { r.right, r.top };
+	centers[3] = { r.right, my };
+	centers[4] = { r.right, r.bottom };
+	centers[5] = { mx, r.bottom };
+	centers[6] = { r.left, r.bottom };
+	centers[7] = { r.left, my };
+}
+
+int WinPin::selHandleAt(const POINT& imgPos) const
+{
+	if (!hasSel()) return -1;
+	D2D1_POINT_2F cs[8];
+	selHandleCenters(cs);
+	// 命中框比画出来的点大一圈（同剪裁采样点）：那么小的圆，差几个像素就点不着
+	const float hitR{ 9.f * dpi };
+	for (int i = 0; i < 8; ++i) {
+		if (std::abs((float)imgPos.x - cs[i].x) <= hitR && std::abs((float)imgPos.y - cs[i].y) <= hitR) return i;
+	}
+	return -1;
+}
+
+// 选区上那两枚动作图标：0 复制摆在左上角外侧、1 删除摆在右上角外侧 ——
+// 与 ShapeBase 的动作按钮同一套摆法，同一个编辑器里两处按钮的位置不至于各说各话
+D2D1_RECT_F WinPin::selActionRect(const int i) const
+{
+	if (!hasSel() || i < 0 || i > 1) return D2D1::RectF(0.f, 0.f, 0.f, 0.f);
+	const auto& r = selRect;
+	const float rad{ 9.f * dpi };
+	// 离角远一点，别和角上的采样点挤在一起
+	const float gap{ 20.f * dpi };
+	float cx = (i == 0) ? (r.left - gap) : (r.right + gap);
+	float cy = r.top - gap;
+	// 顶到画布边上就翻到内侧，否则被裁掉、点都点不到
+	auto img = getImgSize();
+	if (img.width > 0 && (cx - rad < 0.f || cx + rad > (float)img.width)) {
+		cx = (i == 0) ? (r.left + gap) : (r.right - gap);
+	}
+	if (img.height > 0 && cy - rad < 0.f) cy = r.top + gap;
+	return D2D1::RectF(cx - rad, cy - rad, cx + rad, cy + rad);
+}
+
+int WinPin::selActionAt(const POINT& imgPos) const
+{
+	if (!hasSel()) return -1;
+	for (int i = 0; i < 2; ++i) {
+		auto b = selActionRect(i);
+		if (b.right <= b.left) continue;
+		if ((float)imgPos.x > b.left && (float)imgPos.x < b.right
+			&& (float)imgPos.y > b.top && (float)imgPos.y < b.bottom) return i;
+	}
+	return -1;
+}
+
+void WinPin::paintCanvasSelection(ID2D1DeviceContext* ctx)
+{
+	if (!hasSel()) return;
+	const auto& r = selRect;
+	// 搬运期间那块画面跟着选区走（底图上的原位此刻已经是白的，见 pickUpSelection）
+	if (selFloat) ctx->DrawBitmap(selFloat.Get(), r);
+	ctx->DrawRectangle(r, borderBrush.Get(), dpi);
+	// 8 个采样点：白底 + 蓝边，与剪裁采样点同一套观感
+	D2D1_POINT_2F cs[8];
+	selHandleCenters(cs);
+	const float hr{ 4.f * dpi };
+	for (auto& c : cs) {
+		ctx->FillEllipse(D2D1::Ellipse(c, hr, hr), brushSelWhite.Get());
+		ctx->DrawEllipse(D2D1::Ellipse(c, hr, hr), borderBrush.Get(), dpi);
+	}
+	// 中间那个四向箭头 = "可以拖走"。先白描一遍打底，压在图上才看得清
+	{
+		auto c = D2D1::Point2F((r.left + r.right) / 2.f, (r.top + r.bottom) / 2.f);
+		const float len{ 7.f * dpi }, head{ 3.f * dpi };
+		auto cross = [&](ID2D1Brush* b, float w) {
+			ctx->DrawLine({ c.x - len, c.y }, { c.x + len, c.y }, b, w);
+			ctx->DrawLine({ c.x, c.y - len }, { c.x, c.y + len }, b, w);
+		};
+		ComPtr<ID2D1PathGeometry> mv;
+		Ling::D2D::get()->d2dFactory->CreatePathGeometry(mv.GetAddressOf());
+		ComPtr<ID2D1GeometrySink> sk;
+		if (mv && SUCCEEDED(mv->Open(sk.GetAddressOf()))) {
+			auto addTri = [&](D2D1_POINT_2F tip, D2D1_POINT_2F p1, D2D1_POINT_2F p2) {
+				sk->BeginFigure(p1, D2D1_FIGURE_BEGIN_FILLED);
+				sk->AddLine(tip);
+				sk->AddLine(p2);
+				sk->EndFigure(D2D1_FIGURE_END_CLOSED);
+			};
+			addTri({ c.x + len + head, c.y }, { c.x + len, c.y - head }, { c.x + len, c.y + head });
+			addTri({ c.x - len - head, c.y }, { c.x - len, c.y + head }, { c.x - len, c.y - head });
+			addTri({ c.x, c.y - len - head }, { c.x + head, c.y - len }, { c.x - head, c.y - len });
+			addTri({ c.x, c.y + len + head }, { c.x - head, c.y + len }, { c.x + head, c.y + len });
+			sk->Close();
+			ctx->DrawGeometry(mv.Get(), brushSelWhite.Get(), 4.f * dpi);
+			ctx->FillGeometry(mv.Get(), borderBrush.Get());
+			cross(brushSelWhite.Get(), 4.f * dpi);
+			cross(borderBrush.Get(), 1.5f * dpi);
+		}
+	}
+	// 两枚动作图标：0 复制（两枚叠着的方框）、1 删除（×）。画法与 ShapeBase 的动作按钮同一套
+	for (int i = 0; i < 2; ++i) {
+		auto box = selActionRect(i);
+		if (box.right <= box.left) continue;
+		auto cc = D2D1::Point2F((box.left + box.right) / 2.f, (box.top + box.bottom) / 2.f);
+		auto rad{ (box.right - box.left) / 2.f };
+		if (i == 1) {
+			auto k{ rad * 0.42f };
+			auto draw = [&](ID2D1Brush* b, float w) {
+				ctx->DrawLine({ cc.x - k, cc.y - k }, { cc.x + k, cc.y + k }, b, w);
+				ctx->DrawLine({ cc.x - k, cc.y + k }, { cc.x + k, cc.y - k }, b, w);
+			};
+			draw(brushSelWhite.Get(), 4.f * dpi);
+			draw(borderBrush.Get(), 2.2f * dpi);
+		}
+		else {
+			auto k{ rad * 0.46f }, off{ rad * 0.32f };
+			auto draw = [&](ID2D1Brush* b, float w) {
+				ctx->DrawRectangle(D2D1::RectF(cc.x - k - off, cc.y - k - off, cc.x + k - off, cc.y + k - off), b, w);
+				ctx->DrawRectangle(D2D1::RectF(cc.x - k + off, cc.y - k + off, cc.x + k + off, cc.y + k + off), b, w);
+			};
+			draw(brushSelWhite.Get(), 4.f * dpi);
+			draw(borderBrush.Get(), 2.2f * dpi);
+		}
+	}
+}
+
+bool WinPin::writeScreenImg(const std::vector<BYTE>& px, const int w, const int h)
+{
+	if (w <= 0 || h <= 0 || px.size() < (size_t)w * 4 * h) return false;
+	if (!drawing->screenImg) return false;
+	D2D1_BITMAP_PROPERTIES1 props{};
+	// 像素格式照抄现在的底图：截图那条路是 ALPHA_MODE_IGNORE、长图那条是 PREMULTIPLIED，
+	// 写死一个就会跟 readBasePixels 读出来的排布对不上（填的白也会变成别的颜色）
+	props.pixelFormat = drawing->screenImg->GetPixelFormat();
+	props.dpiX = 96.0f;
+	props.dpiY = 96.0f;
+	props.bitmapOptions = D2D1_BITMAP_OPTIONS_NONE;
+	ComPtr<ID2D1Bitmap1> bmp;
+	if (FAILED(Ling::D2D::get()->deviceContext->CreateBitmap(D2D1::SizeU((UINT32)w, (UINT32)h),
+		px.data(), (UINT32)w * 4, &props, bmp.GetAddressOf()))) return false;
+	drawing->screenImg = bmp;
+	return true;
+}
+
+void WinPin::pushCanvasUndo()
+{
+	int w{}, h{};
+	if (!readBasePixels(canvasUndoPx, w, h)) {
+		canvasUndoPx.clear();
+		return;
+	}
+	canvasUndoW = w;
+	canvasUndoH = h;
+}
+
+bool WinPin::restoreCanvasUndo()
+{
+	if (canvasUndoPx.empty() || canvasUndoW <= 0 || canvasUndoH <= 0) return false;
+	if (!writeScreenImg(canvasUndoPx, canvasUndoW, canvasUndoH)) return false;
+	canvasUndoPx.clear();
+	canvasUndoW = canvasUndoH = 0;
+	// 底图内容换了，之前认出来的词一个都对不上了
+	clearOcr();
+	startOcr();
+	refresh();
+	return true;
+}
+
+// 把选区那块画面从底图上取下来：CPU 一份（落回时用）+ GPU 一份（拖动期间预览），
+// 原位填白。抬手时 dropSelection 再把它落到新位置 —— 于是"拖出去"的观感是内容跟着鼠标走
+void WinPin::pickUpSelection()
+{
+	if (!hasSel() || selFloat) return;
+	std::vector<BYTE> px;
+	int w{}, h{};
+	if (!readBasePixels(px, w, h)) return;
+	const int l = std::max(0, (int)selRect.left), t = std::max(0, (int)selRect.top);
+	const int r = std::min(w, (int)selRect.right), b = std::min(h, (int)selRect.bottom);
+	if (r <= l || b <= t) return;
+	const int sw = r - l, sh = b - t;
+	selBlockW = sw;
+	selBlockH = sh;
+	selBlockPx.resize((size_t)sw * 4 * sh);
+	for (int row = 0; row < sh; ++row) {
+		CopyMemory(selBlockPx.data() + (size_t)row * sw * 4,
+			px.data() + ((size_t)(t + row) * w + l) * 4, (size_t)sw * 4);
+	}
+	D2D1_BITMAP_PROPERTIES1 props{};
+	props.pixelFormat = drawing->screenImg->GetPixelFormat();
+	props.dpiX = 96.0f;
+	props.dpiY = 96.0f;
+	props.bitmapOptions = D2D1_BITMAP_OPTIONS_NONE;
+	if (FAILED(Ling::D2D::get()->deviceContext->CreateBitmap(D2D1::SizeU((UINT32)sw, (UINT32)sh),
+		selBlockPx.data(), (UINT32)sw * 4, &props, selFloat.GetAddressOf()))) {
+		selFloat.Reset();
+		return;
+	}
+	pushCanvasUndo();
+	// 原位填白（作者定的）
+	std::vector<BYTE> white((size_t)sw * 4, 0xFF);
+	for (int row = t; row < b; ++row) {
+		CopyMemory(px.data() + ((size_t)row * w + l) * 4, white.data(), white.size());
+	}
+	if (!writeScreenImg(px, w, h)) return;
+	refresh();
+}
+
+// 把抠下来的画面落回底图的当前位置。超出画布的部分裁掉（作者定的：允许拖出，超出不留）
+void WinPin::dropSelection()
+{
+	if (selBlockPx.empty() || selBlockW <= 0 || selBlockH <= 0) {
+		selFloat.Reset();
+		return;
+	}
+	std::vector<BYTE> px;
+	int w{}, h{};
+	if (!readBasePixels(px, w, h)) {
+		selFloat.Reset();
+		selBlockPx.clear();
+		selBlockW = selBlockH = 0;
+		return;
+	}
+	const int l = (int)selRect.left, t = (int)selRect.top;
+	// 目标矩形与画布求交，逐行把源块里对应那一段整段拷过去
+	const int x0 = std::max(0, l), x1 = std::min(w, l + selBlockW);
+	const int y0 = std::max(0, t), y1 = std::min(h, t + selBlockH);
+	if (x1 > x0 && y1 > y0) {
+		for (int dy = y0; dy < y1; ++dy) {
+			const int sx = x0 - l, sy = dy - t;
+			CopyMemory(px.data() + ((size_t)dy * w + x0) * 4,
+				selBlockPx.data() + ((size_t)sy * selBlockW + sx) * 4, (size_t)(x1 - x0) * 4);
+		}
+		if (!writeScreenImg(px, w, h)) return;
+	}
+	selFloat.Reset();
+	selBlockPx.clear();
+	selBlockW = selBlockH = 0;
+	refresh();
+}
+
+void WinPin::deleteSelection()
+{
+	if (!hasSel()) return;
+	std::vector<BYTE> px;
+	int w{}, h{};
+	if (!readBasePixels(px, w, h)) return;
+	const int l = std::max(0, (int)selRect.left), t = std::max(0, (int)selRect.top);
+	const int r = std::min(w, (int)selRect.right), b = std::min(h, (int)selRect.bottom);
+	if (r <= l || b <= t) return;
+	pushCanvasUndo();
+	std::vector<BYTE> white((size_t)(r - l) * 4, 0xFF);
+	for (int y = t; y < b; ++y) {
+		CopyMemory(px.data() + ((size_t)y * w + l) * 4, white.data(), white.size());
+	}
+	if (!writeScreenImg(px, w, h)) return;
+	refresh();
+}
+
+void WinPin::copySelectionToClipboard()
+{
+	if (!hasSel()) return;
+	std::vector<BYTE> px;
+	int w{}, h{};
+	if (!readBasePixels(px, w, h)) return;
+	const int l = std::max(0, (int)selRect.left), t = std::max(0, (int)selRect.top);
+	const int r = std::min(w, (int)selRect.right), b = std::min(h, (int)selRect.bottom);
+	if (r <= l || b <= t) return;
+	const int sw = r - l, sh = b - t;
+	std::vector<BYTE> block((size_t)sw * 4 * sh);
+	for (int row = 0; row < sh; ++row) {
+		CopyMemory(block.data() + (size_t)row * sw * 4,
+			px.data() + ((size_t)(t + row) * w + l) * 4, (size_t)sw * 4);
+	}
+	Util::saveToClipboard(sw, sh, block.data());
+	showToast(Lang::get(L"tool.canvasCopied"));
+}
+
+void WinPin::canvasSelectDown(const POINT& imgPos)
+{
+	// 落在画布外时夹回边界：选区的起点一律在画布内，否则一按就从界外拉
+	auto img = getImgSize();
+	auto cx = std::clamp<LONG>(imgPos.x, 0, (LONG)img.width);
+	auto cy = std::clamp<LONG>(imgPos.y, 0, (LONG)img.height);
+	// 先认选区上那两枚动作图标（复制 / 删除）：它们摆在选区外的角上，
+	// 不先认的话这一点会被当成"点空白"反手把选区清掉
+	int act = selActionAt(imgPos);
+	if (act == 0) {
+		copySelectionToClipboard();
+		return;
+	}
+	if (act == 1) {
+		deleteSelection();
+		return;
+	}
+	if (hasSel()) {
+		int hh = selHandleAt(imgPos);
+		if (hh >= 0) {
+			selDrag = 3;
+			selHandle = hh;
+			return;
+		}
+		if ((float)imgPos.x > selRect.left && (float)imgPos.x < selRect.right
+			&& (float)imgPos.y > selRect.top && (float)imgPos.y < selRect.bottom) {
+			// 落在选区里：准备搬画面。真正抠图留到第一次移动（见 canvasSelectMove），
+			// 不然在选区里点一下就把那块剪走了
+			selDrag = 2;
+			selDown = D2D1::Point2F((float)imgPos.x, (float)imgPos.y);
+			selBaseLT = D2D1::Point2F(selRect.left, selRect.top);
+			return;
+		}
+	}
+	// 空白处：起一个新框，旧的先清掉
+	selFloat.Reset();
+	selBlockPx.clear();
+	selBlockW = selBlockH = 0;
+	selDrag = 1;
+	selDown = D2D1::Point2F((float)cx, (float)cy);
+	selRect = D2D1::RectF((float)cx, (float)cy, (float)cx, (float)cy);
+	refresh();
+}
+
+void WinPin::canvasSelectMove(const POINT& imgPos)
+{
+	// 搬画面：刻意不夹边界 —— 作者定的语义是"允许拖出画布，超出的部分裁掉"，
+	// 夹住了就永远拖不出去
+	if (selDrag == 2) {
+		// 第一次真拖动才把画面抠下来（那时才知道用户真要搬）。抠完这一步
+		// 选区尺寸就定死成那块画面的尺寸，往后只平移
+		if (!selFloat) pickUpSelection();
+		if (selFloat) {
+			const float dx = (float)imgPos.x - selDown.x, dy = (float)imgPos.y - selDown.y;
+			const float nl = selBaseLT.x + dx, nt = selBaseLT.y + dy;
+			selRect = D2D1::RectF(nl, nt, nl + (float)selBlockW, nt + (float)selBlockH);
+		}
+		refreshNow();
+		return;
+	}
+	// 拉新框 / 改大小：光标夹在画布内，框不会拉到界外去
+	auto img = getImgSize();
+	const float cx = (float)std::clamp<LONG>(imgPos.x, 0, (LONG)img.width);
+	const float cy = (float)std::clamp<LONG>(imgPos.y, 0, (LONG)img.height);
+	if (selDrag == 1) {
+		// 拉新框
+		selRect = D2D1::RectF(std::min(selDown.x, cx), std::min(selDown.y, cy),
+			std::max(selDown.x, cx), std::max(selDown.y, cy));
+	}
+	else if (selDrag == 3) {
+		// 改大小：把被拉的那条边 / 那个角挪到光标，归一化之后仍是个正经矩形（拖过头就翻面）
+		float l = selRect.left, t = selRect.top, r = selRect.right, b = selRect.bottom;
+		switch (selHandle) {
+		case 0: l = cx; t = cy; break;
+		case 1: t = cy; break;
+		case 2: r = cx; t = cy; break;
+		case 3: r = cx; break;
+		case 4: r = cx; b = cy; break;
+		case 5: b = cy; break;
+		case 6: l = cx; b = cy; break;
+		case 7: l = cx; break;
+		default: break;
+		}
+		selRect = D2D1::RectF(std::min(l, r), std::min(t, b), std::max(l, r), std::max(t, b));
+	}
+	refreshNow();
+}
+
+void WinPin::canvasSelectUp()
+{
+	if (selDrag == 2) {
+		// 搬完了：把抠下来的画面落到新位置（选区跟着画面走，已经在那儿了）
+		if (selFloat) dropSelection();
+	}
+	else if (selDrag == 1) {
+		// 只点了一下、没拉出框的，当成"清掉选区"
+		if (selRect.right - selRect.left < 2.f || selRect.bottom - selRect.top < 2.f) {
+			selRect = D2D1::RectF(0.f, 0.f, 0.f, 0.f);
+		}
+	}
+	selDrag = 0;
+	selHandle = -1;
+	refresh();
+}
+
+void WinPin::setSelectorSub(const int sub)
+{
+	selectorSub = sub;
+	if (drawing) {
+		// 两套选中互不相干：画布模式下没有"选中的元素"，留着它的夹点 / 动作图标会跟选区抢鼠标
+		drawing->selected = nullptr;
+		drawing->shapeHover = nullptr;
+		drawing->multiSelected.clear();
+	}
+	hideNumberPreview();
+	// 选区只属于「选择画布」：切走就收掉（正拖着的时候不收，等抬手自己收）
+	if (sub != 1 && selDrag == 0) {
+		selRect = D2D1::RectF(0.f, 0.f, 0.f, 0.f);
+		selFloat.Reset();
+		selBlockPx.clear();
+		selBlockW = selBlockH = 0;
+	}
+	if (toolSub) toolSub->syncSelectorBtns();
+	refresh();
+}
+
+void WinPin::enterSelector()
+{
+	if (!toolMain) return;
+	// 已经在「选择器」上就什么都不做：Ctrl 按住不放会一直自动重复，每次重来一遍会把
+	// 用户刚选的「选择画布」掰回「选择对象」，而画布模式下的 Ctrl+C 正是"复制选区"
+	if (selectMode) return;
+	selectMode = true;
+	selectorSub = 0;
+	toolMain->setToggle(L"selector", true);
+	// selectTool 会重建工具条内容并按 curId 重排整组；对同一个 id 再走一遍是幂等的
+	toolMain->selectTool(L"selector");
+}
+
 // 藏进屏幕边上的那条书签条里（见 PinHiddenBar），再按一次就是放回来。
 // 藏起来的是"这扇窗"：位置、底图、标注一个都不动，所以鼠标移回那条上时它能原样回来
 void WinPin::setHidden(bool on, BarEdge edge)
@@ -998,6 +1435,7 @@ void WinPin::onCreated()
     canvas->enableSwapChain();
     canvas->setSizePercent(100.f, 100.f);
     d2d->deviceContext->CreateSolidColorBrush(D2D1::ColorF(0x1677ff), borderBrush.GetAddressOf());
+    d2d->deviceContext->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::White), brushSelWhite.GetAddressOf());
     d2d->deviceContext->CreateSolidColorBrush(D2D1::ColorF(0x000000, 0.46f), brushTipBg.GetAddressOf());
     d2d->deviceContext->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::White), brushTipText.GetAddressOf());
     // 选中的词铺的那层蓝底。半透明：字还得看得清，不然选完不知道选的是哪几个字
@@ -1065,6 +1503,8 @@ void WinPin::layout()
 	// 「选择对象」的框选框与多选外框。压在夹点与动作图标之上，也画在标注坐标系里 ——
 	// 它们框的是元素，不是窗口
 	paintSelection(ctx);
+	// 「选择画布」的选区、采样点与搬运预览。同样在标注坐标系里，跟着缩放 / 剪裁走
+	if (canvasSelecting()) paintCanvasSelection(ctx);
 	// 蓝边框和倍数提示属于窗口装饰，不跟着图缩放：变换收回来，按窗口坐标画。
 	// 边框也因此从"底图矩形"改成"窗口矩形"，任何倍数下都是 2*dpi 粗
 	ctx->SetTransform(D2D1::Matrix3x2F::Identity());
@@ -1184,8 +1624,9 @@ void WinPin::onDown(POINT pos, BOOL isRight)
 	// 双击 = Ctrl+C：把图连标注一起送进剪切板并关窗，选着画笔也一样（等价于按 Ctrl+C，
 	// 手里拿着什么工具都不该影响这个手势）。要在下面所有分支之前处理：
 	// 这一下既不是画画也不是拖窗，不该留下 capture、更不该新建 shape。
-	// 编辑文字时不算：双击归文本框（选中单词），点在框外才会走到这里
-	if (isDblClick && !editingShape) {
+	// 编辑文字时不算：双击归文本框（选中单词），点在框外才会走到这里。
+	// 「选择画布」下也不算：那一下双击会变成"复制整张图并关窗"，把正在框的选区一起带走
+	if (isDblClick && !editingShape && !canvasSelecting()) {
 		// 前半段那一下点击是这个手势的一部分，它顺手放下的元素（只有序号是按一下就成形的，
 		// 别的都在抬手时按"没画出东西"清掉了）不该被带进剪切板
 		if (prevPressCreatedShape) drawing->history->undo();
@@ -1232,6 +1673,15 @@ void WinPin::onDown(POINT pos, BOOL isRight)
 	}
 	// 以下都是交给 shape 的坐标，一律换算成底图像素（拖窗口那条路仍用窗口坐标）
 	auto imgPos = toImgPos(pos);
+	// 「选择画布」：拉选区 / 搬画面 / 改大小 / 点选区上的复制删除。整条排在对象选择之前 ——
+	// 两者由子模式分开，同一时刻只有一个在跑（capture / isMouseDown 上面已经置好了）
+	if (canvasSelecting()) {
+		drawing->selected = nullptr;
+		drawing->shapeHover = nullptr;
+		drawing->multiSelected.clear();
+		canvasSelectDown(imgPos);
+		return;
+	}
 	// Ctrl+单击：在框选那一批上做加减。Ctrl+拖动一次框出一二十个之后，想剔掉多选的
 	// 那几个、或者补上漏掉的那一个，就靠这一下。必须排在下面那句 clear 之前 ——
 	// 否则整批先被清空，这一下就成了"换成单选它"。
@@ -1322,6 +1772,12 @@ void WinPin::onMove(POINT pos)
 		return;
 	}
 	if (isLocked) return;   // 锁定时不给 hover 高亮，也不给拖动
+	// 「选择画布」：这个子模式下鼠标只在画布上做三件事（拉框 / 搬画面 / 改大小），
+	// 不参与元素 hover，也不往 shape 派发 —— 整条排在下面那些之前
+	if (canvasSelecting()) {
+		if (isMouseDown && selDrag) canvasSelectMove(toImgPos(pos));
+		return;
+	}
 	// 同 onDown：文本框里的移动归 TextBox（拖选、滚动条 hover），不参与 shape 的 hover 判定
 	if (editingShape && textBox && textBox->isPosIn(pos)) return;
 	// 拖窗口用的是窗口坐标（pressPos 也是），只有交给 shape 的才换算成底图像素
@@ -1408,6 +1864,11 @@ void WinPin::onUp(POINT pos, BOOL isRight)
 	if (isRight) return;
 	isMouseDown = false;
 	ReleaseCapture();
+	// 「选择画布」：这一下只是把选区 / 搬移放稳，没有新建的元素要收尾
+	if (selDrag) {
+		canvasSelectUp();
+		return;
+	}
 	// Ctrl+单击的加减选（见 onDown）：这一下只改了框选那一批，既不建立单选、
 	// 也没有新建元素要收尾，抬手不该往下走（下面那条路会把 selected 换成它一个）
 	if (ctrlToggling) {
@@ -1935,6 +2396,14 @@ void WinPin::onKey(UINT key)
 	// 这一句必须排在派发之前 —— 序号拿到 F2 会去开它自己那份描述编辑框，而共用的那个
 	// TextBox 上还挂着当前这一个的订阅，两个编辑叠在一起就会把正在写的文字冲掉
 	if (editingShape) return;
+	// 按下 Ctrl 就切到「选择器-选择对象」（作者定的默认快捷键）。放在编辑 / 选文 / 锁定之后：
+	// 那几种情况下 Ctrl 另有归属（复制选中的文字、框选文字），不该被这一下抢走。
+	// 已经在「选择器」里就不再动 —— 否则会把刚选的「选择画布」掰回「选择对象」，
+	// 而画布模式下的 Ctrl+C 正是"复制选区"
+	if (key == VK_CONTROL) {
+		enterSelector();
+		return;
+	}
 	// 选中某个元素时先把按键交给它：序号用 +/- 改编号、F2 编辑序号里的文字。
 	// 这几个键不与下面的全局快捷键冲突，所以不用抢返回值
 	if (drawing->shapeHover) drawing->shapeHover->onKey(key);
@@ -1952,13 +2421,26 @@ void WinPin::onKey(UINT key)
 		setThumbMode(!isThumb);
 	}
 	else if (ctrl && key == 'Z') {
-		drawing->history->undo();
+		// 底图的一级撤销优先：搬画面 / 删除底图内容比标注的手笔更"重"，
+		// 刚剪完一刀就按 Ctrl+Z，要退的显然是那一刀
+		if (!restoreCanvasUndo()) drawing->history->undo();
 	}
 	else if (ctrl && key == 'Y') {
 		drawing->history->redo();
 	}
 	else if (ctrl && key == 'C') {
-		copyToClipboard();
+		// 三条路，从"最贴近当前动作"往下排：画布选区 → 选中的标注 → 整张图。
+		// 前两条都不关窗，只有最后那条（老语义）才复制整图并关窗
+		if (canvasSelecting() && hasSel()) copySelectionToClipboard();
+		else if (hasSelectedShapes()) copySelectedShapes(false);
+		else copyToClipboard();
+	}
+	else if (ctrl && key == 'X') {
+		// 有选中的标注才是"剪切对象"；一个都没选中时什么都不做（整张图没有"剪切"这回事）
+		if (hasSelectedShapes()) copySelectedShapes(true);
+	}
+	else if (ctrl && key == 'V') {
+		pasteShapes();
 	}
 	else if (ctrl && key == 'S') {
 		saveToFile();
@@ -1967,13 +2449,17 @@ void WinPin::onKey(UINT key)
 		copyToClipboard();
 	}
 	else if (key == VK_DELETE) {
+		// 「选择画布」下的 Delete 是"删掉选区里那块画面"，不是删标注 —— 排在标注之前
+		if (canvasSelecting() && hasSel()) {
+			deleteSelection();
+		}
 		// 框选出来的那一批优先：一次删掉整批。走 undoShapes 而不是逐个 removeShape ——
 		// 那是真 erase，框错一次就没得救；undoShapes 只打撤销标记，与「清除全部水印」
 		// 同一条路，Ctrl+Y 能整批找回来。整批删除的误伤面比单个大得多，值得留一条退路
 		//
 		// 传的是副本：undoShapes 会把命中的元素从 multiSelected 里摘掉
 		//（见 Canvas::dropFromMultiSelect），把那个 vector 本身递进去就是边遍历边改它
-		if (!drawing->multiSelected.empty()) {
+		else if (!drawing->multiSelected.empty()) {
 			auto batch = drawing->multiSelected;
 			drawing->multiSelected.clear();
 			drawing->history->undoShapes(batch);
@@ -2212,6 +2698,24 @@ void WinPin::ensureCropSource()
 // 元素时才轮到放掉选中。返回是否消费掉了这一次 ESC，false 表示已经退无可退，可以关窗了
 bool WinPin::stepBack()
 {
+	// 「选择画布」的选区排在最前：它是最靠外的一层"当前正在做的事"
+	if (canvasSelecting() && hasSel()) {
+		// 正搬着画面的时候另说：那一刻框的坐标就是"这块画面现在在哪儿"，直接清成空框的话
+		// 紧接着的抬手会拿这个空框去落图（dropSelection），画面就糊到左上角去了。
+		// 这里的"退一步"是"不搬了"——把块放回出发的位置，再把选区收掉
+		if (selDrag == 2 && selFloat) {
+			selRect = D2D1::RectF(selBaseLT.x, selBaseLT.y,
+				selBaseLT.x + (float)selBlockW, selBaseLT.y + (float)selBlockH);
+			dropSelection();
+		}
+		// 拉框 / 改大小那些中途态本来就没动过画面，清掉就行。selDrag 一并归零：
+		// 抬手那一下不该再按老状态走一遍
+		selDrag = 0;
+		selHandle = -1;
+		selRect = D2D1::RectF(0.f, 0.f, 0.f, 0.f);
+		refresh();
+		return true;
+	}
 	// 框选那一批排在最前：它比"收画笔"更近一层 —— 用户刚框出来的是那些元素，
 	// 想退掉的第一件事就是"别选它们了"，而不是把整个「选择对象」工具也放掉
 	if (drawing && !drawing->multiSelected.empty()) {
@@ -2335,6 +2839,60 @@ void WinPin::copyToClipboard()
 	close();
 }
 
+// ---- 对象剪贴板（见 WinPin.h 的说明）----
+bool WinPin::hasSelectedShapes() const
+{
+	return drawing && (!drawing->multiSelected.empty() || drawing->selected);
+}
+
+void WinPin::copySelectedShapes(bool cut)
+{
+	// 框选那一批优先，其次单选 —— 与 Delete 的取舍一致（见 onKey 的 VK_DELETE）
+	std::vector<ShapeBase*> src;
+	if (!drawing->multiSelected.empty()) src = drawing->multiSelected;
+	else if (drawing->selected) src.push_back(drawing->selected);
+	if (src.empty()) return;
+	shapeClipboard.clear();
+	for (auto* s : src) {
+		if (auto c = s->clone(0.f, 0.f)) shapeClipboard.push_back(std::move(c));
+	}
+	clipPasteCount = 0;
+	// 剪切：剪贴板拿到之后才动原件。走 undoShapes（只打撤销标记、不真删）——
+	// 与框选删除同一条路，误剪一次还能 Ctrl+Y 找回来
+	if (cut) {
+		if (!drawing->multiSelected.empty()) {
+			auto batch = drawing->multiSelected;
+			drawing->multiSelected.clear();
+			drawing->history->undoShapes(batch);
+		}
+		else {
+			drawing->history->removeActiveShape();
+		}
+	}
+	refresh();
+}
+
+void WinPin::pasteShapes()
+{
+	if (shapeClipboard.empty()) return;
+	clipPasteCount++;
+	// 落点逐次错开
+	const float off{ 10.f * dpi * clipPasteCount };
+	ShapeBase* last{ nullptr };
+	for (auto& s : shapeClipboard) {
+		// 传 drawing.get() 当目标画布：原件可能来自别的贴图窗口（甚至那个窗口已经关了），
+		// 换了宿主才能安全地跑善后（马赛克那几支要按宿主回读画面，见 ShapeBase::clone）
+		if (auto c = s->clone(off, off, drawing.get())) {
+			last = drawing->history->addShape(std::move(c));
+		}
+	}
+	// 粘贴出来的这一批取代原来的选中：addShape 每收一份就把 selected 指过去，
+	// 循环结束时正好停在最后一份上。框选那一批同时清掉，否则 Delete 会连旧的整批一起删
+	drawing->multiSelected.clear();
+	if (last) drawing->selected = last;
+	refresh();
+}
+
 void WinPin::saveToFile()
 {
 	auto foregroundBeforeDialog = GetForegroundWindow();
@@ -2450,6 +3008,26 @@ bool WinPin::getImagePixels(std::vector<BYTE>& pixels, D2D1_SIZE_U& size)
 
 BOOL WinPin::setCursor()
 {
+	// 「选择画布」：压在采样点上给对应的双向箭头，压在选区里给"可拖动"的四向箭头。
+	// 摆在最前 —— 这个子模式下选区的采样点才是主角，别被剪裁采样点那套抢先
+	if (canvasSelecting()) {
+		POINT pos{};
+		GetCursorPos(&pos);
+		ScreenToClient(hwnd, &pos);
+		auto imgPos = toImgPos(pos);
+		switch (selDrag == 3 ? selHandle : selHandleAt(imgPos)) {
+		case 0: case 4: SetCursor(LoadCursor(nullptr, IDC_SIZENWSE)); return TRUE;
+		case 2: case 6: SetCursor(LoadCursor(nullptr, IDC_SIZENESW)); return TRUE;
+		case 1: case 5: SetCursor(LoadCursor(nullptr, IDC_SIZENS)); return TRUE;
+		case 3: case 7: SetCursor(LoadCursor(nullptr, IDC_SIZEWE)); return TRUE;
+		default: break;
+		}
+		bool inSel{ hasSel()
+			&& (float)imgPos.x > selRect.left && (float)imgPos.x < selRect.right
+			&& (float)imgPos.y > selRect.top && (float)imgPos.y < selRect.bottom };
+		SetCursor(LoadCursor(nullptr, (selDrag == 2 || inSel) ? IDC_SIZEALL : IDC_CROSS));
+		return TRUE;
+	}
 	// 剪裁采样点：光标压在哪个点上就给对应的双向箭头 —— 角上是斜的，边中是直的。
 	// 与长截图那边的剪裁一套手势。正在拖的那个点要单算：光标早跑出那个小圆了，
 	// 但拖动全程都得保持同一个箭头形状

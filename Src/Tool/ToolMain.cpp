@@ -100,7 +100,7 @@ void ToolMain::onCreated()
 			// 「选择对象」那一枚不写字：垫一张铺满的画布，自己在上面画一个鼠标指针
 			//（图标字体里没有指针形状，41 个码位全都有主；见 layout / paintSelectIcon）。
 			// 其余各枚照旧走 icon 字体
-			if (id == L"select") {
+			if (id == L"selector") {
 				auto icon = btn->makeChild<Ling::Canvas>();
 				icon->setSizePercent(100.f, 100.f);
 				icon->setFlexShrink(0.f);
@@ -261,11 +261,14 @@ void ToolMain::onClick(Ling::Button* btn)
 		win->setTextSelect(!win->getTextSelect());
 		return;
 	}
-	// 「选择对象」是个模式，只在用户按工具条这一处开 / 关：按它进模式，按别的工具出模式。
+	// 「选择器」是个模式，只在用户按工具条这一处开 / 关：按它进模式，按别的工具出模式。
 	// 程序内部按元素换工具不走这里（见 WinPin::onUp），所以"点中元素后面板跟着换"不会
 	// 把模式关掉。出模式时顺手把「选」那枚的底色复位
-	if (win->selectMode && btn->id != L"select") setToggle(L"select", false);
-	win->selectMode = (btn->id == L"select");
+	if (win->selectMode && btn->id != L"selector") setToggle(L"selector", false);
+	win->selectMode = (btn->id == L"selector");
+	// 按「选择器」进来一律回到默认子模式「选择对象」，并把上一次留下的画布选区收掉
+	//（作者定的默认；子面板里再点「选择画布」才切过去）
+	if (win->selectMode) win->setSelectorSub(0);
 	// 再次点击已选中的按钮 = 取消选中（开关式）。cancelSelect 里已经做了配色复位、
 	// 隐藏 ToolSub 和重排，这里直接返回，不要再往下走选中流程。
 	if (btn->id == curId) {
@@ -285,7 +288,7 @@ void ToolMain::selectTool(const std::wstring& id)
 		// 选择模式下「选」那枚一直亮着：它表示"鼠标现在是在挑元素"，与"面板此刻显示
 		// 哪个工具的属性"是两件事。点中元素后 curId 换成了那个元素的工具，但模式没退
 		//（见 WinPin::selectMode），把它一起按常态复位就看着像模式掉了
-		if (b->id == curId && !(win->selectMode && b->id == L"select"))
+		if (b->id == curId && !(win->selectMode && b->id == L"selector"))
 		{
 			applyNormalStyle(b);
 		}
@@ -328,10 +331,14 @@ void ToolMain::selectTool(const std::wstring& id)
 		// 选了水印工具就把水印铺上，不再要求用户去点一下截图区域
 		win->ensureWatermark();
 	}
+	else if (curId == L"selector") {
+		// 「选择器」的子面板：两枚按钮「选择对象」/「选择画布」，默认选择对象。
+		// 点中的是哪个元素、样式就切到那个元素的工具上去（见 WinPin::onUp）；
+		// 框选出来的那一批不接受批量改样式，只用于整批高亮 + Delete 一次删掉
+		win->toolSub->showSelectorTools();
+	}
 	else {
-		// 「选择对象」落在这儿：它没有"样式"可调 —— 点中的是哪个元素，样式就切到那个元素的
-		// 工具上去（见 WinPin::onUp）。框选出来的那一批也不接受批量改样式，
-		// 它们只用于整批高亮 + Delete 一次删掉
+		// 兜底：curId 是空的（没选工具）或别的没面板的工具，把子工具条收起来
 		win->toolSub->hideTools();
 	}
 	// curId 变化后 ToolMain 可能要上移给 ToolSub 腾位置，交给 WinPin 重新排布整组

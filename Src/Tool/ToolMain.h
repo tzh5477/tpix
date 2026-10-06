@@ -47,7 +47,7 @@ private:
 	//（见 WinPin::paintCropHandles），不必先按一个按钮进"剪裁态"。
 	// 排在最前的 select 是「选择对象」：不用先判断"这是哪个组件"再回去切工具，
 	// 直接点它、点中哪个元素就切到哪个元素的工具上（见 WinPin::onUp）
-	std::vector<std::wstring> btnIds = { L"select",L"rect",L"ellipse",L"arrow",L"number",L"line",L"text",L"mosaic", L"eraser",L"watermark",L"pin",L"|",L"undo",L"redo",L"|",L"pinHide",L"textSelect",L"close",L"save",L"clipboard" };
+	std::vector<std::wstring> btnIds = { L"selector",L"rect",L"ellipse",L"arrow",L"number",L"line",L"text",L"mosaic", L"eraser",L"watermark",L"pin",L"|",L"undo",L"redo",L"|",L"pinHide",L"textSelect",L"close",L"save",L"clipboard" };
 	// textSelect 借的是「文字识别」那枚 \ue67b。图标字体只有 41 个码位，其余全都有主
 	//（见工作区笔记），好在两者语义就是一件事 —— 选的就是识别出来的那些字，
 	// 而且本工具条上没有第二个用它的按钮，不会在同一屏里撞脸。
