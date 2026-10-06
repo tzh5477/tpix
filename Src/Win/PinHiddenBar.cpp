@@ -166,13 +166,16 @@ void PinHiddenBar::onMove(POINT pos)
 POINT PinHiddenBar::calcPeekPos(int index) const
 {
 	const auto px = (float)barX, py = (float)barY;
+	// 条线不是贴窗口原点画的：body 有 pad 内边距，条的真实起点 = 窗口原点 + pad
+	// （漏掉它，图会比线高出一个 pad、贴线的缝也会被吃掉）
+	const auto padPx = pad * dpi;
 	const auto thick = barThick * dpi;
 	const auto step = (barLong + gapW) * dpi;
 	const auto gap = (int)std::lround(peekGap * dpi);
-	// 条的起点 + 单条厚度 + 缝，就是图贴边的那一侧
+	// 条的真实起点 + 单条厚度 + 缝，就是图贴边的那一侧
 	return isHorizontal()
-		? POINT{ (int)std::lround(px + index * step), (int)std::lround(py + thick) + gap }
-		: POINT{ (int)std::lround(px + thick) + gap, (int)std::lround(py + index * step) };
+		? POINT{ (int)std::lround(px + padPx + index * step), (int)std::lround(py + padPx + thick) + gap }
+		: POINT{ (int)std::lround(px + padPx + thick) + gap, (int)std::lround(py + padPx + index * step) };
 }
 
 void PinHiddenBar::reveal(int index)
@@ -204,10 +207,13 @@ void PinHiddenBar::conceal()
 {
 	killTimer(tickId);
 	if (peek) {
-		// 还停在摆位上 = 用户没拖过 → 挪回原位再藏，「显示」按钮与既往行为一致；
-		// 拖走了就就地藏 —— 窗口自己的 x/y 就是新原位，拖动手感不丢
-		if (peek->x == peekX && peek->y == peekY) peek->setPosition(prevX, prevY);
+		// 先藏后挪：可见态挪窗口会让原位在两步之间闪一帧（DWM 合成间隙），
+		// 所以必须 hide() 之后再动位置 —— 与 reveal 的"先挪后 show"镜像
+		bool atPlace = peek->x == peekX && peek->y == peekY;
 		peek->peek(false);
+		// 还停在摆位上 = 用户没拖过 → 挪回原位，「显示」按钮与既往行为一致；
+		// 拖走了就就地藏 —— 窗口自己的 x/y 就是新原位，拖动手感不丢
+		if (atPlace) peek->setPosition(prevX, prevY);
 		peek = nullptr;
 	}
 }
