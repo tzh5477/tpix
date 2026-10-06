@@ -1095,6 +1095,10 @@ void WinPin::onMinMaxInfo(MINMAXINFO* mmi)
 
 void WinPin::onDown(POINT pos, BOOL isRight)
 {
+	// 上一按的残尾先清掉。Ctrl+单击那一支不 SetCapture（它不拖任何东西），
+	// 按下之后把光标拖到窗口外再松手，onUp 根本不会来 —— 留着的这个标志会把
+	// 下一次抬手整个吃掉（那一下本该选中元素 / 收尾空笔）。它只对同一次按放有效
+	ctrlToggling = false;
 	// 点上一下就把本窗口激活了（WM_MOUSEACTIVATE -> SetForegroundWindow），而激活会把这个
 	// topmost 窗口提到同类的最前面 —— 于是它压住了自己的两条工具条。工具条通常落在窗口外面，
 	// 看不出来；全屏贴图的 overlay 模式下工具条整条盖在底图里头，一点图就"工具条没了"，
@@ -1228,6 +1232,25 @@ void WinPin::onDown(POINT pos, BOOL isRight)
 	}
 	// 以下都是交给 shape 的坐标，一律换算成底图像素（拖窗口那条路仍用窗口坐标）
 	auto imgPos = toImgPos(pos);
+	// Ctrl+单击：在框选那一批上做加减。Ctrl+拖动一次框出一二十个之后，想剔掉多选的
+	// 那几个、或者补上漏掉的那一个，就靠这一下。必须排在下面那句 clear 之前 ——
+	// 否则整批先被清空，这一下就成了"换成单选它"。
+	// 用 Ctrl 而不是 Shift：Shift 在矩形 / 圆那边是"约束成正圆"（见 ShapeRectBase 的
+	// mouseDrag），拿它当加减选的修饰键会和那个手势打架。
+	// 空白处的 Ctrl+拖动仍然是框选（下面那条分支），两者不冲突：这一条要压在元素上，
+	// 那一条要落在空白处
+	if (selecting() && drawing->shapeHover && (GetKeyState(VK_CONTROL) & 0x8000)) {
+		auto& batch = drawing->multiSelected;
+		auto it = std::find(batch.begin(), batch.end(), drawing->shapeHover);
+		if (it != batch.end()) batch.erase(it);
+		else batch.push_back(drawing->shapeHover);
+		// 不建立单选：这一下加的是"整批"，选中态若换成它一个，外框与夹点就只盯住它了
+		drawing->selected = nullptr;
+		drawing->shapeCur = nullptr;
+		ctrlToggling = true;
+		refresh();
+		return;
+	}
 	// 这一下按下就进入"单选 / 框选"了，上一轮框选那一批到此为止。不清的话
 	// Delete 会连上次框的一起删（下面的分支会按需要重新填）
 	drawing->multiSelected.clear();
@@ -1385,6 +1408,12 @@ void WinPin::onUp(POINT pos, BOOL isRight)
 	if (isRight) return;
 	isMouseDown = false;
 	ReleaseCapture();
+	// Ctrl+单击的加减选（见 onDown）：这一下只改了框选那一批，既不建立单选、
+	// 也没有新建元素要收尾，抬手不该往下走（下面那条路会把 selected 换成它一个）
+	if (ctrlToggling) {
+		ctrlToggling = false;
+		return;
+	}
 	// 框选：抬手把选框里那批收下。没有新建的元素要收尾，也没有"空笔"要判定
 	if (marqueeOn) {
 		marqueeOn = false;

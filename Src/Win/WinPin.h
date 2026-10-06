@@ -344,6 +344,9 @@ private:
 	// 选择模式下按在空白处拖窗口的那一下（没按 Ctrl）。onDown 当场让它走"拖窗口"那条路，
 	// onUp 得知道该照那条路收尾（重排工具条并请回来），所以记一下
 	bool selectDrag{ false };
+	// 这一下是"Ctrl+单击"在框选那一批上加减选（见 onDown）。onUp 见它为真就到此为止 ——
+	// 照常走"选中这一笔"那条路会把整批换成它一个
+	bool ctrlToggling{ false };
 	// 正在拉的那个选框。两个点都在标注坐标系里，与 shape 同一套（toImgPos 换算过）。
 	// 抬手就清 —— 它只在一次拖拽期间有效
 	bool marqueeOn{ false };
