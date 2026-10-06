@@ -4,7 +4,7 @@
 class WinPin;
 
 // 藏起来的贴图在屏幕边上留下的"书签条"。
-// 作者要的形态：贴图收进一条 50px 长、2px 宽的细线，每张一个颜色；鼠标移到某一条上，
+// 作者要的形态：贴图收进一条 30px 长、4px 宽的细线，每张一个颜色；鼠标移到某一条上，
 // 那张贴图回原位。条挂在两条边上 ——
 //   左边：竖线自上而下排成一列（藏三张就是三条不同颜色叠成一竖列）；
 //   顶边：同样的细线横过来，自左向右排成一行。
@@ -47,10 +47,10 @@ private:
 	// 鼠标是不是还压在"露出来的那张"或它的两条工具条或本窗口上
 	bool isOverPeek() const;
 private:
-	// 50px 长、2px 厚（逻辑像素，交给 Ling 的 setter 时由其内部乘 dpi）。
+	// 30px 长、4px 厚（逻辑像素，交给 Ling 的 setter 时由其内部乘 dpi）。
 	// 竖排时长边是高、横排时长边是宽，所以按"长 / 厚"命名，不叫宽高
-	static constexpr float barLong{ 50.f };
-	static constexpr float barThick{ 2.f };
+	static constexpr float barLong{ 30.f };
+	static constexpr float barThick{ 4.f };
 	// 相邻两条之间的缝。颜色不同才分得清那是两张图，不是一张图的渐变
 	static constexpr float gapW{ 2.f };
 	// 条四周的内边距。它同时是"这条窗口的命中范围比那 2 像素宽多少" ——

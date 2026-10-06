@@ -106,10 +106,10 @@ void PinHiddenBar::rebuild()
 	}
 	for (size_t i = 0; i < pins.size(); ++i) {
 		auto node = body->makeChild<Ling::Node>();
-		// 长边 50、厚 2。横排时这两条掉个个儿：条是横着摆的，自左向右接下去
+		// 长边 30、厚 4。横排时这两条掉个个儿：条是横着摆的，自左向右接下去
 		node->setWidth(isHorizontal() ? barLong : barThick);
 		node->setHeight(isHorizontal() ? barThick : barLong);
-		// 条只有 2 逻辑像素厚，绝不能被 yoga 当成"空间不够"压掉
+		// 条只有 4 逻辑像素厚，绝不能被 yoga 当成"空间不够"压掉
 		node->setFlexShrink(0.f);
 		node->setBg(barColors[pins[i]->getBarColorIndex() % std::size(barColors)]);
 		// 最后一条不留缝，否则窗口末了白出 2 像素
@@ -130,7 +130,7 @@ void PinHiddenBar::rebuild()
 	show();
 }
 
-// 光标落在第几条上。条只有 2 逻辑像素宽，严格按它自己的范围判定等于要求用户拿鼠标
+// 光标落在第几条上。条只有 4 逻辑像素宽，严格按它自己的范围判定等于要求用户拿鼠标
 // 去点一根头发丝；本窗口本身就只有"条 + 内边距"那么大，所以直接取最近的那一条。
 // 竖排之后比的是纵坐标
 int PinHiddenBar::barIndexAt(POINT pos) const
