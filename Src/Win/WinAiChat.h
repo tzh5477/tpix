@@ -15,7 +15,9 @@ class WinAiChat : public Ling::WinBase
 {
 public:
 	~WinAiChat();
-	static void init();
+	// preset 非空时填进输入框等用户自己按发送（不代发：对话是要花钱的，
+	// 而且多半还要再加一句要求）。热键带选中内容进来走的就是这条路
+	static void init(const std::wstring& preset = L"");
 	static void dispose();
 private:
 	WinAiChat();
@@ -47,6 +49,8 @@ private:
 	// 正在流式输出的那条气泡。收尾之前所有 delta 都追加到它上面
 	Ling::Label* streamingBubble{ nullptr };
 	std::wstring streaming;
+	// 窗口构造之后才能填进输入框（控件在 onCreated 里才建出来），所以先存在这里
+	std::wstring presetText;
 	std::vector<BYTE> pendingImg;
 	int pendingW{ 0 }, pendingH{ 0 };
 	bool busy{ false };

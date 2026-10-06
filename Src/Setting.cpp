@@ -3,6 +3,8 @@
 #include "Setting.h"
 #include "Util.h"
 #include "Lang.h"
+#include "Win/WinAiChat.h"
+#include "Win/WinAiTrans.h"
 #include "Win/WinCap.h"
 #include "Win/WinHistory.h"
 #include "Win/WinBall.h"
@@ -22,6 +24,8 @@ namespace {
     constexpr int rulerShortcutMsgId{ 105 };
     constexpr int crosshairShortcutMsgId{ 106 };
     constexpr int focusShortcutMsgId{ 107 };
+    constexpr int aiTransShortcutMsgId{ 108 };
+    constexpr int aiChatShortcutMsgId{ 109 };
 
     struct ShortcutDef { std::wstring_view type; int msgId; std::wstring_view def; };
     // 一张表管住"配置键名 → 消息 id → 默认组合"，加一个可配快捷键的动作只改这里一行。
@@ -35,6 +39,8 @@ namespace {
         { L"ruler",     rulerShortcutMsgId,     L"" },
         { L"crosshair", crosshairShortcutMsgId, L"" },
         { L"focus",     focusShortcutMsgId,     L"" },
+        { L"aiTrans",   aiTransShortcutMsgId,   L"Alt+T" },
+        { L"aiChat",    aiChatShortcutMsgId,    L"Alt+I" },
     };
 
     const ShortcutDef* findShortcutDef(const std::wstring& type)
@@ -689,6 +695,15 @@ void Setting::initShortcutKeys()
             break;
         case focusShortcutMsgId:
             WinOverlay::toggle(OverlayMode::Focus);
+            break;
+        case aiTransShortcutMsgId:
+            // 选中了文字就带进去直接翻一次；没选中（或前台取不到）就开个空窗手动输
+            WinAiTrans::init(Util::copyFromForeground());
+            break;
+        case aiChatShortcutMsgId:
+            // 只把选中文字填进输入框，不替用户按发送：对话是要花钱的，
+            // 而且十有八九还想再加一句"用表格总结"之类的要求
+            WinAiChat::init(Util::copyFromForeground());
             break;
         }
     });

@@ -32,10 +32,11 @@ WinAiChat::~WinAiChat()
 	if (task) task->cancel();
 }
 
-void WinAiChat::init()
+void WinAiChat::init(const std::wstring& preset)
 {
 	if (winAiChat) {
 		if (winAiChat->hwnd && IsWindow(winAiChat->hwnd)) {
+			if (!preset.empty()) winAiChat->input->setText(preset);
 			winAiChat->show();
 			SetForegroundWindow(winAiChat->hwnd);
 			return;
@@ -43,6 +44,7 @@ void WinAiChat::init()
 		winAiChat.reset();
 	}
 	winAiChat.reset(new WinAiChat());
+	winAiChat->presetText = preset;
 	if (winAiChat->hwnd) SetForegroundWindow(winAiChat->hwnd);
 }
 
@@ -152,6 +154,11 @@ void WinAiChat::onCreated()
 	imgBtn->onClick.add([this](Ling::Button*) { attachFromClipboard(); });
 
 	openSession(0);
+
+	if (!presetText.empty()) {
+		input->setText(presetText);
+		presetText.clear();
+	}
 }
 
 LRESULT WinAiChat::onHitTest(const POINT pos)

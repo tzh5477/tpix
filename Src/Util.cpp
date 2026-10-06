@@ -641,6 +641,43 @@ void Util::pasteToWindow(HWND hwnd)
 	SendInput(4, inputs, sizeof(INPUT));
 }
 
+std::wstring Util::copyFromForeground()
+{
+	auto hwnd = GetForegroundWindow();
+	// 前台是 tpix 自己的窗口、桌面、任务栏时不做：Ctrl+C 会落到我们自己身上或什么也取不到
+	if (!isPasteTarget(hwnd)) return L"";
+	// Ctrl+C 会盖掉剪贴板，先把原来那份存下来 —— 用户很可能刚拷了东西正等着粘
+	int prevW{ 0 }, prevH{ 0 };
+	std::wstring prevText;
+	std::vector<BYTE> prevImg;
+	auto prevKind = readClipboard(prevImg, prevW, prevH, prevText);
+
+	SetForegroundWindow(hwnd);
+	for (int i = 0; i < 12 && GetForegroundWindow() != hwnd; ++i) Sleep(20);
+
+	// 用序号判断"那边到底拷没拷"，而不是睡一觉就去读：睡多久都不好定，
+	// 而"剪贴板变没变"是唯一靠得住的信号。那边没有选中内容时 Ctrl+C 什么也不会发生，
+	// 这时序号不变，就不会把上一份剪贴板内容当成选中的文字
+	auto seq = GetClipboardSequenceNumber();
+	INPUT inputs[4]{};
+	inputs[0].type = INPUT_KEYBOARD; inputs[0].ki.wVk = VK_CONTROL;
+	inputs[1].type = INPUT_KEYBOARD; inputs[1].ki.wVk = 'C';
+	inputs[2].type = INPUT_KEYBOARD; inputs[2].ki.wVk = 'C';
+	inputs[2].ki.dwFlags = KEYEVENTF_KEYUP;
+	inputs[3].type = INPUT_KEYBOARD; inputs[3].ki.wVk = VK_CONTROL;
+	inputs[3].ki.dwFlags = KEYEVENTF_KEYUP;
+	SendInput(4, inputs, sizeof(INPUT));
+
+	std::wstring text;
+	for (int i = 0; i < 15 && GetClipboardSequenceNumber() == seq; ++i) Sleep(20);
+	if (GetClipboardSequenceNumber() != seq) text = Ling::Util::getTextFromClipboard();
+
+	if (prevKind == ClipContent::Image && !prevImg.empty()) saveToClipboard(prevW, prevH, prevImg.data());
+	else if (prevKind == ClipContent::Text) Ling::Util::setTextToClipboard(prevText);
+	// 原来就是空的：剪贴板上留着刚拷出来的选中文字，不去清它，那本来就是用户自己的东西
+	return text;
+}
+
 void Util::snapshotCursor()
 {
 	CURSORINFO ci{ .cbSize = sizeof(CURSORINFO) };

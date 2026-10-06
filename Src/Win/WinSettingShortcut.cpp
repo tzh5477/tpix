@@ -99,7 +99,7 @@ WinSettingShortcut::WinSettingShortcut(Ling::WinBase* parent):Ling::Node(parent)
 {
     // 与 Setting.cpp 的 shortcutDefs 一一对应：那边管注册和分发，这边管显示
     std::vector<std::wstring> keys = { L"cap", L"pinLast", L"history", L"ball",
-        L"pinClip", L"ruler", L"crosshair", L"focus" };
+        L"pinClip", L"ruler", L"crosshair", L"focus", L"aiTrans", L"aiChat" };
     for (auto& key:keys)
     {
         auto box = makeChild<Ling::Node>();
