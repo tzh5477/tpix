@@ -1254,10 +1254,16 @@ void ToolSub::updatePosition(const RECT& workArea)
 	if (finalX < workArea.left) finalX = workArea.left;
 	if (finalX > upperX) finalX = upperX;
 	// 箭头始终指向按钮中心的屏幕位置，换算成窗口内坐标
-	arrowX = mainX + btnCenterX - finalX;
+	auto newArrowX = mainX + btnCenterX - finalX;
+	// 整组一起平移时 arrowX 一动不动：窗口挪了，箭头在窗口里的位置没挪，那一格内容与上一帧
+	// 逐像素相同。而本函数在拖贴图 / 拖剪裁采样点的每个鼠标事件上都要跑一遍，白刷一次就是让
+	// 这块单缓冲画布（Clear → 重画边框与箭头）每个鼠标事件闪一帧 —— 拖动时的"一闪一闪"
+	// 有一半是这么来的。只有箭头真的换了位置才重画
+	const bool arrowMoved = newArrowX != arrowX;
+	arrowX = newArrowX;
 	setPosition(finalX, static_cast<int>(py));
 	if (isVisible) {
-		refresh();
+		if (arrowMoved) refresh();
 	}
 	else {
 		show();
