@@ -246,7 +246,8 @@ void ShapeText::startEdit()
 {
 	if (isEditing) return;
 	isEditing = true;
-	// 每次进入编辑都跟当前工具栏走：改了颜色/字号再点已有文本，就是要按新样式改
+	// 每次进入编辑都重新拉一遍样式：改了颜色/字号再点已有文本，就是要按新样式改。
+	// 取的是「文本」那一组（见 setAttr），不是"当前拿着哪个工具"那一组
 	setAttr();
 	// 编辑中的文字是 TextBox 那个真控件画的，D2D 的变换管不到它（缩放当年就撞过同一堵墙，
 	// 旋转更没法靠乘一个数糊弄过去）。所以进编辑先把角度归零，退出时再转回去：
@@ -361,22 +362,13 @@ void ShapeText::makeTextLayout()
 void ShapeText::setAttr()
 {
 	auto toolSub = win->getToolSub();
-	colorValue = toolSub->getSelectedColorValue();
-	color = toolSub->getSelectedColor();
-	// getSliderVal 返回的已经是物理像素
-	fontSize = toolSub->getSliderVal();
-	isBold = toolSub->isTextBold;
-	isItalic = toolSub->isTextItalic;
-	fontFamily = toolSub->getFontFamily();
-	Ling::D2D::get()->deviceContext->CreateSolidColorBrush(color, textBrush.ReleaseAndGetAddressOf());
-}
-
-void ShapeText::setAttrFromTextTool()
-{
-	auto toolSub = win->getToolSub();
+	// 颜色与字号都按工具的组名取，不走 getSelectedColor / getSliderVal ——
+	// 那两样是"当前工具"那一档的共享字段（ToolSub 的 selectColorIndex / sliderVal），
+	// 拿着矩形工具去点一个已有的文本时，它们给的是矩形的填充色与线宽（2），
+	// 于是字号被写成 2、文字缩成一条短横线（作者报的"文本组件会显示为-"）。
+	// getShapeSliderVal 交出来的与 getSliderVal 同一套语义：物理像素，D2D 直接用
 	colorValue = toolSub->getToolColorValue(L"text");
 	color = Ling::Color(colorValue).getD2DColor();
-	// 与 setAttr 的 getSliderVal 同一套语义：交出来的是物理像素，D2D 直接用
 	fontSize = toolSub->getShapeSliderVal(L"text");
 	// 粗体 / 斜体 / 字体这三个只有一份，不随工具切，照取即可
 	isBold = toolSub->isTextBold;
@@ -387,7 +379,7 @@ void ShapeText::setAttrFromTextTool()
 
 void ShapeText::setTextAt(const std::wstring& val, const float x, const float y)
 {
-	setAttrFromTextTool();
+	setAttr();
 	text = val;
 	// 先落左上角：fitRectToText 只改右 / 下两条边，起点得在这之前定下来
 	rect = D2D1::RectF(x, y, x, y);

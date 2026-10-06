@@ -2959,7 +2959,11 @@ void WinPin::pasteFromSystemClipboard()
 		if (text.empty()) return;
 		auto shape = std::make_unique<ShapeText>(drawing.get());
 		shape->setTextAt(text, (float)at.x, (float)at.y);
-		drawing->history->addShape(std::move(shape));
+		// 收下之后直接进编辑态：用户按 Ctrl+V 就是为了接着改这段字，
+		// 再让他手工点一下文本组件才进得去编辑，等于白粘一次（作者提的）
+		if (auto* added = drawing->history->addShape(std::move(shape))) {
+			static_cast<ShapeText*>(added)->startEdit();
+		}
 	}
 	// 与 pasteShapes 同一套收尾：新粘出来的取代原来的选中（addShape 已经指过去了），
 	// 框选那一批清掉 —— 否则 Delete 会连旧的整批一起删

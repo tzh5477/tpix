@@ -27,10 +27,13 @@ public:
 	// 收尾：把 TextBox 里的文字取回来自己画，空文本则把自己从 history 里删掉。
 	// 除了本类内部，Canvas（导出图片前）和 History（删除 shape 前）也会调。
 	void finishEdit();
-	// 粘贴用：把内容和落点直接灌进来，不走 TextBox 那条编辑路 ——
-	// 用户按 Ctrl+V 是要"把剪贴板上的文字放上去"，不该再弹一个输入框让他确认。
-	// 落点是文字的左上角（底图像素），框按文字实际尺寸撑开
+	// 粘贴用：把内容和落点直接灌进来。样式按「文本」那一组取（见 setAttr），
+	// 落点是文字的左上角（底图像素），框按文字实际尺寸先撑开 ——
+	// 剪贴板来的文字随后会直接进编辑态（见 startEdit），这一步只是把该有的样子先摆好
 	void setTextAt(const std::wstring& val, const float x, const float y);
+	// 进编辑态：文字交给共用的 TextBox，光标落在里面。两条路会调它 ——
+	// 用户点中了文字，以及粘贴（Ctrl+V 的文字直接可改，不必再"手工点一下文本组件"）
+	void startEdit();
 	// Canvas 只认 ShapeBase，收尾时从基类转过来走到 finishEdit
 	void finishEditing() override { finishEdit(); }
 	// ToolSub 上的颜色/字号/粗斜体变了，编辑中的话立即生效
@@ -46,14 +49,12 @@ protected:
 public:
 	bool isEditing{ false };
 private:
-	void startEdit();
 	void makeTextLayout();
-	// 从 ToolSub 拉一份当前样式，并重建画刷
+	// 从 ToolSub 拉一份样式并重建画刷。**一律取「文本」那一组的**，不看当前拿着哪个工具：
+	// getSliderVal / getSelectedColor 给的是"当前工具"的那一档 —— 拿着矩形（线宽 2）去点一个
+	// 已有的文本，字号就成了 2，文字缩成一条短横线（作者报的"文本组件会显示为-"）。
+	// 现在工具栏没有「文本」这一组可读时才退回默认，见 ToolSub::getShapeSliderVal
 	void setAttr();
-	// 同上，但样式从「文本」那一组取而不是「当前工具」那一组。只有粘贴那条路用它 ——
-	// 用户多半正拿着别的工具（矩形 / 箭头）在图上按 Ctrl+V，那时 getSliderVal 是
-	// 那支笔的线宽、选中色是它的填充色，直接拿来当字号和字色就是错的
-	void setAttrFromTextTool();
 	// 旋转中心。rect 是轴对齐的存法，画的时候才绕这个点转
 	D2D1_POINT_2F center() const;
 	// 按文字实际尺寸把边框盒贴合上去。滚轮改完字号后文字会溢出原来的框，得跟着长
