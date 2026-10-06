@@ -7,6 +7,7 @@
 #include "../ShotHistory.h"
 #include "../Table.h"
 #include "../Util.h"
+#include "WinAiTrans.h"
 #include "WinOcr.h"
 
 namespace {
@@ -136,6 +137,20 @@ void WinOcr::onCreated()
 		startRecognize();
 	});
 	applyTableBtn();
+
+	// 翻译：把刚认出来的文字交给翻译窗，顺带立刻翻一次。
+	// 这是本应用做"截图翻译"最短的一条路 —— 文字已经在手上了，不必再去模拟 Ctrl+C
+	// 抓别人程序的选区（那种做法在浏览器里经常取不到东西）
+	auto transBtn = bottom->makeChild<Ling::Button>();
+	transBtn->setText(Lang::get(L"ocr.trans"));
+	transBtn->setHeight(30.f);
+	transBtn->setWidth(70.f);
+	transBtn->setBorder(1.f, 0xE0E0E0FF);
+	transBtn->setHoverBg(0xF2F2F2FF);
+	transBtn->onClick.add([this](Ling::Button*) {
+		if (result.empty()) return;
+		WinAiTrans::init(result);
+	});
 
 	auto spacer = bottom->makeChild<Ling::Node>();
 	spacer->setFlexGrow(1.f);

@@ -22,6 +22,10 @@ public:
 	// 按指定格式存盘。quality 只给 JPEG / WebP 用（0–100），PNG 忽略它
 	static bool saveToFile(const std::wstring& path, const int w, const int h, BYTE* data,
 		const ImgFormat format, const float quality = 90.f);
+	// 同上，但编到内存里而不是落盘。给"要的是字节本身"的场合用（发给大模型时的 base64）。
+	// 默认 PNG：表格截图这类要拿去认字的图不能先过一道有损压缩
+	static bool encodeImageBytes(const int w, const int h, const BYTE* data, std::vector<BYTE>& out,
+		const ImgFormat format = ImgFormat::Png, const float quality = 90.f);
 	static std::wstring getExtOfFormat(const ImgFormat format);
 	static int getSaveFormat();
 	// 弹系统另存为对话框，返回空串表示用户取消

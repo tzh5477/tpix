@@ -1,6 +1,7 @@
 ﻿#include "pch.h"
 #include <wincodec.h>
 #include <shobjidl.h>
+#include <shlwapi.h>
 #include <algorithm>
 #include <format>
 #include <fstream>
@@ -408,6 +409,39 @@ bool Util::saveToFile(const std::wstring& path, const int w, const int h, BYTE* 
 	hr = stream->InitializeFromFilename(path.c_str(), GENERIC_WRITE);
 	if (FAILED(hr)) return false;
 	return encodeImage(stream.Get(), w, h, data, format, quality);
+}
+
+bool Util::encodeImageBytes(const int w, const int h, const BYTE* data, std::vector<BYTE>& out,
+	const ImgFormat format, const float quality)
+{
+	if (w <= 0 || h <= 0 || !data) return false;
+	ComPtr<IWICImagingFactory> factory;
+	auto hr = CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER,
+		IID_PPV_ARGS(factory.GetAddressOf()));
+	if (FAILED(hr)) return false;
+	ComPtr<IWICStream> stream;
+	if (FAILED(factory->CreateStream(stream.GetAddressOf()))) return false;
+	// 内存流：WIC 往里写，写完再按 STATSTG 拿回长度整段读出来。
+	// 编到内存里而不是先落一个临时文件 —— 这条路径是"发一次请求就编一次"，不该碰磁盘
+	ComPtr<IStream> mem;
+	mem.Attach(SHCreateMemStream(nullptr, 0));
+	if (!mem) return false;
+	if (FAILED(stream->InitializeFromIStream(mem.Get()))) return false;
+	// encodeImage 只读这份像素（JPEG 那条路是拷出去另排的），const_cast 是安全的
+	if (!encodeImage(stream.Get(), w, h, const_cast<BYTE*>(data), format, quality)) return false;
+	STATSTG st{};
+	if (FAILED(mem->Stat(&st, STATFLAG_NONAME))) return false;
+	out.resize(static_cast<size_t>(st.cbSize.QuadPart));
+	LARGE_INTEGER zero{};
+	mem->Seek(zero, STREAM_SEEK_SET, nullptr);
+	ULONG read{ 0 };
+	// 读不满就当失败：半张图发出去，服务端那边报的错会更难懂
+	if (FAILED(mem->Read(out.data(), static_cast<ULONG>(out.size()), &read))
+		|| read != out.size()) {
+		out.clear();
+		return false;
+	}
+	return !out.empty();
 }
 
 std::wstring Util::getExtOfFormat(const ImgFormat format)

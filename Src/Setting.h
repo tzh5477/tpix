@@ -87,6 +87,25 @@ public:
 	// 滚动截图的方向：true = 横向（拼出来的图往右长），false = 竖向（默认）
 	bool getLongHorizontal();
 	void setLongHorizontal(bool val);
+	// AI（翻译 / 对话，S1–S3）。存在 config.json 的 ai 组：
+	// baseUrl（OpenAI 兼容服务地址，形如 https://api.deepseek.com/v1）、apiKey、
+	// model（当前选中的模型）、models（上次拉下来的列表，填下拉框用，省得每次开设置都要联网）。
+	// ⚠️ apiKey 是明文落的：本机单人工具，加密换不来什么，反倒会让已有的「导出配置」跑到别的机器上就用不了。
+	//    补偿靠 exportConfig 把它摘出去，见那里的注释
+	std::wstring getAiStr(const std::wstring& key, const std::wstring& def);
+	void setAiStr(const std::wstring& key, const std::wstring& val);
+	// 上次拉到的模型列表。没拉过返回空数组（此时下拉框只有"点右侧按钮重新拉取"这条路）
+	std::vector<std::wstring> getAiModels();
+	void setAiModels(const std::vector<std::wstring>& ids);
+	// 对话历史（AiHistory）。三个键决定了落盘与清理：
+	// historySave 关掉之后不记也不读，且下次写盘时把已有文件删掉 —— 磁盘上不留聊天记录；
+	// historyLimit 是最多留几个会话，historyDays 是留最近多少天。两个维度各防一段，见 AiHistory::trim
+	bool getAiHistorySave();
+	void setAiHistorySave(bool val);
+	int getAiHistoryLimit();
+	void setAiHistoryLimit(int val);
+	int getAiHistoryDays();
+	void setAiHistoryDays(int val);
 	// 上次检查更新是哪一天（std::chrono::days 的计数，即 1970-01-01 以来的天数），
 	// 从来没查过返回 0。一天最多查一次服务端，靠它记账 —— 每次空闲都去请求纯属浪费人家的流量
 	long long getUpdateCheckDay();
@@ -117,6 +136,8 @@ private:
 	JsonObject getPinObj();
 	// cap 那一组（捕获：延时 / 定时 / 指针），缺则现建
 	JsonObject getCapObj();
+	// ai 那一组（翻译 / 对话的 baseUrl / apiKey / model），缺则现建
+	JsonObject getAiObj();
 	std::filesystem::path initDataPath();
 	// 决定配置文件用哪一份：exe 同目录有 config.json 就用它（绿色版，配置跟着程序走），
 	// 否则用 %appdata%\tpix\config.json。二者只认一个，读哪儿就写哪儿。

@@ -23,6 +23,11 @@ private:
 	void initPinCtrls();
 	// OCR 默认识别语言。与 WinOcr 窗口上的语言按钮共用 Setting 的 ocr 组
 	void initOcrCtrls();
+	// AI（S1 云端对话）：服务地址 / 密钥 / 模型（可下拉选也可直接输）+ 连接验证 +
+	// 历史落盘的两档清理策略
+	void initAiCtrls();
+	// 翻译（S2/S3）。与 AI 那组分开摆：两组的凭据不是一家的，混在一起容易填错地方
+	void initTransCtrls();
 	// 配置备份与恢复：导出成一份 json / 从一份 json 导入
 	void initConfigCtrls();
 	// 导入导出失败时的提示（系统提示标题 + 一行说明）
@@ -43,5 +48,9 @@ private:
 	Ling::Button* makeSwitchBtn(Ling::Node* row,
 		std::function<bool()> read, std::function<void(bool)> write);
 	void setAutoStartBtn(Ling::Button* btn);
+	// 验证连接那个请求还在飞、页面却已经被换掉或窗口已关时，回调不能再碰那几个节点
+	// —— postDone 是"取消也照送"的语义，光 cancel 挡不住它。切菜单会连 content 一起重建，
+	// 所以这里的析构就是唯一的尽头
+	std::shared_ptr<bool> aiAlive{ std::make_shared<bool>(true) };
 };
 

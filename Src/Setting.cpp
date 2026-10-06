@@ -273,6 +273,89 @@ void Setting::setToolNum(const std::wstring& tool, const std::wstring& key, floa
     save();
 }
 
+JsonObject Setting::getAiObj()
+{
+	auto obj = configObj.GetNamedObject(L"ai", nullptr);
+	if (!obj) {
+		obj = JsonObject();
+		configObj.SetNamedValue(L"ai", obj);
+	}
+	return obj;
+}
+
+std::wstring Setting::getAiStr(const std::wstring& key, const std::wstring& def)
+{
+	return std::wstring{ getAiObj().GetNamedString(key, def) };
+}
+
+void Setting::setAiStr(const std::wstring& key, const std::wstring& val)
+{
+	getAiObj().SetNamedValue(key, JsonValue::CreateStringValue(val));
+	save();
+}
+
+std::vector<std::wstring> Setting::getAiModels()
+{
+	std::vector<std::wstring> ids;
+	auto arr = getAiObj().GetNamedArray(L"models", nullptr);
+	if (!arr) return ids;
+	for (auto&& item : arr) {
+		// 手改过的配置里什么都可能躺在这一层，不是字符串就跳过，别让它把整个下拉框搞崩
+		if (item.ValueType() != JsonValueType::String) continue;
+		ids.push_back(std::wstring{ item.GetString() });
+	}
+	return ids;
+}
+
+void Setting::setAiModels(const std::vector<std::wstring>& ids)
+{
+	JsonArray arr;
+	for (const auto& id : ids) arr.Append(JsonValue::CreateStringValue(id));
+	getAiObj().SetNamedValue(L"models", arr);
+	save();
+}
+
+bool Setting::getAiHistorySave()
+{
+	return getAiObj().GetNamedBoolean(L"historySave", true);
+}
+
+void Setting::setAiHistorySave(const bool val)
+{
+	getAiObj().SetNamedValue(L"historySave", JsonValue::CreateBooleanValue(val));
+	save();
+}
+
+int Setting::getAiHistoryLimit()
+{
+	// 夹到 [1, 500]：0 会让"刚发出去的一问一答"立刻被清掉，那已经不是历史了；
+	// 上限则是给磁盘兜底 —— 会话里存的是纯文本，几百条之后文件会有几 MB
+	auto val = (int)getAiObj().GetNamedNumber(L"historyLimit", 50.0);
+	if (val < 1) return 1;
+	if (val > 500) return 500;
+	return val;
+}
+
+void Setting::setAiHistoryLimit(const int val)
+{
+	getAiObj().SetNamedValue(L"historyLimit", JsonValue::CreateNumberValue((double)val));
+	save();
+}
+
+int Setting::getAiHistoryDays()
+{
+	auto val = (int)getAiObj().GetNamedNumber(L"historyDays", 30.0);
+	if (val < 1) return 1;
+	if (val > 3650) return 3650;
+	return val;
+}
+
+void Setting::setAiHistoryDays(const int val)
+{
+	getAiObj().SetNamedValue(L"historyDays", JsonValue::CreateNumberValue((double)val));
+	save();
+}
+
 JsonObject Setting::getSaveObj()
 {
 	auto obj = configObj.GetNamedObject(L"save", nullptr);
@@ -620,6 +703,17 @@ bool Setting::exportConfig(const std::wstring& path) const
     // 逐项抄一份而不是直接 Stringify 原件：要跳过 pin，而 JsonObject 没有"删键"这回事
     for (auto&& pair : configObj) {
         if (pair.Key() == L"pin") continue; //贴图是运行时状态，图片文件不在配置里
+        if (pair.Key() == L"ai") {
+            // 地址与模型跟着走，密钥一个都不跟：它们是本机的凭据，导出去给别人既用不上，
+            // 也容易被人手滑贴到别处。这与「pin 不导出」是同一条规矩：搬不到别处的东西就不搬
+            JsonObject ai;
+            for (auto&& p : pair.Value().GetObject()) {
+                if (p.Key() == L"apiKey" || p.Key() == L"volcSk") continue;
+                ai.SetNamedValue(p.Key(), p.Value());
+            }
+            out.SetNamedValue(pair.Key(), ai);
+            continue;
+        }
         out.SetNamedValue(pair.Key(), pair.Value());
     }
     Ling::Util::saveFile(path, std::wstring{ out.Stringify() });

@@ -172,6 +172,9 @@
     </PostBuildEvent>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="AiHistory.cpp" />
+    <ClCompile Include="AiService.cpp" />
+    <ClCompile Include="AiTranslate.cpp" />
     <ClCompile Include="App.cpp" />
     <ClCompile Include="History.cpp" />
     <ClCompile Include="Lang.cpp" />
@@ -190,6 +193,8 @@
     <ClCompile Include="PinSource.cpp" />
     <ClCompile Include="ShotHistory.cpp" />
     <ClCompile Include="Shape\ShapeWatermark.cpp" />
+    <ClCompile Include="Win\WinAiChat.cpp" />
+    <ClCompile Include="Win\WinAiTrans.cpp" />
     <ClCompile Include="Win\WinBall.cpp" />
     <ClCompile Include="Win\WinDelay.cpp" />
     <ClCompile Include="Win\WinOverlay.cpp" />
@@ -278,6 +283,9 @@
     <Image Include="Res\logo.ico" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="AiHistory.h" />
+    <ClInclude Include="AiService.h" />
+    <ClInclude Include="AiTranslate.h" />
     <ClInclude Include="App.h" />
     <ClInclude Include="Canvas.h" />
     <ClInclude Include="GlobalMouse.h" />
@@ -291,6 +299,8 @@
     <ClInclude Include="SelectPopup.h" />
     <ClInclude Include="PinSource.h" />
     <ClInclude Include="ShotHistory.h" />
+    <ClInclude Include="Win\WinAiChat.h" />
+    <ClInclude Include="Win\WinAiTrans.h" />
     <ClInclude Include="Win\WinBall.h" />
     <ClInclude Include="Win\WinDelay.h" />
     <ClInclude Include="Win\WinOverlay.h" />

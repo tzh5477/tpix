@@ -2,6 +2,8 @@
 #include "Tray.h"
 #include "App.h"
 #include "Lang.h"
+#include "Win/WinAiChat.h"
+#include "Win/WinAiTrans.h"
 #include "Win/WinCap.h"
 #include "Win/WinSetting.h"
 #include "Win/WinHistory.h"
@@ -21,6 +23,8 @@ namespace {
 	static constexpr UINT rulerMsg = 169;
 	static constexpr UINT crosshairMsg = 170;
 	static constexpr UINT focusMsg = 171;
+	static constexpr UINT aiChatMsg = 172;
+	static constexpr UINT aiTransMsg = 173;
 }
 
 Tray::Tray()
@@ -59,6 +63,8 @@ void Tray::onTrayRightClick()
 {
 	auto menu = CreatePopupMenu();
 	AppendMenu(menu, MF_STRING, historyMsg, Lang::get(L"tray.history").data());
+	AppendMenu(menu, MF_STRING, aiChatMsg, Lang::get(L"ai.title").data());
+	AppendMenu(menu, MF_STRING, aiTransMsg, Lang::get(L"ai.transTitle").data());
 	AppendMenu(menu, MF_SEPARATOR, 0, nullptr);
 	AppendMenu(menu, MF_STRING, pinClipMsg, Lang::get(L"tray.pinClip").data());
 	AppendMenu(menu, MF_STRING, pinFileMsg, Lang::get(L"tray.pinFile").data());
@@ -79,6 +85,14 @@ void Tray::onTrayRightClick()
 	if (menuId == historyMsg)
 	{
 		WinHistory::init();
+	}
+	else if (menuId == aiChatMsg)
+	{
+		Ling::App::get()->dq.TryEnqueue([]() { WinAiChat::init(); });
+	}
+	else if (menuId == aiTransMsg)
+	{
+		Ling::App::get()->dq.TryEnqueue([]() { WinAiTrans::init(); });
 	}
 	else if (menuId == pinClipMsg)
 	{

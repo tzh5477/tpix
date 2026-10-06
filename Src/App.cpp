@@ -2,6 +2,7 @@
 #include <atomic>
 #include <chrono>
 #include <thread>
+#include "AiHistory.h"
 #include "App.h"
 #include "Setting.h"
 #include "Tray.h"
@@ -18,6 +19,8 @@
 #include "./Win/PinHiddenBar.h"
 #include "./Win/WinHistory.h"
 #include "./Win/WinOcr.h"
+#include "./Win/WinAiChat.h"
+#include "./Win/WinAiTrans.h"
 #include "./Win/WinBall.h"
 #include "./Win/WinSetting.h"
 
@@ -103,9 +106,12 @@ void App::dispose()
     WinOverlay::dispose();  // 屏幕辅助层：铺满整屏的窗口，留着会挡住退出的观感
     WinSetting::dispose();
     WinOcr::dispose();
+    WinAiChat::dispose();
+    WinAiTrans::dispose();
     WinBall::dispose();
     WinHistory::dispose();
     GlobalMouse::dispose();     // 全局钩子：不卸会一直挂在系统里
+    AiHistory::dispose();     // 与 ShotHistory 同理：必须在 Setting 之前
     ShotHistory::dispose();   // 必须在 Setting 之前：析构里要写索引文件
     Lang::dispose();
     Setting::dispose();
@@ -168,6 +174,7 @@ App::App()
     // 建在 Setting 之后：历史目录从数据目录来。剪贴板监听也在这里挂上，
     // 用完即走（--auto-quit）那条路同样要记历史，所以不跟着托盘走
     ShotHistory::init();
+    AiHistory::init();      // 同样建在 Setting 之后：历史文件在数据目录 ai/ 下
     if (app->args[L"--auto-quit"] == L"true") {
         WinCap::init();
     }
