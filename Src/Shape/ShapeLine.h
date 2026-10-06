@@ -16,7 +16,8 @@ public:
 	enum class Kind { Ortho = 0, Free };
 	// 线条样式。同上，顺序 = ToolSub::lineStyle 的落盘值
 	enum class Style { Solid = 0, Dash, Wave, Dot, DashDot, DashDotDot };
-	// 一端的形状。实心箭头是短宽的实心三角，细箭头是长而窄的开口 V，圆点是个比线粗一圈的实心圆
+	// 一端的形状。两种箭头都照 FSCapture 的端点预览定比例（见 .cpp 里的 paintEnd）：
+	// 实心那档是平底三角，细的那档是后缘带凹口的燕尾；圆点是个比线粗一圈的实心圆
 	enum class EndMark { None = 0, Arrow, Thin, Dot };
 	ShapeLine(Canvas* win);
 	~ShapeLine();

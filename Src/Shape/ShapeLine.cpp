@@ -342,34 +342,34 @@ void ShapeLine::paintEnd(ID2D1DeviceContext* ctx, const D2D1_POINT_2F& tip,
 	auto w = std::max(strokeWidth, 1.f);
 	if (mark == EndMark::Dot) {
 		// 圆点得比线粗一圈才看得出是个"端点"，不然跟线头融成一坨
-		auto r{ w * 1.4f };
+		auto r{ w * 1.85f };
 		ctx->FillEllipse(D2D1::Ellipse(tip, r, r), brush.Get());
 		return;
 	}
-	// 箭头沿走向的长度 / 根部半宽：实心那档短而宽，细的那档长而窄，两档一眼能分开
-	auto len = (mark == EndMark::Arrow ? 4.f : 5.f) * w;
-	auto half = (mark == EndMark::Arrow ? 1.7f : 1.f) * w;
+	// 两种箭头的比例照 FSCapture 的端点预览量出来（拿它的放大图逐像素量的，再除上当时的线宽 w）：
+	// 沿走向长 9.7w；实心那档是平底三角、半宽 3.5w，细的那档是燕尾、半宽 3w、后缘凹口深 1.7w。
+	// 两档尺寸几乎一样，区别就在这条底边上 —— 跟 FSCapture 里一样，不看底边几乎分不出来
+	auto len{ 9.7f * w };
+	auto half{ (mark == EndMark::Arrow ? 3.5f : 3.f) * w };
 	D2D1_POINT_2F base{ tip.x - dir.x * len, tip.y - dir.y * len };
 	// 走向的法线（把走向转 90°）
 	D2D1_POINT_2F a{ base.x - dir.y * half, base.y + dir.x * half };
 	D2D1_POINT_2F b{ base.x + dir.y * half, base.y - dir.x * half };
-	if (mark == EndMark::Arrow) {
-		ComPtr<ID2D1PathGeometry> geo;
-		if (FAILED(Ling::D2D::get()->d2dFactory->CreatePathGeometry(geo.GetAddressOf()))) return;
-		ComPtr<ID2D1GeometrySink> sink;
-		if (FAILED(geo->Open(sink.GetAddressOf()))) return;
-		sink->BeginFigure(tip, D2D1_FIGURE_BEGIN_FILLED);
-		sink->AddLine(a);
-		sink->AddLine(b);
-		sink->EndFigure(D2D1_FIGURE_END_CLOSED);
-		sink->Close();
-		ctx->FillGeometry(geo.Get(), brush.Get());
+	ComPtr<ID2D1PathGeometry> geo;
+	if (FAILED(Ling::D2D::get()->d2dFactory->CreatePathGeometry(geo.GetAddressOf()))) return;
+	ComPtr<ID2D1GeometrySink> sink;
+	if (FAILED(geo->Open(sink.GetAddressOf()))) return;
+	sink->BeginFigure(tip, D2D1_FIGURE_BEGIN_FILLED);
+	sink->AddLine(a);
+	if (mark == EndMark::Thin) {
+		// 燕尾：后缘的中点朝尖端让出凹口深，收出一个缺口
+		auto notch{ 1.7f * w };
+		sink->AddLine(D2D1_POINT_2F{ base.x + dir.x * notch, base.y + dir.y * notch });
 	}
-	else {
-		// 细箭头 = 开口的 V，两笔描边
-		ctx->DrawLine(tip, a, brush.Get(), w);
-		ctx->DrawLine(tip, b, brush.Get(), w);
-	}
+	sink->AddLine(b);
+	sink->EndFigure(D2D1_FIGURE_END_CLOSED);
+	sink->Close();
+	ctx->FillGeometry(geo.Get(), brush.Get());
 }
 
 // 滚滚轮 = 调线宽，与矩形 / 箭头那边是同一回事（Canvas 只在光标停在图形身上时才把滚轮转过来）。
