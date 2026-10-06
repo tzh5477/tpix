@@ -407,8 +407,15 @@ private:
 	bool hasSelectedShapes() const;
 	// cut = 真时是剪切：先复制进内部剪贴板，再走 undoShapes 把原件撤掉（可 Ctrl+Y 找回）
 	void copySelectedShapes(bool cut);
-	// 把内部剪贴板里的形状粘到当前画布。每粘一次都重新 clone，所以能连着粘
+	// 把内部剪贴板里的形状粘到当前画布。每粘一次都重新 clone，所以能连着粘。
+	// 内部剪贴板是空的时候落到系统剪贴板（见 pasteFromSystemClipboard）——
+	// 作者要的"tpix 的剪贴板与系统剪贴板融合"
 	void pasteShapes();
+	// 系统剪贴板的兜底：是图就把整张图当成一个图片标注插进当前画布（ShapeImage，
+	// 直接粘出来、不用先选任何工具），是文字就在鼠标位置建一个文本标注把内容填进去。
+	// 悬浮球 / 托盘那条"从剪贴板贴成一张新窗口"的路（PinSource::fromClipboard）不动 ——
+	// 那是再开一张贴图，这里是把内容编进正在编辑的这一张
+	void pasteFromSystemClipboard();
 	Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> borderBrush;
 	// 「选择画布」的采样点填充与图标白描边用的白色。单独一支：别的白刷各有各的用途，
 	// 哪天改了色不该把选区一起带偏

@@ -6,6 +6,7 @@
 #include "../Tool/ToolSub.h"
 #include "../Shape/ShapeBase.h"
 #include "../Shape/ShapeText.h"
+#include "../Shape/ShapeImage.h"
 #include "../Shape/ShapeNumber.h"
 #include "../Shape/ShapeWatermark.h"
 #include "WinPin.h"
@@ -2874,7 +2875,13 @@ void WinPin::copySelectedShapes(bool cut)
 
 void WinPin::pasteShapes()
 {
-	if (shapeClipboard.empty()) return;
+	// 内部剪贴板优先；它是空的才落到系统剪贴板。这个顺序是有意的：
+	// 用户刚复制了图上的一个元素，接着按 Ctrl+V，要粘的显然是那个元素，
+	// 而不是更早之前从浏览器里复制的一张图
+	if (shapeClipboard.empty()) {
+		pasteFromSystemClipboard();
+		return;
+	}
 	clipPasteCount++;
 	// 落点逐次错开
 	const float off{ 10.f * dpi * clipPasteCount };
@@ -2890,6 +2897,49 @@ void WinPin::pasteShapes()
 	// 循环结束时正好停在最后一份上。框选那一批同时清掉，否则 Delete 会连旧的整批一起删
 	drawing->multiSelected.clear();
 	if (last) drawing->selected = last;
+	refresh();
+}
+
+void WinPin::pasteFromSystemClipboard()
+{
+	std::vector<BYTE> img;
+	int w{ 0 }, h{ 0 };
+	std::wstring text;
+	const auto kind = Util::readClipboard(img, w, h, text);
+	if (kind == Util::ClipContent::None) return;
+	// 落点取鼠标。用户多半刚从别的程序里复制完、把光标移回图上再按的 Ctrl+V，
+	// 那个位置就是他想放的地方。光标在窗口外时 toImgPos 会给出画布外的坐标，下面各自夹回来
+	POINT pos{};
+	if (!GetCursorPos(&pos)) return;
+	ScreenToClient(hwnd, &pos);
+	const auto at = toImgPos(pos);
+	const auto imgSize = getImgSize();
+	if (kind == Util::ClipContent::Image) {
+		auto shape = std::make_unique<ShapeImage>(drawing.get());
+		if (!shape->setImage(img, w, h)) return;
+		// 图比画布还大就等比缩到画布之内（留一成边）：不缩的话八枚手柄全落在画布外，
+		// 画布外的区域不响应鼠标，用户根本够不着它们去改大小
+		float sc{ 1.f };
+		if (w > (int)imgSize.width || h > (int)imgSize.height) {
+			sc = std::min((float)imgSize.width / w, (float)imgSize.height / h) * 0.9f;
+		}
+		const float dw{ (float)w * sc }, dh{ (float)h * sc };
+		// 图片中心对齐鼠标，再整体夹进画布 —— 贴边时不至于只露出一个角
+		const auto left = std::clamp((float)at.x - dw / 2.f, 0.f, std::max(0.f, (float)imgSize.width - dw));
+		const auto top = std::clamp((float)at.y - dh / 2.f, 0.f, std::max(0.f, (float)imgSize.height - dh));
+		shape->placeAt(left, top, dw, dh);
+		drawing->history->addShape(std::move(shape));
+	}
+	else {
+		// 复制了一个空字符串（表格里的空单元格之类）时不留一个看不见的空文本框
+		if (text.empty()) return;
+		auto shape = std::make_unique<ShapeText>(drawing.get());
+		shape->setTextAt(text, (float)at.x, (float)at.y);
+		drawing->history->addShape(std::move(shape));
+	}
+	// 与 pasteShapes 同一套收尾：新粘出来的取代原来的选中（addShape 已经指过去了），
+	// 框选那一批清掉 —— 否则 Delete 会连旧的整批一起删
+	drawing->multiSelected.clear();
 	refresh();
 }
 
