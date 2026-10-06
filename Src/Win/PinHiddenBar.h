@@ -36,7 +36,7 @@ private:
 	void rebuild();
 	// 顶边那条是横着排的（条本身横过来，自左向右）
 	bool isHorizontal() const { return edge == WinPin::BarEdge::Top; }
-	// 光标落在第几条上。条只有 2 逻辑像素厚，按它自己的范围判等于让人去点一根头发丝，
+	// 光标落在第几条上。条只有 4 逻辑像素厚，按它自己的范围判等于让人去点一根头发丝，
 	// 所以直接取最近的一条 —— 竖排比纵坐标、横排比横坐标
 	int barIndexAt(POINT pos) const;
 	// 让第 index 张藏着的贴图露出来。只显窗口，隐藏状态不动 —— 条要一直留着，
@@ -53,7 +53,7 @@ private:
 	static constexpr float barThick{ 4.f };
 	// 相邻两条之间的缝。颜色不同才分得清那是两张图，不是一张图的渐变
 	static constexpr float gapW{ 2.f };
-	// 条四周的内边距。它同时是"这条窗口的命中范围比那 2 像素宽多少" ——
+	// 条四周的内边距。它同时是"这条窗口的命中范围比那 4 像素宽多少" ——
 	// 鼠标得能落在窗口里才有 hover 可谈，所以不能贴着条画
 	static constexpr float pad{ 4.f };
 	// 复核间隔：露出来之后每隔这么久看一眼鼠标还在不在，不在就收回去
