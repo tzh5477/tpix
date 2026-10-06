@@ -200,6 +200,7 @@ void PinHiddenBar::reveal(int index)
 	// show() 会把那张贴图提到 topmost 组的最前（组内后显示的在上），正好压住本窗口。
 	// 条被压在底下就再也 hover 不到了，所以这里把它提回来
 	SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+	leaveAt = 0;
 	setTimer(tickMs, tickId);
 }
 
@@ -238,8 +239,15 @@ void PinHiddenBar::onTimerCB(UINT id)
 		killTimer(tickId);
 		return;
 	}
-	// 正拖着 / 正在标注 / 正在编辑文字时一概不收 —— 那种时候用户手上正拿着这张图，
-	// 拖到哪儿它就跟到哪儿，光标一直在图上，本来也不会走到这里
-	if (peek->isBusy() || isOverPeek()) return;
-	conceal();
+	// 在场判定：鼠标压在图 / 两条工具条 / 本条上，或图正被拖着 / 正在编辑 —— 都视作在场
+	if (peek->isBusy() || isOverPeek()) {
+		leaveAt = 0;
+		return;
+	}
+	// 第一跳发现离开 → 记时刻；连续离开满 800ms 才收回。中途回来 leaveAt 清零，重新计时
+	if (leaveAt == 0) {
+		leaveAt = GetTickCount();
+		return;
+	}
+	if (GetTickCount() - leaveAt >= peekGraceMs) conceal();
 }

@@ -60,9 +60,13 @@ private:
 	static constexpr float pad{ 4.f };
 	// 回显贴图与那条线之间的缝（逻辑像素）
 	static constexpr float peekGap{ 4.f };
-	// 复核间隔：露出来之后每隔这么久看一眼鼠标还在不在，不在就收回去
+	// 复核间隔：露出来之后每隔这么久看一眼鼠标还在不在；离开判定见 onTimerCB（连续离开满 800ms 才收）
 	static constexpr UINT tickMs{ 250 };
 	static constexpr UINT tickId{ 100 };
+	// 离开宽限：第一次发现鼠标离开后，连续这么久仍不在场才收回去（spec 第 4 节）
+	static constexpr UINT peekGraceMs{ 800 };
+	// 离开时刻（GetTickCount）。0 = 在场。每跳轮询里记 / 清
+	DWORD leaveAt{ 0 };
 	std::vector<Ling::Node*> bars;
 	// 当前露出来的那一张。nullptr = 什么都没露
 	WinPin* peek{ nullptr };
