@@ -956,6 +956,9 @@ void WinPin::deleteSelection()
 		CopyMemory(px.data() + ((size_t)y * w + l) * 4, white.data(), white.size());
 	}
 	if (!writeScreenImg(px, w, h)) return;
+	// 删掉这一块就回到「选择对象」（作者定的）：这一趟画布上的活儿已经做完了，
+	// 再留在「选择画布」里等着框下一块没有道理。复制 / 搬移两条路同理
+	setSelectorSub(0);
 	refresh();
 }
 
@@ -976,6 +979,8 @@ void WinPin::copySelectionToClipboard()
 	}
 	Util::saveToClipboard(sw, sh, block.data());
 	showToast(Lang::get(L"tool.canvasCopied"));
+	// 复制完回到「选择对象」，理由同 deleteSelection 末尾那条
+	setSelectorSub(0);
 }
 
 void WinPin::canvasSelectDown(const POINT& imgPos)
@@ -1069,8 +1074,13 @@ void WinPin::canvasSelectMove(const POINT& imgPos)
 void WinPin::canvasSelectUp()
 {
 	if (selDrag == 2) {
-		// 搬完了：把抠下来的画面落到新位置（选区跟着画面走，已经在那儿了）
-		if (selFloat) dropSelection();
+		// 搬完了：把抠下来的画面落到新位置（选区跟着画面走，已经在那儿了）。
+		// 真搬过一趟就回到「选择对象」（作者定的）—— 只按了一下没拖动的不算，
+		// 那种情况下画面没动过，工具还留在「选择画布」里等下一笔更顺手
+		if (selFloat) {
+			dropSelection();
+			setSelectorSub(0);
+		}
 	}
 	else if (selDrag == 1) {
 		// 只点了一下、没拉出框的，当成"清掉选区"
