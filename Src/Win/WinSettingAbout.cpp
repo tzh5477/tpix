@@ -6,7 +6,7 @@
 
 WinSettingAbout::WinSettingAbout(Ling::WinBase* parent):Ling::Node(parent)
 {
-    std::vector<std::wstring> keys = { L"version",L"project",L"author" };
+    std::vector<std::wstring> keys = { L"version",L"project" };
     for (auto& key : keys)
     {
         auto box = makeChild<Ling::Node>();
@@ -36,15 +36,6 @@ WinSettingAbout::WinSettingAbout(Ling::WinBase* parent):Ling::Node(parent)
                 ShellExecute(win->hwnd, L"open", downloadUrl.data(), nullptr, nullptr, SW_SHOWNORMAL);
                 });
         }
-        else {
-            btn->setText(Lang::get(L"about.wechat"));
-            btn->setColor(0x597ef7ff);
-            btn->setHoverColor(0x597ef7ff);
-            btn->onClick.add([this](Ling::Button* btn) {
-                Ling::Util::setTextToClipboard(L"liulun_007");
-                MessageBox(win->hwnd, Lang::get(L"about.copySuccess").data(), Lang::get(L"about.sysTip").data(), MB_OK | MB_ICONINFORMATION);
-                });
-        }
         btn->setAlignItems(Ling::Align::FlexEnd);
         btn->setHeight(28.f);
         btn->setWidth(120.f);
@@ -56,6 +47,12 @@ WinSettingAbout::WinSettingAbout(Ling::WinBase* parent):Ling::Node(parent)
         border->setHeight(1.f);
         border->setBg(0xE0E0E0FF);
     }
+    // 项目简介：贴在两行信息下面的整宽文本。固定给两三行的高度 ——
+    // 不设高的话 yoga 量不出文字高度， Label 会被压成一条缝
+    auto desc = makeChild<Ling::Label>();
+    desc->setText(Lang::get(L"about.desc"));
+    desc->setMarginTop(8.f);
+    desc->setHeight(56.f);
 }
 
 WinSettingAbout::~WinSettingAbout()
