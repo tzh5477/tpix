@@ -286,9 +286,34 @@ void ShapeLine::paintEnds(ID2D1DeviceContext* ctx)
 {
 	if (linePoints.size() < 2) return;
 	auto pair = ends();
-	// 起点朝外 = 从第二个点指回第一个点；终点朝外 = 从倒数第二个点指向最后一个点
-	paintEnd(ctx, linePoints.front(), unitDir(linePoints[1], linePoints.front()), pair.start);
-	paintEnd(ctx, linePoints.back(), unitDir(linePoints[linePoints.size() - 2], linePoints.back()), pair.end);
+	paintEnd(ctx, linePoints.front(), endDir(false), pair.start);
+	paintEnd(ctx, linePoints.back(), endDir(true), pair.end);
+}
+
+// 端点标记朝哪：从端点沿折线往回让够"箭头自己那么长"的一段（4×线宽），拿那两个点的连线当走向。
+//
+// 为什么不直接用最后两个顶点 —— 自由画的末端常常是一小撮原地抖动：收笔时的手一抖、或者抓着
+// 端点夹点往外拖出来的那一截，方向跟整条线能差出几十度。照着它画，箭头就横在线上（作者报的
+// "箭头会弯折"）。这一小撮本来就被箭头自己盖着，按箭头长度往回让一段正好跳过它。
+// 直线段上让与不让结果一样；直角折线的端点只要那一条腿长过这个基准，就仍落在同一条腿上
+D2D1_POINT_2F ShapeLine::endDir(const bool atEnd) const
+{
+	auto base{ 4.f * std::max(strokeWidth, 1.f) };
+	auto n{ (int)linePoints.size() };
+	auto i{ atEnd ? n - 1 : 0 };
+	auto step{ atEnd ? -1 : 1 };
+	auto tip{ linePoints[i] };
+	// 叫 away 而不是 far：windef.h 把 far / near / huge 定义成了空宏，叫 far 会被预处理器吃掉
+	auto away{ tip };
+	auto acc{ 0.f };
+	while (acc < base) {
+		auto next{ i + step };
+		if (next < 0 || next >= n) break;
+		acc += distance(linePoints[i], linePoints[next]);
+		i = next;
+		away = linePoints[i];
+	}
+	return unitDir(away, tip);   // away → tip 就是朝外的走向
 }
 
 void ShapeLine::paintEnd(ID2D1DeviceContext* ctx, const D2D1_POINT_2F& tip,

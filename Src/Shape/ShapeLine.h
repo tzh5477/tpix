@@ -34,6 +34,8 @@ private:
 	EndPair ends() const;
 	void paintEnds(ID2D1DeviceContext* ctx);
 	void paintEnd(ID2D1DeviceContext* ctx, const D2D1_POINT_2F& tip, const D2D1_POINT_2F& dir, const EndMark mark);
+	// 这一端该朝哪个方向：从端点沿折线往回让够一段再连线（见 .cpp）
+	D2D1_POINT_2F endDir(bool atEnd) const;
 	// 波浪线那条正弦路径。D2D 的虚线样式里没有波浪，只能把折线重采样
 	Microsoft::WRL::ComPtr<ID2D1PathGeometry> makeWaveGeometry() const;
 	// 按当前线条样式建描边样式（实线 / 虚线族）；波浪不走它
