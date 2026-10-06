@@ -75,6 +75,10 @@ float ToolMain::getBtnCenterX()
 void ToolMain::onCreated()
 {
 	tip = std::make_unique<Tip>(this);
+	auto d2d = Ling::D2D::get();
+	// 「选择对象」那支鼠标指针的墨色。同 ToolSub 的 brushBg：画刷与设备绑定，建一次复用
+	d2d->deviceContext->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::White), brushCursor.GetAddressOf());
+	d2d->deviceContext->CreateSolidColorBrush(D2D1::ColorF(0x404040), brushCursorEdge.GetAddressOf());
 	body->setBg(0xFFFFFFFF);
 	body->setBorder(1.f, 0xA8A8A8ff);
 	body->setAlignItems(Ling::Align::Center);
@@ -90,12 +94,23 @@ void ToolMain::onCreated()
 		else {
 			auto btn = body->makeChild<Ling::Button>();
 			btn->setId(id);
-			btn->setText(btnCodes[i]);
 			btn->setHeightPercent(100.f);
 			btn->setFlexGrow(1.f);
 			btn->setHoverBg(0xF2F2F2ff);
-			btn->setFontFamily(L"icon");
-			btn->setFontSize(13.f);
+			// 「选择对象」那一枚不写字：垫一张铺满的画布，自己在上面画一个鼠标指针
+			//（图标字体里没有指针形状，41 个码位全都有主；见 layout / paintSelectIcon）。
+			// 其余各枚照旧走 icon 字体
+			if (id == L"select") {
+				auto icon = btn->makeChild<Ling::Canvas>();
+				icon->setSizePercent(100.f, 100.f);
+				icon->setFlexShrink(0.f);
+				selectIcon = icon;
+			}
+			else {
+				btn->setText(btnCodes[i]);
+				btn->setFontFamily(L"icon");
+				btn->setFontSize(13.f);
+			}
 			btn->onClick.add([this](Ling::Button* btn) {onClick(btn);});
 			tip->bind(btn, Lang::get(std::format(L"tool.{}", id)));
 			btns.push_back(btn);
@@ -104,14 +119,59 @@ void ToolMain::onCreated()
 	show();
 }
 
+void ToolMain::layout()
+{
+	Ling::WinBase::layout();
+	if (!selectIcon) return;
+	// 与 ToolSub 的样例格子同一套：startPaint / finishPaint 要成对用，
+	// 且这一层底子是透明的 —— 按钮的常态 / 悬停底色从它下面透上来
+	auto ctx = selectIcon->startPaint();
+	if (!ctx) return;
+	ctx->Clear(0);
+	paintSelectIcon(ctx, selectIcon->w, selectIcon->h);
+	selectIcon->finishPaint();
+}
+
+void ToolMain::paintSelectIcon(ID2D1DeviceContext* ctx, const float w, const float h)
+{
+	// 鼠标指针的轮廓：尖角在左上、尾巴在右下，就是系统那支标准箭头。
+	// 用归一化坐标写，下面按这张画布的大小等比缩放（横竖各算一次取小的，指针不变形）
+	static constexpr float pts[][2] = {
+		{ 0.000f, 0.000f }, { 0.000f, 0.756f }, { 0.176f, 0.568f },
+		{ 0.294f, 0.849f }, { 0.435f, 0.792f }, { 0.318f, 0.510f },
+		{ 0.529f, 0.510f },
+	};
+	// 上面那串点自己的外接尺寸（0.529 × 0.849）；pad 是描边要占的边，
+	// 留窄了指针会贴着按钮边缘，描边被切掉半个像素
+	constexpr float bw{ 0.529f }, bh{ 0.849f };
+	const float pad{ 5.f * dpi };
+	const float sx{ (w - pad * 2.f) / bw }, sy{ (h - pad * 2.f) / bh };
+	const float s{ sx < sy ? sx : sy };
+	const float ox{ (w - bw * s) / 2.f }, oy{ (h - bh * s) / 2.f };
+
+	Microsoft::WRL::ComPtr<ID2D1PathGeometry> geo;
+	if (FAILED(Ling::D2D::get()->d2dFactory->CreatePathGeometry(geo.GetAddressOf()))) return;
+	Microsoft::WRL::ComPtr<ID2D1GeometrySink> sink;
+	if (FAILED(geo->Open(sink.GetAddressOf()))) return;
+	sink->BeginFigure(D2D1::Point2F(ox + pts[0][0] * s, oy + pts[0][1] * s), D2D1_FIGURE_BEGIN_FILLED);
+	for (size_t i = 1; i < _countof(pts); i++) {
+		sink->AddLine(D2D1::Point2F(ox + pts[i][0] * s, oy + pts[i][1] * s));
+	}
+	sink->EndFigure(D2D1_FIGURE_END_CLOSED);
+	sink->Close();
+	ctx->FillGeometry(geo.Get(), brushCursor.Get());
+	ctx->DrawGeometry(geo.Get(), brushCursorEdge.Get(), 1.2f * dpi);
+}
+
 void ToolMain::applyNormalStyle(Ling::Button* btn)
 {
 	btn->setBg(0);
 	btn->setHoverBg(0xF2F2F2ff);
 }
 
-// 两态开关（「选文」）的选中底色。与 selectTool 里给工具按钮上的那层是同一种青色，
-// 但两者互斥地发生：拿起任何一个标注工具都会先把选文关掉（见 selectTool 开头）
+// 选中底色（「选文」那个两态开关、以及「选择对象」那个常驻模式都用它）。
+// 与 selectTool 里给工具按钮上的那层是同一种青色，但两者互斥地发生：
+// 拿起任何一个标注工具都会先把选文关掉（见 selectTool 开头）
 void ToolMain::setToggle(const std::wstring& id, bool on)
 {
 	for (auto b : btns)
@@ -140,6 +200,9 @@ void ToolMain::cancelSelect()
 		}
 	}
 	curId.clear();
+	// 选择模式跟着一起退出：右键收工具条、ESC 退一步、锁定贴图都走到这儿，
+	// 那几种情况下"还在挑元素"没有意义（「选」那枚的底色也一并复位了）
+	win->selectMode = false;
 	win->toolSub->hideTools();
 	// curId 空了 ToolMain 要下移收回 ToolSub 让出的空间，交给 WinPin 重排整组
 	win->layoutTools();
@@ -198,6 +261,11 @@ void ToolMain::onClick(Ling::Button* btn)
 		win->setTextSelect(!win->getTextSelect());
 		return;
 	}
+	// 「选择对象」是个模式，只在用户按工具条这一处开 / 关：按它进模式，按别的工具出模式。
+	// 程序内部按元素换工具不走这里（见 WinPin::onUp），所以"点中元素后面板跟着换"不会
+	// 把模式关掉。出模式时顺手把「选」那枚的底色复位
+	if (win->selectMode && btn->id != L"select") setToggle(L"select", false);
+	win->selectMode = (btn->id == L"select");
 	// 再次点击已选中的按钮 = 取消选中（开关式）。cancelSelect 里已经做了配色复位、
 	// 隐藏 ToolSub 和重排，这里直接返回，不要再往下走选中流程。
 	if (btn->id == curId) {
@@ -214,7 +282,10 @@ void ToolMain::selectTool(const std::wstring& id)
 	win->setTextSelect(false);
 	for (auto b : btns)
 	{
-		if (b->id == curId)
+		// 选择模式下「选」那枚一直亮着：它表示"鼠标现在是在挑元素"，与"面板此刻显示
+		// 哪个工具的属性"是两件事。点中元素后 curId 换成了那个元素的工具，但模式没退
+		//（见 WinPin::selectMode），把它一起按常态复位就看着像模式掉了
+		if (b->id == curId && !(win->selectMode && b->id == L"select"))
 		{
 			applyNormalStyle(b);
 		}
@@ -258,6 +329,9 @@ void ToolMain::selectTool(const std::wstring& id)
 		win->ensureWatermark();
 	}
 	else {
+		// 「选择对象」落在这儿：它没有"样式"可调 —— 点中的是哪个元素，样式就切到那个元素的
+		// 工具上去（见 WinPin::onUp）。框选出来的那一批也不接受批量改样式，
+		// 它们只用于整批高亮 + Delete 一次删掉
 		win->toolSub->hideTools();
 	}
 	// curId 变化后 ToolMain 可能要上移给 ToolSub 腾位置，交给 WinPin 重新排布整组

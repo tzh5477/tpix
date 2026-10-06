@@ -12,7 +12,6 @@ class ShapeText;
 class ShapeNumber;
 class History;
 class Canvas;
-class CutMask;
 class WinPin : public Ling::WinBase, public CanvasHost
 {
 public:
@@ -77,8 +76,10 @@ public:
 	History* getHistory() const;
 	// ToolSub 上的序号样式 / 外圈样式变了，让图上所有已画的序号重排几何与文字
 	void refreshNumberShapes();
-	// ToolSub 上的颜色 / 字号 / 粗体 / 斜体变了，转给正在编辑的文本立即生效
-	void onToolStyleChanged();
+	// ToolSub 上的颜色 / 字号 / 粗体 / 斜体变了，转给正在编辑的文本立即生效。
+	// styleEnumChanged = 触发这次改动的是"档位"按钮（箭头样式 / 线条类型 / 端点 / 线型）——
+	// 只有这种时候才该把档位也套到选中那一笔上，颜色 / 粗细 / 填充这些不该顺手换掉形状
+	void onToolStyleChanged(bool styleEnumChanged = false);
 	// 「应用到全部」：把工具条当前样式套到图上同工具的所有标注
 	void applyStyleToAllShapes();
 	// 一键清除图上所有水印（水印面板上的「清除」）。走 History::undoShapes，
@@ -116,11 +117,13 @@ public:
 	// 本次按下之后光标有没有真的移动过。判"按下马上弹起"只认这个，
 	// 不去看各 shape 的几何 —— 那些成员的初值状态不一，不可靠
 	bool hasDragged{ false };
+	// 「选择对象」模式（工具条上那枚按钮按下的状态）。与 curId 分开记：点中一个元素后
+	// curId 会换成那个元素的工具（ToolSub 的面板才切得过去），若拿 curId 当判据，
+	// 第二次点选就把自己判没了。开与关都发生在 ToolMain::onClick（用户按工具条那一下）
+	bool selectMode{ false };
 	// 水印工具选中时把水印层铺上（没有才建）。整张图一层，所以不进"点击才落笔"那条路。
 	// ToolMain 切到水印工具时调（ToolMain.cpp 的 selectTool）
 	void ensureWatermark();
-	// 剪裁态：底图裁一块，标注原地不动、继续可编辑（ToolMain 上那个剪裁按钮进的就是这里）
-	bool isCropping() const { return cropMask != nullptr; }
 	// ---- 藏进屏幕边上的那条"书签条"（见 PinHiddenBar）----
 	// 开关：藏着的时候再按一次就是放回来。藏起来的是"这扇窗"，位置、底图、标注一概不动。
 	// 条上的 hover 只是把窗口临时显出来（peek），不改这个状态。
@@ -161,6 +164,11 @@ private:
 	bool takeDoubleClick();
 	void onTimerCB(UINT id);
 	void onClosed();
+	// 拖动标注 / 框选这些"画面跟着鼠标走"的动作里用：InvalidateRect 之后紧接着 UpdateWindow，
+	// 把这一帧当场逼出来。只管 InvalidateRect 的话，WM_PAINT 的优先级排在鼠标消息之后 ——
+	// 光标一直在动就一直排不上号，画面要等鼠标停住才更新，就是那股"迟滞 / 顿挫"感。
+	// WinCap 调选区当初也是这么治的（见 WinCap::refreshNow）
+	void refreshNow();
 	// ---- 选文：后台识别 + 选区（详见各自实现）----
 	// 起一次后台识别。换底图 / 剪完一刀都会重认，seq 让老结果自己作废
 	void startOcr();
@@ -187,21 +195,50 @@ private:
 	// pin（只开着贴图属性面板）都画不了 —— 这两种状态下左键该拖动贴图本身，
 	// 而不是当成画笔落笔，否则选过一次贴图属性后整张图就拖不动了
 	bool hasDrawTool() const;
+	// ---- 「选择对象」（ToolMain 上排在最前的那枚按钮）----
+	// 它算"能画东西"的工具（见 hasDrawTool）：左键要留在画布上，不能落进"拖窗口"那条路。
+	// 点的却是已有元素，不是新建一笔。
+	//
+	// 它是个**模式**，与 curId 分开记（见 selectMode）—— 点中一个元素之后 curId 会换成那个
+	// 元素的工具（ToolSub 的面板才切得过去、滑块色板才有正确的档位），但鼠标在画布上仍然
+	// 是"选择"，接着点下一个元素照样生效。拿 curId 当判据的话，第一次点选就把自己判没了
+	bool selecting() const;
+	// 选框的矩形（标注坐标系）。anchor / cur 谁大谁小不确定，统一归一化成矩形
+	D2D1_RECT_F marqueeRect() const;
+	// 框选抬手：把外接框与选框相交的元素收进 Canvas::multiSelected。
+	// 「相交即选中」—— 细长元素（线条 / 箭头）只要被框碰到就算，要求整个框住得瞄得很准
+	void collectMarquee();
+	// 画框选的两层提示：正在拉的那个选框、以及多选那一批各自的外框。
+	// 调用方还在标注坐标系的变换里，所以两者都跟着缩放 / 剪裁走
+	void paintSelection(ID2D1DeviceContext* ctx);
 	// 标号工具的 hover 预览。鼠标还停在图上时，先在光标处画一个"将要落下的编号"，
 	// 落笔之前就看得见号是多少（参考 pixpin）。预览实例不进 history、也不占号
 	void updateNumberPreview(const POINT& imgPos);
 	void hideNumberPreview();
-	// 剪裁态与工具选中态是同一件事的两面：curId 变成 / 不再是 "pinCrop" 时为真 / 为假。
-	// 本函数由 layoutTools 收口调用 —— selectTool、cancelSelect、右键收起、ESC 退一步
-	// 最后都会走到 layoutTools，收在这里就不必给每条路各挂一个回调
-	void syncCropMode();
-	void beginCrop();
-	void endCrop();
-	// 把剪裁框里那一块从底图上裁出来换成新底图。标注一个都不动 —— 坐标映射整体挪过去
-	//（Canvas::imgOrigin），所以剪完还能接着改样式、撤销
-	void confirmCrop();
-	// 剪裁态顶部那条操作提示（拖拽框选 / 回车确认 / ESC 取消）
-	void paintCropTip(ID2D1DeviceContext* ctx);
+	// ---- 常驻剪裁 ----
+	// 底图四周那 8 个采样点（四角 + 四边中点）。拖它就是改"这张贴图保留原图的哪一块"：
+	// 往里收缩、整体平移、往外扩大（有原图可扩的话），标注一个都不搬 —— 坐标映射整体挪
+	//（Canvas::imgOrigin），所以拖完还能接着改样式、撤销、导出。
+	// 顺序：0 左上 / 1 上 / 2 右上 / 3 右 / 4 右下 / 5 下 / 6 左下 / 7 左
+	void paintCropHandles(ID2D1DeviceContext* ctx);
+	void cropHandleCenters(D2D1_POINT_2F (&centers)[8]) const;
+	// 采样点这会儿能不能上场。缩略图 / 细条这两种收法下窗口已经不是图了；藏起来时窗口根本
+	// 看不见；锁定的贴图不许改；动图的窗口尺寸钉死在第一帧上，裁了就没法换帧
+	bool canCrop() const;
+	// 命中的是第几个采样点，没命中返回 -1（命中框比画出来的点大一圈，好点）
+	int cropHandleAt(const POINT pos) const;
+	// 手上正拉着一个采样点
+	bool cropDragging() const { return cropHandle >= 0; }
+	void startCropDrag(const int handle);
+	// 拖到屏幕坐标 screenPos。用屏幕坐标而不是客户区坐标：拖左边 / 上边时窗口自己就在挪，
+	// 客户区坐标跟着变，累加必然漂
+	void dragCropTo(const POINT& screenPos);
+	void endCropDrag();
+	// 按 cropRect 重切底图、挪标注原点、重排窗口的位置与尺寸
+	void applyCropRect();
+	// 没有源图时现补一份：拿当前这张底图顶替自己。剪贴板 / 文件 / 长图 / 历史进来的贴图走这条，
+	// 于是"向外拖"最多拖回它的边界 —— 那些图本来就是从外面拿来的，边界外没有东西可补
+	void ensureCropSource();
 	BOOL setCursor() override;
 	// 离屏合成出最终图像的像素（BGRA、top-down、行步长紧凑为 size.width*4）。
 	// 只画底图和未撤销的 shape，不含蓝色边框和夹点。
@@ -282,10 +319,35 @@ private:
 	// 只在鼠标停在图上、且没落在别的元素上时显示（见 updateNumberPreview）
 	std::unique_ptr<ShapeNumber> numberPreview;
 	bool numberPreviewOn{ false };
-	// 剪裁框。非空即"剪裁态"，见 isCropping
-	std::unique_ptr<CutMask> cropMask;
-	bool cropDragging{ false }, cropAdjusting{ false };
-	Microsoft::WRL::ComPtr<IDWriteTextLayout> cropTip;
+	// ---- 常驻剪裁的状态（见 paintCropHandles 那一组）----
+	// 采样点画多大（逻辑像素，落笔时乘 dpi）。命中框比它大一圈 —— 那么小的圆，差几个像素
+	// 就点不着，可它偏偏压在图的边界上，越靠边越不好瞄
+	static constexpr float kCropHandleR{ 4.f };
+	static constexpr float kCropHandleHitR{ 9.f };
+	// 没剪过的源图。截图那条路进来的是整屏原图（WinCap 抓的那张）；别的路（剪贴板 / 文件 /
+	// 长图 / 历史 / 动图）没有更大的原图，ensureCropSource 拿当前这张底图顶替自己
+	Microsoft::WRL::ComPtr<ID2D1Bitmap1> srcImg;
+	// srcImg 里当前显示的那一块（像素）。drawing->screenImg 永远是它的一块，
+	// drawing->imgOrigin 等于"它的左上角 - cropBase" —— 标注坐标因此不随剪裁而变，
+	// 拖采样点搬不动任何 shape
+	D2D1_RECT_U cropRect{ 0, 0, 0, 0 };
+	// 标注坐标 (0,0) 落在源图的哪个像素。建贴图那一刻定下来，之后不再变 ——
+	// 它把"标注坐标"与"源图像素"钉在一起（源图里的位置 = 标注坐标 + 本值），
+	// 底图与标注因此可以各挪各的。来源见构造函数与 ensureCropSource
+	POINT cropBase{ 0, 0 };
+	// 正拉着第几个采样点，-1 表示没在拉（见 cropHandleAt）
+	int cropHandle{ -1 };
+	// 开始拖那一刻源图左上角在屏幕上的位置。窗口可以被拖走 / 被缩放，所以这个值不能长期存着，
+	// 只在一次拖拽期间有效 —— 拖左边 / 上边时窗口自己就在挪，靠它算光标落在源图的哪个像素
+	POINT dragSrcPos{ 0, 0 };
+	// ---- 「选择对象」的框选与拖窗口（见 onDown / onUp）----
+	// 选择模式下按在空白处拖窗口的那一下（没按 Ctrl）。onDown 当场让它走"拖窗口"那条路，
+	// onUp 得知道该照那条路收尾（重排工具条并请回来），所以记一下
+	bool selectDrag{ false };
+	// 正在拉的那个选框。两个点都在标注坐标系里，与 shape 同一套（toImgPos 换算过）。
+	// 抬手就清 —— 它只在一次拖拽期间有效
+	bool marqueeOn{ false };
+	POINT marqueeAnchor{ 0, 0 }, marqueeCur{ 0, 0 };
 	Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> borderBrush;
 	// 右上角的倍数提示。非空即显示，缩放停手一会儿由定时器清掉
 	Microsoft::WRL::ComPtr<IDWriteTextLayout> scaleTip;

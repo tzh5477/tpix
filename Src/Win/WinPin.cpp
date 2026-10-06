@@ -10,6 +10,7 @@
 #include "../Shape/ShapeWatermark.h"
 #include "WinPin.h"
 #include "WinCap.h"
+// 只为了读 WinCap 上那份选区（常驻剪裁要知道"这张贴图占的是整屏原图的哪一块"）
 #include "CutMask.h"
 #include "PinHiddenBar.h"
 #include "History.h"
@@ -79,7 +80,21 @@ WinPin::WinPin(int x, int y, int w, int h, const std::vector<BYTE>* data, const 
 		Ling::D2D::get()->deviceContext->CreateBitmap(D2D1::SizeU(w, h), data->data(), w * 4, &props, drawing->screenImg.GetAddressOf());
 	}
 	else {
-		drawing->screenImg = WinCap::get()->getCutImg();
+		auto winCap = WinCap::get();
+		// getCutImg() 只给选区那一块，而常驻剪裁的采样点要能往外拖，得知道"框外还有什么"。
+		// 于是把整屏原图和"当前显示的是它里面哪一块"一并记下来（见 ensureCropSource）。
+		// 底图本身仍用 getCutImg()：手绘选区那圈透明外边是它抠出来的，自己切矩形会丢
+		drawing->screenImg = winCap->getCutImg();
+		srcImg = winCap->getScreenImg();
+		// 与 getCutImg() 同一套取整：左上加尺寸，而不是各自截断右 / 下 —— 否则浮点选区
+		// 可能让 cropRect 比刚拿到的那张底图宽出一两个像素，往后一拖就错位
+		auto& r = winCap->cutMask->maskRect;
+		const int cx = (int)r.left, cy = (int)r.top;
+		const int cw = (int)(r.right - r.left), ch = (int)(r.bottom - r.top);
+		cropRect = D2D1::RectU((UINT32)cx, (UINT32)cy, (UINT32)(cx + cw), (UINT32)(cy + ch));
+		// 整屏原图与选区是同一套像素坐标（screenImg 抓的就是这一整屏），所以选区左上角
+		// 就是"标注坐标 (0,0) 落在源图的哪儿"。imgOrigin 照旧留 {0,0}：底图与标注此刻是重合的
+		cropBase = POINT{ static_cast<LONG>(cropRect.left), static_cast<LONG>(cropRect.top) };
 	}
 	toolMain = std::make_unique<ToolMain>(this);
     toolSub = std::make_unique<ToolSub>(this);
@@ -329,7 +344,7 @@ POINT WinPin::toImgPos(const POINT& pos) const
 {
 	// 出来的坐标是"标注坐标系"里的，不是底图像素 —— 剪过一刀之后两者差一个
 	// drawing->imgOrigin（见 Canvas.h）。shape 存的、认的、画的一律是前者，所以这里要加回来；
-	// 而剪裁框量的是屏幕上的位置，它除回倍数就行，不加这个偏移（见 confirmCrop）
+	// 而剪裁采样点量的是屏幕上的位置，它除回倍数就行，不加这个偏移（见 applyCropRect）
 	auto vs = viewScale();
 	const auto& o = drawing->imgOrigin;
 	if (vs == 1.f) return POINT{ pos.x + o.x, pos.y + o.y };
@@ -585,8 +600,68 @@ void WinPin::setMouseThrough(bool on)
 
 bool WinPin::hasDrawTool() const
 {
-	// pinCrop 也不是画笔：它是"对整张图动刀"，鼠标归剪裁框，路径见 onDown / onMove
-	return toolMain && !toolMain->curId.empty() && toolMain->curId != L"pin" && toolMain->curId != L"pinCrop";
+	// pin 不是画笔：它只是"调这张贴图自己的属性"，鼠标该归拖窗口那条路
+	return toolMain && !toolMain->curId.empty() && toolMain->curId != L"pin";
+}
+
+// ---- 「选择对象」----
+// 它算"能画东西"的工具（见 hasDrawTool）：左键要留在画布上，不能落进"拖窗口"那条路；
+// 区别只在于点中的是已有元素，不是新建一笔
+bool WinPin::selecting() const
+{
+	// 读的是模式标志，不是 curId —— 点中元素后 curId 已经换成那个元素的工具，
+	// 拿它当判据的话第二次点选就不生效了（见 selectMode）
+	return selectMode;
+}
+
+D2D1_RECT_F WinPin::marqueeRect() const
+{
+	return D2D1::RectF(
+		(float)std::min(marqueeAnchor.x, marqueeCur.x),
+		(float)std::min(marqueeAnchor.y, marqueeCur.y),
+		(float)std::max(marqueeAnchor.x, marqueeCur.x),
+		(float)std::max(marqueeAnchor.y, marqueeCur.y));
+}
+
+// 框选抬手：把外接框与选框相交的元素收进 Canvas::multiSelected。
+// 判定是"相交"而不是"完全框住" —— 细长元素（线条 / 箭头）只要被框碰到就算，
+// 要求整个框住的话得瞄得很准，反而是个负担
+void WinPin::collectMarquee()
+{
+	// 只是点了一下空白（一步没拖）：选框退化成一个点，什么都不选。
+	// 不判这一句的话，点在"外接框能容纳它、自身命中范围却不在那儿"的位置上也会被选中 ——
+	// 空心矩形的内部、椭圆的四角都是这种地方，而那一下本该是"点空白取消选中"
+	if (!hasDragged) return;
+	const auto r = marqueeRect();
+	for (auto& up : drawing->history->shapes) {
+		auto shape = up.get();
+		if (shape->isUndo) continue;
+		// 没有外接框的元素不参与 —— 水印铺满整张图，算进来的话拉什么框都会把它一起选中
+		D2D1_RECT_F b{};
+		if (!shape->getShapeBounds(b)) continue;
+		if (r.left > b.right || b.left > r.right || r.top > b.bottom || b.top > r.bottom) continue;
+		drawing->multiSelected.push_back(shape);
+	}
+}
+
+// 框选的两层提示：正在拉的那个选框，以及多选那一批各自的外框。
+// 两者都画在标注坐标系里（调用方没换过变换），所以跟着 Ctrl+滚轮缩放、剪裁一起走。
+//
+// 多选那一批刻意不画夹点、不画动作图标：那些是"单选"才有的东西（改样式、拖动、
+// 右上角那枚 × 都只作用于 selected 一个）。整批只表达一件事 —— 这些会被一起删掉
+void WinPin::paintSelection(ID2D1DeviceContext* ctx)
+{
+	if (!borderBrush || !selectBrush) return;
+	if (marqueeOn) {
+		auto r = marqueeRect();
+		ctx->FillRectangle(r, selectBrush.Get());
+		ctx->DrawRectangle(r, borderBrush.Get(), dpi);
+	}
+	for (auto* shape : drawing->multiSelected) {
+		D2D1_RECT_F b{};
+		if (!shape->getShapeBounds(b)) continue;
+		ctx->DrawRectangle(b, borderBrush.Get(), dpi);
+	}
 }
 
 // 藏进屏幕边上的那条书签条里（见 PinHiddenBar），再按一次就是放回来。
@@ -597,9 +672,10 @@ void WinPin::setHidden(bool on, BarEdge edge)
 	isHidden = on;
 	if (on) {
 		barEdge = edge;
-		// 编辑器与剪裁框画的都是"贴图窗口里的东西"，窗口一藏它们就没上下文了
+		// 编辑器与剪裁采样点画的都是"贴图窗口里的东西"，窗口一藏它们就没上下文了
 		if (editingShape) editingShape->finishEditing();
-		if (cropMask) toolMain->cancelSelect();
+		// 藏在边上的这段时间不接鼠标，正在拉的那一刀也得放开，否则 capture 还挂在手上
+		if (cropDragging()) endCropDrag();
 		// 两条工具条是独立窗口，不跟着收就是浮在桌面上的一排按钮，点下去还不知道点的哪张图
 		toolsWereVisible = isToolsVisible();
 		toolMain->hide();
@@ -648,8 +724,8 @@ void WinPin::peek(bool on)
 
 bool WinPin::isBusy() const
 {
-	// 手上正拿着这张图：拖着窗口 / 正在画一笔 / 文字编辑器开着 / 剪裁框拉着 / 正拖着选文字
-	return isMouseDown || editingShape != nullptr || cropMask != nullptr || selDragging;
+	// 手上正拿着这张图：拖着窗口 / 正在画一笔 / 文字编辑器开着 / 正拉着剪裁采样点 / 正拖着选文字
+	return isMouseDown || editingShape != nullptr || cropDragging() || selDragging;
 }
 
 std::vector<WinPin*> WinPin::getHiddenPins(BarEdge edge)
@@ -709,7 +785,8 @@ void WinPin::updateNumberPreview(const POINT& imgPos)
 	if (!numberPreview) numberPreview = std::make_unique<ShapeNumber>(drawing.get(), true);
 	numberPreview->previewAt((float)imgPos.x, (float)imgPos.y, toolSub->peekNumberVal());
 	numberPreviewOn = true;
-	refresh();
+	// 这个影子是要"贴着光标"的，排队等 WM_PAINT 就会一直落在鼠标后面
+	refreshNow();
 }
 
 void WinPin::hideNumberPreview()
@@ -741,9 +818,6 @@ void WinPin::setPinTitle(const std::wstring& t)
 void WinPin::layoutTools()
 {
 	if (!toolMain || !toolSub) return;
-	// 剪裁态与 curId 是同一件事的两面，在这里收口：selectTool / cancelSelect / 右键收起 /
-	// ESC 退一步最后都会走到本函数，不必给每条路各挂一个回调
-	syncCropMode();
 	// WinPin 的 hwnd 此时可能还没创建（本函数会在构造期调用），所以用矩形而不是窗口句柄找显示器。
 	RECT winRect{ x, y, x + static_cast<int>(w), y + static_cast<int>(h) };
 	MONITORINFO mi{ .cbSize = sizeof(MONITORINFO) };
@@ -988,19 +1062,18 @@ void WinPin::layout()
 			drawing->selected->paintActionBtns(ctx);
 		}
 	}
+	// 「选择对象」的框选框与多选外框。压在夹点与动作图标之上，也画在标注坐标系里 ——
+	// 它们框的是元素，不是窗口
+	paintSelection(ctx);
 	// 蓝边框和倍数提示属于窗口装饰，不跟着图缩放：变换收回来，按窗口坐标画。
 	// 边框也因此从"底图矩形"改成"窗口矩形"，任何倍数下都是 2*dpi 粗
 	ctx->SetTransform(D2D1::Matrix3x2F::Identity());
 	ctx->DrawRectangle(D2D1::RectF(0.f, 0.f, w, h), borderBrush.Get(), 2*dpi);
+	// 剪裁采样点压在边框上，任何时候都能拖（缩略图 / 细条 / 藏起来时除外，见 paintCropHandles）
+	paintCropHandles(ctx);
 	paintTitle(ctx);
 	paintScaleTip(ctx);
 	paintToast(ctx);
-	// 剪裁框与提示同样是窗口装饰，用窗口坐标画（上面已经把缩放变换收回来了）。
-	// 蒙层会把选区以外的整块压暗，正好把"这一刀要留下哪一块"标出来
-	if (cropMask) {
-		cropMask->paint(ctx);
-		paintCropTip(ctx);
-	}
 	if (textSelect) paintTextTip(ctx);
     canvas->finishPaint();
 }
@@ -1028,20 +1101,15 @@ void WinPin::onDown(POINT pos, BOOL isRight)
 	// 而且点不到（命中测试落在底图上）。layoutTools 里那次 raiseTools 只在重叠状态**变化**时跑，
 	// 管不到"激活导致的重排"，所以每次点到图上都补一次
 	raiseTools();
-	// 剪裁态：鼠标整个交给剪裁框（右键 = 放弃这一刀，与长截图那边的剪裁一致）。
-	// 必须排在下面所有分支之前 —— 这一下既不是画画，也不是拖窗口，更不该被算进双击
-	if (cropMask) {
-		if (isRight) {
-			toolMain->cancelSelect();   // 走它是因为它最后会到 layoutTools -> syncCropMode
+	// 剪裁采样点：压在图的边界上，落在它上面就是"改这张图保留原图的哪一块"，不是画画也不是
+	// 拖窗口。必须排在所有分支之前 —— 沿边线画一笔是很常见的动作，但用户瞄着采样点按下去
+	// 只想改范围（fastcapture 那套就是这么定的）。右键让开：那一套是收放工具条
+	if (!isRight) {
+		auto handle = cropHandleAt(pos);
+		if (handle >= 0) {
+			startCropDrag(handle);
 			return;
 		}
-		cropDragging = true;
-		// 已经有框了就是调它（startAdjust 自己会按落点认边认角），没有才是新框一道
-		cropAdjusting = cropMask->hasRect();
-		if (cropAdjusting) cropMask->startAdjust(pos);
-		else cropMask->startMakeRect(pos);
-		refresh();
-		return;
 	}
 	// 选文态：左键这一下是"划选一段文字"，既不落笔（curId 已经放掉）也不拖窗口。
 	// 整条判断必须排在 isLocked 之前 —— 锁的是"别改这张图"，在里面选字不算改图
@@ -1160,6 +1228,38 @@ void WinPin::onDown(POINT pos, BOOL isRight)
 	}
 	// 以下都是交给 shape 的坐标，一律换算成底图像素（拖窗口那条路仍用窗口坐标）
 	auto imgPos = toImgPos(pos);
+	// 这一下按下就进入"单选 / 框选"了，上一轮框选那一批到此为止。不清的话
+	// Delete 会连上次框的一起删（下面的分支会按需要重新填）
+	drawing->multiSelected.clear();
+	if (selecting()) {
+		if (drawing->shapeHover) {
+			// 点在元素上：与别的工具走同一套 —— 建立单选、把按下转给它，
+			// 于是拖它能挪位置、拉夹点能改大小。抬手时若一步没拖过才切工具（见 onUp）
+			drawing->selected = drawing->shapeHover;
+			drawing->shapeCur = nullptr; //改的是已有元素，不参与空元素判定
+			drawing->shapeHover->mouseDown((float)imgPos.x, (float)imgPos.y);
+			return;
+		}
+		// 点在空白处。默认让给"拖窗口"—— 挪窗口是贴图窗口里最常用的手势，选择模式
+		// 不该整条吃掉它；框选是一次性的批量操作，按住 Ctrl 再拖
+		drawing->selected = nullptr;
+		if (GetKeyState(VK_CONTROL) & 0x8000) {
+			// 框选。刻意不走 createShape —— select 这个 id 在 History 里没有对应的元素，
+			// 走了也只是白建一个空指针
+			marqueeOn = true;
+			marqueeAnchor = imgPos;
+			marqueeCur = imgPos;
+			refresh();
+			return;
+		}
+		// 拖窗口：与"没选画笔"那条路同一套收尾（这里先把工具条收起来，onUp 重排并请回来）。
+		// 得用 selectDrag 把 onUp 一起带过去 —— 这会儿 curId 是「选」或点中那个元素的工具，
+		// hasDrawTool 为真，那条路自己认不出这一下是拖窗口
+		selectDrag = true;
+		toolsWereVisible = isToolsVisible();
+		toolMain->hide();
+		return;
+	}
 	if (drawing->shapeHover) {
 		// 点在已有元素上：这一下建立选中。选中态独立于悬停，移开鼠标也不会丢
 		drawing->selected = drawing->shapeHover;
@@ -1175,12 +1275,12 @@ void WinPin::onDown(POINT pos, BOOL isRight)
 
 void WinPin::onMove(POINT pos)
 {
-	// 剪裁态：拖剪裁框。放在最前面 —— 缩略图 / 细条那两套收法在进剪裁时就已经还原了
-	if (cropMask) {
-		if (!cropDragging) return;
-		if (cropAdjusting) cropMask->adjust(pos);
-		else cropMask->makeRect(pos);
-		refresh();
+	// 正拉着剪裁采样点：换算成屏幕坐标再算新范围。窗口自己也在跟着挪 / 改尺寸，
+	// 客户区坐标一路在变，只有屏幕坐标是稳的
+	if (cropDragging()) {
+		POINT screen{ pos.x, pos.y };
+		ClientToScreen(hwnd, &screen);
+		dragCropTo(screen);
 		return;
 	}
 	// 选文态：按着就是在扩大 / 缩小选区（插入点跟着鼠标走）；没按着只是在图上划过，
@@ -1188,7 +1288,7 @@ void WinPin::onMove(POINT pos)
 	if (textSelect) {
 		if (!selDragging) return;
 		selCur = caretIndexAt(toImgPos(pos));
-		refresh();
+		refreshNow();
 		return;
 	}
 	// 缩略图上不做 hover / 命中：点一下是"还原"，夹点也没有地方摆
@@ -1204,7 +1304,8 @@ void WinPin::onMove(POINT pos)
 	// 拖窗口用的是窗口坐标（pressPos 也是），只有交给 shape 的才换算成底图像素
 	auto imgPos = toImgPos(pos);
 	if (isMouseDown) {
-		if (!hasDrawTool()) {
+		// selectDrag：选择模式下按在空白处拖窗口的那一下，也归这条路（见 onDown）
+		if (!hasDrawTool() || selectDrag) {
 			auto newX = x + pos.x - pressPos.x;
 			auto newY = y + pos.y - pressPos.y;
 			auto dx = newX - x, dy = newY - y;
@@ -1216,11 +1317,19 @@ void WinPin::onMove(POINT pos)
 			syncGroupPos(this, dx, dy);
 			return;
 		}
+		// 正拉着框选：选框跟着光标走。hasDragged 的判法与别的拖拽同一条规矩 ——
+		// 抬手时 collectMarquee 要用它区分"拉了个框"和"只是点了一下空白"
+		if (marqueeOn) {
+			if (pos.x != pressPos.x || pos.y != pressPos.y) hasDragged = true;
+			marqueeCur = imgPos;
+			refreshNow();
+			return;
+		}
 		else if(drawing->shapeHover) {
 			// 光标一步没挪也会来 WM_MOUSEMOVE，所以跟按下点比一下再算拖动
 			if (pos.x != pressPos.x || pos.y != pressPos.y) hasDragged = true;
 			drawing->shapeHover->mouseDrag((float)imgPos.x, (float)imgPos.y);
-			refresh();
+			refreshNow();
 		}
 	}
 	else
@@ -1240,7 +1349,7 @@ void WinPin::onMove(POINT pos)
 				if (drawing->shapeHover != cur) {
 					drawing->shapeHover = cur;
 					setTimer(800, 100);
-					refresh();
+					refreshNow();
 				}
 				// 落在已有元素上，这一下是选中它：没有"将要落下的号"可预览
 				hideNumberPreview();
@@ -1250,16 +1359,17 @@ void WinPin::onMove(POINT pos)
 		if (drawing->shapeHover) {
 			drawing->shapeHover = nullptr;
 		}
+		// 「选择对象」没有"将要落下的号"可预览，别给它画一个
+		if (selecting()) return;
 		updateNumberPreview(imgPos);
 	}
 }
 
 void WinPin::onUp(POINT pos, BOOL isRight)
 {
-	// 剪裁态：这一下只是把剪裁框放稳，没有 capture、也没有新建元素要收尾
-	if (cropMask) {
-		cropDragging = false;
-		cropAdjusting = false;
+	// 剪裁采样点：这一下只是把范围放稳，没有新建元素要收尾
+	if (cropDragging()) {
+		endCropDrag();
 		return;
 	}
 	// 选文态：这一下只是把选区放下，除了 capture 没有别的东西要收（也没有新建的元素要清）
@@ -1275,11 +1385,19 @@ void WinPin::onUp(POINT pos, BOOL isRight)
 	if (isRight) return;
 	isMouseDown = false;
 	ReleaseCapture();
+	// 框选：抬手把选框里那批收下。没有新建的元素要收尾，也没有"空笔"要判定
+	if (marqueeOn) {
+		marqueeOn = false;
+		collectMarquee();
+		refresh();
+		return;
+	}
 	auto justCreated = drawing->shapeCur;
 	drawing->shapeCur = nullptr;
 	// 这一下按下有没有新建出一个留得住的元素：紧接着来第二下凑成双击时要把它撤掉（见 onDown）
 	prevPressCreatedShape = false;
-	if (!hasDrawTool()) {
+	if (!hasDrawTool() || selectDrag) {
+		selectDrag = false;
 		// 拖到屏幕最左边 / 最顶上松手 = 把这张图藏到那条边上（左 / 上各挂一条书签，
 		// 见 PinHiddenBar）。藏起来之后窗口就没了，工具条自然也不该再请出来，所以到此为止
 		if (hasDragged) {
@@ -1312,6 +1430,12 @@ void WinPin::onUp(POINT pos, BOOL isRight)
 		// 画完的这一笔保持选中，紧接着就能改它的样式。上面空笔那条路已经 return 了，
 		// 走到这里的都是留在图上的
 		drawing->selected = drawing->shapeHover;
+		// 「选择对象」点一下元素 = 选中它，再把这个元素的工具请出来 —— 于是不必先判断
+		// "这是哪个组件"、再回头切一次工具。判的是模式而不是 curId，所以接着点下一个元素
+		// 照样切（curId 已经被上一次点选换成了那个元素的工具，见 selecting）。
+		// 拖过的（拖位置 / 拉夹点）不切：那种手势要的是"就地把这一笔调一下"，
+		// 切走反而把刚拉开的夹点收起来了
+		if (selecting() && !hasDragged) toolMain->selectTool(drawing->shapeHover->toolId);
 		refresh();
 		setTimer(800, 100);
 	}
@@ -1377,12 +1501,19 @@ void WinPin::requestRefresh()
 	refresh();
 }
 
+void WinPin::refreshNow()
+{
+	if (!hwnd) return;
+	refresh();
+	UpdateWindow(hwnd);
+}
+
 History* WinPin::getHistory() const
 {
 	return drawing->history.get();
 }
 
-void WinPin::onToolStyleChanged()
+void WinPin::onToolStyleChanged(bool styleEnumChanged)
 {
 	// 优先级：正在编辑的文本 > 选中的元素。两者都没有就什么都不改 ——
 	// 这条链路以前只认 editingShape，选中态没有单独的载体，选中的矩形族
@@ -1390,6 +1521,9 @@ void WinPin::onToolStyleChanged()
 	auto target = editingShape ? editingShape : drawing->selected;
 	if (!target) return;
 	target->applyStyle();
+	// 档位（箭头样式 / 线条类型 / 端点 / 线型）只有用户真去动那个下拉时才套过去。
+	// 颜色、填充开关、滚轮调粗细走的是同一个入口，带上档位的话它们会把形状一起换掉
+	if (styleEnumChanged) target->applyToolStyle();
 	refresh();
 }
 
@@ -1412,7 +1546,12 @@ void WinPin::applyStyleToAllShapes()
 	for (auto& shape : drawing->history->shapes)
 	{
 		if (shape->isUndo) continue;
-		if (shape->toolId == toolMain->curId) shape->applyStyle();
+		// 「全」的意思是"照我工具条这套来"，包括形状那一档 —— 比照选中态多走一步
+		// applyToolStyle（见 onToolStyleChanged 里那两条为什么分开）
+		if (shape->toolId == toolMain->curId) {
+			shape->applyStyle();
+			shape->applyToolStyle();
+		}
 	}
 	refresh();
 }
@@ -1447,7 +1586,7 @@ void WinPin::setTextSelect(bool on)
 	if (isClosed || textSelect == on) return;
 	textSelect = on;
 	if (on) {
-		// 细条 / 缩略图这两种收法都没给"选一段字"留位置，先还原（与 beginCrop 同一个道理）
+		// 细条 / 缩略图这两种收法都没给"选一段字"留位置，先还原（剪裁采样点同一个道理）
 		if (isThumb) setThumbMode(false);
 		if (isMinimized) setMinimized(false);
 		// 两套手势都要吃左键，画笔必须让位：curId 空着 onDown 才会把这一下当"选文字"。
@@ -1736,13 +1875,6 @@ bool WinPin::takeDoubleClick()
 
 void WinPin::onKey(UINT key)
 {
-	// 剪裁态只认两个键：回车落这一刀，ESC 放弃。其余快捷键这会儿都用不上，
-	// 尤其不能让 Ctrl+C（复制并关窗）和 Delete（删元素）插进来
-	if (cropMask) {
-		if (key == VK_RETURN) confirmCrop();
-		else if (key == VK_ESCAPE) toolMain->cancelSelect();
-		return;
-	}
 	// 选文态：只认 Ctrl+C（把选中的那段文字送进剪贴板，**不关窗**）、Ctrl+A（全选）、
 	// ESC（先清掉选区，再退整个模式）。这一句必须排在 isLocked 和所有全局快捷键之前 ——
 	// 别的键在这里一概不认，否则 Delete 会删掉图上标注、回车会把整张图复制走并关窗
@@ -1806,7 +1938,18 @@ void WinPin::onKey(UINT key)
 		copyToClipboard();
 	}
 	else if (key == VK_DELETE) {
-		drawing->history->removeActiveShape();
+		// 框选出来的那一批优先：一次删掉整批。走 undoShapes 而不是逐个 removeShape ——
+		// 那是真 erase，框错一次就没得救；undoShapes 只打撤销标记，与「清除全部水印」
+		// 同一条路，Ctrl+Y 能整批找回来。整批删除的误伤面比单个大得多，值得留一条退路
+		//
+		// 传的是副本：undoShapes 会把命中的元素从 multiSelected 里摘掉
+		//（见 Canvas::dropFromMultiSelect），把那个 vector 本身递进去就是边遍历边改它
+		if (!drawing->multiSelected.empty()) {
+			auto batch = drawing->multiSelected;
+			drawing->multiSelected.clear();
+			drawing->history->undoShapes(batch);
+		}
+		else drawing->history->removeActiveShape();
 	}
 	else if (key == VK_PRIOR) {     // PageUp：往前翻历史截图（更早的那张）
 		previewHistory(1);
@@ -1834,121 +1977,205 @@ void WinPin::onKey(UINT key)
 	}
 }
 
-// 剪裁。底图裁一块出来当新底图，已经画好的标注一个都不搬 —— 坐标映射整体挪过去
-//（Canvas::imgOrigin），于是剪完还能接着改样式、撤销、导出，剪掉的只是"图"那部分。
-// 这一条是作者点名的语义：剪裁不该把标注烘死
-void WinPin::syncCropMode()
+// ---- 常驻剪裁 ----
+// 底图四周那 8 个采样点。拖它就是改"这张贴图保留原图的哪一块"：往里收缩、整体平移、
+// 往外扩大（有原图可扩的话）；已经画好的标注一个都不搬 —— 坐标映射整体挪过去
+//（Canvas::imgOrigin），于是拖完还能接着改样式、撤销、导出，裁掉的只是"图"那部分。
+// 这一条是作者点名的语义：剪裁不该把标注烘死。
+//
+// 为什么要单独留一张源图：缩掉的那块不能白丢 —— 往回收的时候得从原图里把它取回来。
+// 截图那条路进来的是整屏原图；别的路没有更大的原图，ensureCropSource 拿当前底图顶替自己
+bool WinPin::canCrop() const
 {
-	const bool want = toolMain && toolMain->curId == L"pinCrop";
-	if (want == isCropping()) return;
-	if (want) beginCrop();
-	else endCrop();
+	return !isThumb && !isMinimized && !isHidden && !isLocked && !hasAnim() && drawing->screenImg != nullptr;
 }
 
-void WinPin::beginCrop()
+void WinPin::cropHandleCenters(D2D1_POINT_2F (&centers)[8]) const
 {
-	// 先把标志立起来（isCropping 看的就是 cropMask），因为下面 setThumbMode / setMinimized
-	// 会回调 layoutTools，而 layoutTools 又转回这里 —— 标志没立就会自己叠自己
-	cropMask = std::make_unique<CutMask>(this);
-	// 细条 / 缩略图这两种收法都没给剪裁框留位置，先还原再谈剪裁
-	if (isThumb) setThumbMode(false);
-	if (isMinimized) setMinimized(false);
-	// 尺寸必须自由：截图那边的「固定区域」不能把剪裁框钉成别的大小
-	cropMask->ignoreFixedSize = true;
-	// 标签量的是窗口坐标，而用户关心的是剪下来还剩多少像素，缩放之后两者对不上，藏掉
-	cropMask->hideLabel = true;
-	if (editingShape) editingShape->finishEditing();
-	drawing->shapeHover = nullptr;
-	drawing->selected = nullptr;
-	cropTip = Ling::D2D::get()->makeTextLayout(Lang::get(L"tool.pinCropTip"), 13.f * dpi);
-	layoutTools();
-	refresh();
+	// 量的是**窗口**矩形 (0,0)-(w,h)，不是"标注坐标系里那张图"：采样点压在边框上，
+	// 所以任何倍数、任何剪裁状态下它都贴着窗口的边
+	const float cx{ w / 2.f }, cy{ h / 2.f };
+	centers[0] = D2D1::Point2F(0.f, 0.f);   // 左上
+	centers[1] = D2D1::Point2F(cx, 0.f);    // 上
+	centers[2] = D2D1::Point2F(w, 0.f);     // 右上
+	centers[3] = D2D1::Point2F(w, cy);      // 右
+	centers[4] = D2D1::Point2F(w, h);       // 右下
+	centers[5] = D2D1::Point2F(cx, h);      // 下
+	centers[6] = D2D1::Point2F(0.f, h);     // 左下
+	centers[7] = D2D1::Point2F(0.f, cy);    // 左
 }
 
-void WinPin::endCrop()
+void WinPin::paintCropHandles(ID2D1DeviceContext* ctx)
 {
-	cropMask.reset();
-	cropTip = nullptr;
-	cropDragging = false;
-	cropAdjusting = false;
-	refresh();
-}
-
-void WinPin::confirmCrop()
-{
-	if (!cropMask || !cropMask->hasRect()) return;
-	auto sz = getImgSize();
-	if (sz.width == 0 || sz.height == 0) return;
-	auto& r = cropMask->maskRect;
-	// 剪裁框量的是屏幕上看到的那块图，所以除回倍数就是底图像素 —— 这里**不加** imgOrigin，
-	// 那个偏移是"标注坐标 → 底图像素"的事，与屏幕上看到的位置无关
-	const int x0 = std::clamp((int)std::lround(r.left / scale), 0, (int)sz.width);
-	const int y0 = std::clamp((int)std::lround(r.top / scale), 0, (int)sz.height);
-	const int x1 = std::clamp((int)std::lround(r.right / scale), 0, (int)sz.width);
-	const int y1 = std::clamp((int)std::lround(r.bottom / scale), 0, (int)sz.height);
-	const int nw = x1 - x0, nh = y1 - y0;
-	if (nw <= 0 || nh <= 0) return;
-	ComPtr<ID2D1Bitmap1> bmp;
-	{
-		D2D1_BITMAP_PROPERTIES1 props{};
-		// 像素格式与 DPI 都必须跟源位图一模一样，差一点 CopyFromBitmap 就报 E_INVALIDARG。
-		// 截图那条路进来的底图是 ALPHA_MODE_IGNORE（抓屏数据没有 alpha，见 WinCap::getCutImg），
-		// 长图那条路是 PREMULTIPLIED —— 不能写死一个，照抄源位图的
-		props.pixelFormat = drawing->screenImg->GetPixelFormat();
-		drawing->screenImg->GetDpi(&props.dpiX, &props.dpiY);
-		props.bitmapOptions = D2D1_BITMAP_OPTIONS_NONE;
-		auto hr = Ling::D2D::get()->deviceContext->CreateBitmap(D2D1::SizeU((UINT32)nw, (UINT32)nh),
-			nullptr, 0, &props, bmp.GetAddressOf());
-		if (FAILED(hr)) return;
+	if (!canCrop() || !borderBrush) return;
+	D2D1_POINT_2F centers[8];
+	cropHandleCenters(centers);
+	// 先垫一层白圆再描蓝边，与 shape 那几枚动作按钮同一套画法：底图什么颜色都有可能，
+	// 纯蓝实心点压在深色画面上几乎看不见
+	const auto r = kCropHandleR * dpi;
+	for (auto& c : centers) {
+		ctx->FillEllipse(D2D1::Ellipse(c, r, r), brushTipText.Get());
+		ctx->DrawEllipse(D2D1::Ellipse(c, r, r), borderBrush.Get(), dpi);
 	}
-	// 只在 GPU 内部搬一块，不走 CPU：拷贝的是底图自己的一块矩形。
-	// srcRect 要的是指针，所以先落成一个具名局部量（D2D1::RectU 给的是右值）
-	const D2D1_RECT_U srcRect = D2D1::RectU((UINT32)x0, (UINT32)y0, (UINT32)x1, (UINT32)y1);
-	auto hrc = bmp->CopyFromBitmap(nullptr, drawing->screenImg.Get(), &srcRect);
-	if (FAILED(hrc)) return;
-	// 换了底图，动图那套帧序列就对不上了（帧尺寸与底图是钉死的），一并丢掉停播
-	killTimer(102);
-	frames.clear();
-	frames.shrink_to_fit();
-	frameIndex = 0;
-	animPlaying = false;
-	animSrc.clear();
-	drawing->screenImg = bmp;
-	// 标注坐标不用动：把偏移加上被裁掉的那一块，图与标注就重新对齐了。
-	// 落在新图外面的那一截不用管 —— 画到目标位图上天然会被裁掉
-	drawing->imgOrigin.x += x0;
-	drawing->imgOrigin.y += y0;
-	// 底图换了，认出来的是老图上的词，重认一遍。偏移在上面已经加过了，startOcr 取到的
-	// 就是新的那一个，词框照样落在字上 —— 与 shape 同一套坐标，剪裁搬不动它们
+}
+
+// 命中的是第几个采样点，没命中返回 -1。命中框比画出来的圆大一圈（那么小的点差几个像素
+// 就够不着），而且取最近的那一个 —— 图小的时候几个采样点会挨在一起，按顺序取第一个
+// 会让后一个永远点不着
+int WinPin::cropHandleAt(const POINT pos) const
+{
+	if (!canCrop()) return -1;
+	D2D1_POINT_2F centers[8];
+	cropHandleCenters(centers);
+	const auto r = kCropHandleHitR * dpi;
+	int hit{ -1 };
+	float best{ 0.f };
+	for (int i = 0; i < 8; ++i) {
+		const auto dx = centers[i].x - (float)pos.x, dy = centers[i].y - (float)pos.y;
+		const auto d2 = dx * dx + dy * dy;
+		if (d2 > r * r) continue;
+		if (hit < 0 || d2 < best) { hit = i; best = d2; }
+	}
+	return hit;
+}
+
+void WinPin::startCropDrag(const int handle)
+{
+	ensureCropSource();
+	if (!srcImg) return;
+	cropHandle = handle;
+	// 源图左上角此刻在屏幕的哪儿：由窗口位置和"显示的是哪一块"反算。窗口可以被拖走、
+	// 被 Ctrl+滚轮缩放过，这个值存不住，只在一次拖拽期间有效 —— 拖左边 / 上边时窗口
+	// 自己就在挪，客户区坐标一路在变，只有这个屏幕坐标是稳的
+	const auto vs = viewScale();
+	dragSrcPos.x = x - (int)std::lround((float)cropRect.left * vs);
+	dragSrcPos.y = y - (int)std::lround((float)cropRect.top * vs);
+	// 与拖窗口、画笔那两条路一样：占住 capture，鼠标划出窗口也收得到移动与抬手
+	isMouseDown = true;
+	SetCapture(hwnd);
+}
+
+void WinPin::dragCropTo(const POINT& screenPos)
+{
+	if (!cropDragging() || !srcImg) return;
+	const auto srcSize = srcImg->GetPixelSize();
+	const auto vs = viewScale();
+	// 光标落在源图的哪个像素。用拖之前定下的源图屏幕位置算**绝对**位置，不做累加 ——
+	// 拖左边 / 上边时窗口自己一挪，累加就把同一段位移记两遍，越拖越漂
+	const int px = (int)std::lround((screenPos.x - dragSrcPos.x) / vs);
+	const int py = (int)std::lround((screenPos.y - dragSrcPos.y) / vs);
+	int l{ (int)cropRect.left }, t{ (int)cropRect.top };
+	int r{ (int)cropRect.right }, b{ (int)cropRect.bottom };
+	// 每个采样点只管它那两条边：角上是横竖各一条，边中点只有一条，对面那条一概不动
+	switch (cropHandle) {
+	case 0: l = px; t = py; break;
+	case 1: t = py; break;
+	case 2: r = px; t = py; break;
+	case 3: r = px; break;
+	case 4: r = px; b = py; break;
+	case 5: b = py; break;
+	case 6: l = px; b = py; break;
+	case 7: l = px; break;
+	default: return;
+	}
+	// 先夹进源图范围，再兜一个最小边长：缩成 0 宽 / 0 高就取不出位图了。
+	// 兜的时候动的是正在拖的那条边，对面那条守在原地
+	l = std::clamp(l, 0, (int)srcSize.width);
+	r = std::clamp(r, 0, (int)srcSize.width);
+	t = std::clamp(t, 0, (int)srcSize.height);
+	b = std::clamp(b, 0, (int)srcSize.height);
+	constexpr int minSide{ 8 };
+	if (r - l < minSide) {
+		if (cropHandle == 0 || cropHandle == 6 || cropHandle == 7) l = std::max(0, r - minSide);
+		else r = std::min((int)srcSize.width, l + minSide);
+	}
+	if (b - t < minSide) {
+		if (cropHandle == 0 || cropHandle == 1 || cropHandle == 2) t = std::max(0, b - minSide);
+		else b = std::min((int)srcSize.height, t + minSide);
+	}
+	if (r - l < 1 || b - t < 1) return;
+	if (l == (int)cropRect.left && t == (int)cropRect.top
+		&& r == (int)cropRect.right && b == (int)cropRect.bottom) return;
+	cropRect = D2D1::RectU((UINT32)l, (UINT32)t, (UINT32)r, (UINT32)b);
+	applyCropRect();
+}
+
+void WinPin::endCropDrag()
+{
+	if (!cropDragging()) return;
+	cropHandle = -1;
+	isMouseDown = false;
+	// 与 onUp 里那两条路一致：capture 还挂在手上，得放掉
+	ReleaseCapture();
+	// 一刀落定，这里才重认一遍文字：拖动中每帧重认一遍等于每帧一次整图回读 + 一个识别线程，
+	// 拖起来必然是卡的（见 applyCropRect 里的说明）。认的时机放在这儿，偏移已经由最后那次
+	// applyCropRect 对好了，词框照样落在字上
 	clearOcr();
 	startOcr();
-	// 剪完回 100%：尺寸一变，原来那个倍数下的锚点已经没有意义了
-	scale = 1.f;
-	applyWinSize();
-	// 窗口跟着选区走：保留下来的那一块在屏幕上停在原处，用户看到的是"框住的那块变成了整张图"。
-	// 不跟的话整张图会突然缩到原来窗口的左上角去，框了半天不知道东西跑哪了
-	setPosition(x + (int)std::lround(r.left), y + (int)std::lround(r.top));
-	// 退出剪裁态。cancelSelect -> layoutTools -> syncCropMode 会把 cropMask 收掉，
-	// 顺手也把工具按钮的选中态复位
-	toolMain->cancelSelect();
 	layoutTools();
 	refresh();
 }
 
-void WinPin::paintCropTip(ID2D1DeviceContext* ctx)
+// 按 cropRect 从源图重切一块当底图，并把窗口摆到"留下来的那块在屏幕上不动"的位置。
+// 标注坐标一个都不动：只把 imgOrigin 对到新的左上角，图和标注就重新对齐了
+void WinPin::applyCropRect()
 {
-	if (!cropTip || !brushTipBg) return;
-	DWRITE_TEXT_METRICS tm{};
-	if (FAILED(cropTip->GetMetrics(&tm))) return;
-	auto pad = 8.f * dpi;
-	D2D1_RECT_F bar{ w / 2.f - tm.width / 2.f - pad, pad,
-		w / 2.f + tm.width / 2.f + pad, pad + tm.height + pad * 2 };
-	// 图窄到装不下时贴左边画，别画到窗口外面去
-	if (bar.left < pad) bar.left = pad;
-	if (bar.right > w - pad) bar.right = w - pad;
-	ctx->FillRectangle(bar, brushTipBg.Get());
-	ctx->DrawTextLayout({ bar.left + pad, bar.top + pad }, cropTip.Get(), brushTipText.Get(),
-		D2D1_DRAW_TEXT_OPTIONS_NONE);
+	if (!srcImg) return;
+	const int nw = (int)(cropRect.right - cropRect.left);
+	const int nh = (int)(cropRect.bottom - cropRect.top);
+	if (nw <= 0 || nh <= 0) return;
+	D2D1_BITMAP_PROPERTIES1 props{};
+	// 像素格式与 DPI 必须跟源位图一模一样，差一点 CopyFromBitmap 就吃 E_INVALIDARG。
+	// 截图那条路进来的是 ALPHA_MODE_IGNORE（抓屏数据没有 alpha），长图那条是 PREMULTIPLIED，
+	// 不能写死一个，照抄源位图的
+	props.pixelFormat = srcImg->GetPixelFormat();
+	srcImg->GetDpi(&props.dpiX, &props.dpiY);
+	props.bitmapOptions = D2D1_BITMAP_OPTIONS_NONE;
+	ComPtr<ID2D1Bitmap1> bmp;
+	if (FAILED(Ling::D2D::get()->deviceContext->CreateBitmap(D2D1::SizeU((UINT32)nw, (UINT32)nh),
+		nullptr, 0, &props, bmp.GetAddressOf()))) return;
+	// 只在 GPU 内部搬一块，不走 CPU。srcRect 要的是指针，所以把 cropRect 直接传进去
+	if (FAILED(bmp->CopyFromBitmap(nullptr, srcImg.Get(), &cropRect))) return;
+	drawing->screenImg = bmp;
+	// "底图左上角落在标注坐标系的哪儿" = 这一块的左上角 - 标注原点对应的那个源图像素。
+	// shape 的坐标一个都不搬，靠这个偏移让图和标注重新对齐
+	drawing->imgOrigin = POINT{ (LONG)cropRect.left - cropBase.x, (LONG)cropRect.top - cropBase.y };
+	// 文字识别不在这儿重跑：本函数在拖采样点的每个鼠标事件上都会被调用，而重认一遍 = 一次
+	// 整幅底图的 GPU→CPU 回读（readBasePixels）外加新开一个识别线程。前者把 UI 线程按住十几
+	// 到几十毫秒，后者在拖动期间能堆出上百个线程一起跑推理 —— 拖起来就是"很卡、一跳一跳"。
+	// 识别的结果本来就锚在标注坐标系上（与 shape 同一套），剪裁期间一个词框都不会跑偏，
+	// 所以整段拖拽认它原来的那批词就够了，等松手再由 endCropDrag 重认一次
+	// 窗口跟着走：留下来的那块在屏幕上停在原处，用户看到的是"框住的那块变成了整张图"。
+	// 不跟的话整张图会突然缩到原来窗口的左上角去，拖了半天不知道东西跑哪了
+	const auto vs = viewScale();
+	const auto newX = dragSrcPos.x + (int)std::lround((float)cropRect.left * vs);
+	const auto newY = dragSrcPos.y + (int)std::lround((float)cropRect.top * vs);
+	const auto newW = std::max(1, (int)std::lround((float)nw * vs));
+	const auto newH = std::max(1, (int)std::lround((float)nh * vs));
+	x = newX;
+	y = newY;
+	w = (float)newW;
+	h = (float)newH;
+	// 位置和尺寸一次推过去：分两次调，中间那一帧的窗口矩形跟底图对不上，看着就是闪一下。
+	// SWP_NOREDRAW 配合末尾那次 refresh() —— 这一帧重画由我们自己负责
+	SetWindowPos(hwnd, nullptr, newX, newY, newW, newH, SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOREDRAW);
+	// 窗口矩形变了，工具条也得跟着重新定位（它摆在窗口外面，尺寸一变就错位）
+	layoutTools();
+	refresh();
+}
+
+// 没有源图时现补一份：拿当前这张底图顶替自己。剪贴板 / 文件 / 长图 / 历史进来的贴图走这条，
+// 于是"往外拖"最多拖回它自己的边界 —— 那些图本来就是从外面拿来的，边界外没有东西可补
+void WinPin::ensureCropSource()
+{
+	if (srcImg) return;
+	if (!drawing->screenImg) return;
+	srcImg = drawing->screenImg;
+	const auto sz = srcImg->GetPixelSize();
+	// 底图自己就是源图，所以它的像素坐标与标注坐标只差一个 imgOrigin（见 Canvas.h）：
+	// 标注坐标 (0,0) 落在源图的 imgOrigin 那个像素上
+	cropBase = drawing->imgOrigin;
+	cropRect = D2D1::RectU(0, 0, sz.width, sz.height);
 }
 
 // ESC 的"退一步"。顺序是"先收手、再放掉东西"：拿着画笔时按 ESC，用户要的是"不画了"，
@@ -1956,6 +2183,13 @@ void WinPin::paintCropTip(ID2D1DeviceContext* ctx)
 // 元素时才轮到放掉选中。返回是否消费掉了这一次 ESC，false 表示已经退无可退，可以关窗了
 bool WinPin::stepBack()
 {
+	// 框选那一批排在最前：它比"收画笔"更近一层 —— 用户刚框出来的是那些元素，
+	// 想退掉的第一件事就是"别选它们了"，而不是把整个「选择对象」工具也放掉
+	if (drawing && !drawing->multiSelected.empty()) {
+		drawing->multiSelected.clear();
+		refresh();
+		return true;
+	}
 	if (toolMain && !toolMain->curId.empty()) {
 		// 鼠标还停在图上时那个"将要落下的号"也得一起收掉，否则光标不动就白退一步
 		hideNumberPreview();
@@ -2017,6 +2251,10 @@ bool WinPin::swapImage(const std::vector<BYTE>& data, const int w, const int h)
 	scale = 1.f;
 	// 整张图换掉了，标注坐标系与底图之间那个剪裁偏移也就没意义了
 	drawing->imgOrigin = POINT{ 0, 0 };
+	// 上一张图的源图与"显示的是哪一块"一并作废：现在这张底图自己就是新的源图，
+	// 由 ensureCropSource 在用户真去拖采样点时补上（多建一张大位图是不白花的开销）
+	srcImg.Reset();
+	cropBase = POINT{ 0, 0 };
 	// 换了底图，认出来的那些词一个都对不上了，重认一遍
 	clearOcr();
 	startOcr();
@@ -2183,36 +2421,29 @@ bool WinPin::getImagePixels(std::vector<BYTE>& pixels, D2D1_SIZE_U& size)
 
 BOOL WinPin::setCursor()
 {
-	// 剪裁态：光标落在剪裁框的哪一块 —— 边 / 角给对应的双向箭头，内部给四向，其余给十字。
-	// 与长截图那边的剪裁一套手感
-	if (cropMask) {
+	// 剪裁采样点：光标压在哪个点上就给对应的双向箭头 —— 角上是斜的，边中是直的。
+	// 与长截图那边的剪裁一套手势。正在拖的那个点要单算：光标早跑出那个小圆了，
+	// 但拖动全程都得保持同一个箭头形状
+	{
 		POINT pos{};
 		GetCursorPos(&pos);
 		ScreenToClient(hwnd, &pos);
-		switch (cropMask->hitTest(pos))
+		switch (cropDragging() ? cropHandle : cropHandleAt(pos))
 		{
-		case MaskHit::TopLeft:
-		case MaskHit::BottomRight:
+		case 0: case 4:   // 左上 / 右下
 			SetCursor(LoadCursor(nullptr, IDC_SIZENWSE));
 			return TRUE;
-		case MaskHit::TopRight:
-		case MaskHit::BottomLeft:
+		case 2: case 6:   // 右上 / 左下
 			SetCursor(LoadCursor(nullptr, IDC_SIZENESW));
 			return TRUE;
-		case MaskHit::Top:
-		case MaskHit::Bottom:
+		case 1: case 5:   // 上 / 下
 			SetCursor(LoadCursor(nullptr, IDC_SIZENS));
 			return TRUE;
-		case MaskHit::Left:
-		case MaskHit::Right:
+		case 3: case 7:   // 右 / 左
 			SetCursor(LoadCursor(nullptr, IDC_SIZEWE));
 			return TRUE;
-		case MaskHit::Inside:
-			SetCursor(LoadCursor(nullptr, IDC_SIZEALL));
-			return TRUE;
 		default:
-			SetCursor(LoadCursor(nullptr, IDC_CROSS));
-			return TRUE;
+			break;
 		}
 	}
 	// 编辑文本时光标形状交给 TextBox 决定（文本区 I 形、滚动条箭头）。

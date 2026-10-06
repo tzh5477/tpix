@@ -55,6 +55,17 @@ public:
 	// 改样式、Delete 都作用在它身上：鼠标为了去够工具条/按键必然离开标注，
 	// 选中态如果挂在 shapeHover 上一准半路丢
 	ShapeBase* selected{ nullptr };
+	// 「选择对象」框出来的那一批（见 WinPin 的框选）。与 selected 是两套：
+	// selected 是"单选"，夹点、动作图标、改样式、拖动都作用在它身上；
+	// multiSelected 只用于整批高亮 + Delete 一次删掉 —— 不参与任何样式计算，
+	// 十几个元素各有各的样式，套谁的都是错的。
+	// 建立单选之前必须先清掉它（否则 Delete 会连上一轮框选的一起删），
+	// 元素被撤销或被真删时由 dropFromMultiSelect 摘掉
+	std::vector<ShapeBase*> multiSelected;
+	// 把 shape 从框选那一批里摘掉。它被撤销、或者马上就要被真删（removeUndoShape）时调用 ——
+	// 漏一处，那一批里就留下一个已经析构的指针。单选的两个指针不在这儿管：
+	// 调用处（History）对它们有别的语义，见各自的实现
+	void dropFromMultiSelect(ShapeBase* shape);
 	// 本次按下新建出来的那个元素（还没抬手）。抬手时按"有没有画出东西"决定留不留
 	ShapeBase* shapeCur{ nullptr };
 	// —— 窗口侧状态的转发 ——

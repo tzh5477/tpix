@@ -107,6 +107,9 @@ void History::undo()
             if (cur == canvas->selected) {
                 canvas->selected = nullptr;
             }
+            // 同理，框选那一批里也要摘掉：它这会儿只是"撤销态"，但下一个 createShape
+            // 会把它真删掉，那之后 multiSelected 里就是个已经析构的指针
+            canvas->dropFromMultiSelect(cur);
             canvas->refresh();
             break;
         }
@@ -150,6 +153,8 @@ void History::removeShape(ShapeBase* target)
         if (it->get() == target) {
 			canvas->shapeHover = nullptr;
             canvas->selected = nullptr;
+            // 真删之前先从框选那一批里摘掉 —— 它是按指针存的，erase 之后就悬空了
+            canvas->dropFromMultiSelect(target);
             shapes.erase(it);
             // 删掉的可能是当前最大的那个编号，工具条上那个待用编号要跟着退回上一格 ——
             // 否则下一笔会跳过刚空出来的号（见 ToolSub::syncNumberVal）
@@ -172,6 +177,7 @@ void History::undoShapes(const std::vector<ShapeBase*>& targets)
         // 否则下一笔 createShape 的 removeUndoShape 真删之后，这两处就成了野指针
         if (target == canvas->shapeHover) canvas->shapeHover = nullptr;
         if (target == canvas->selected) canvas->selected = nullptr;
+        canvas->dropFromMultiSelect(target);
         changed = true;
     }
     if (changed) canvas->refresh();

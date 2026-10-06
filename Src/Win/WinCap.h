@@ -23,6 +23,9 @@ public:
 	// 退出流程里调：正在录制时先把编码线程停掉，否则线程与设备会卡住
 	static void stopIfRecording();
 	Microsoft::WRL::ComPtr<ID2D1Bitmap1> getCutImg();
+	// 整屏原图。贴图窗口的常驻剪裁要的是它 —— getCutImg() 给的只是选区那一块，
+	// 一旦裁掉就补不回来，采样点往外拖时得从这张原图里把框外的画面取回来
+	Microsoft::WRL::ComPtr<ID2D1Bitmap1> getScreenImg() { return screenImg; }
 	// 工具条统一定位规则：右边与选区右边对齐，下方空间够就摆在选区右下方，
 	// 不够就摆右上方，上下都不够就盖在选区右下角内部（留一点边距）
 	void layoutTool(Ling::WinBase* tool);

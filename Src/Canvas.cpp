@@ -63,6 +63,16 @@ void Canvas::setEditingShape(ShapeBase* shape)
 	host->setEditingShape(shape);
 }
 
+void Canvas::dropFromMultiSelect(ShapeBase* shape)
+{
+	for (auto it = multiSelected.begin(); it != multiSelected.end(); ++it) {
+		if (*it == shape) {
+			multiSelected.erase(it);
+			return;
+		}
+	}
+}
+
 D2D1_SIZE_U Canvas::getImgSize() const
 {
 	if (!screenImg) return D2D1::SizeU(0, 0);

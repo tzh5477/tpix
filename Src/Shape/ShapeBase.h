@@ -21,6 +21,15 @@ public:
 	virtual void finishEditing() {};
 	// ToolSub 上的颜色 / 字号 / 序号样式变了，重新从工具条取样式并重建自己的画刷与几何
 	virtual void applyStyle() {};
+	// 把工具条上"选中的那一档"（箭头样式 / 线条类型 / 端点 / 线型）套到这一笔上。
+	// 与 applyStyle 分开，是因为两者该被触发的时机不同（见 WinPin::onToolStyleChanged）：
+	// applyStyle 管"外观"（颜色 / 粗细 / 填充 / 半透明），改哪一样、哪怕只是滚滚轮调粗细，
+	// 都该同步到选中的那一笔；而"这一笔长什么形状"只有用户真去动那个下拉时才该跟着变。
+	// 合在一起会出这种事：画好箭头 A → 把下拉切到 B → 回头选中 A 滚一下滚轮调粗细，
+	// 滚轮那条路走的是 applyStyle，顺手把 A 的档位也改成了 B
+	// （作者报的"滚动 / 点填充之后，之前选中的箭头样式会变化"）
+	// 有档位可言的元素（箭头 / 线条）覆写它，其余留空
+	virtual void applyToolStyle() {};
 	// 新建这一笔如果只是按下马上弹起（没有拖动），默认当成什么也没画，元素直接丢掉。
 	// 单击本身就是正常用法的元素（number 落徽章、text 进编辑）覆盖它返回 true
 	virtual bool isValidWithoutDrag() { return false; };
