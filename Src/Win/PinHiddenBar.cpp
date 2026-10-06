@@ -160,6 +160,21 @@ void PinHiddenBar::onMove(POINT pos)
 	if (idx >= 0) reveal(idx);
 }
 
+// 摆位 = 贴着第 index 条线：左条图放线右侧、图顶对齐线顶；顶条图放线下方、图左对齐线左。
+// 缝 4 逻辑像素。
+// （钳位不在这里做：要用贴图的 w/h，本函数只有 index，钳进 reveal）
+POINT PinHiddenBar::calcPeekPos(int index) const
+{
+	const auto px = (float)barX, py = (float)barY;
+	const auto thick = barThick * dpi;
+	const auto step = (barLong + gapW) * dpi;
+	const auto gap = (int)std::lround(peekGap * dpi);
+	// 条的起点 + 单条厚度 + 缝，就是图贴边的那一侧
+	return isHorizontal()
+		? POINT{ (int)std::lround(px + index * step), (int)std::lround(py + thick) + gap }
+		: POINT{ (int)std::lround(px + thick) + gap, (int)std::lround(py + index * step) };
+}
+
 void PinHiddenBar::reveal(int index)
 {
 	auto pins = WinPin::getHiddenPins(edge);
@@ -168,6 +183,16 @@ void PinHiddenBar::reveal(int index)
 	if (peek == target) return;
 	conceal();
 	peek = target;
+	// 原位与摆位都记在这一次（conceal 时条可能已重建，序号不再可靠，所以要存）
+	prevX = target->x;
+	prevY = target->y;
+	auto p = calcPeekPos(index);
+	// 大图钳回工作区：图比屏幕还宽 / 高时，摆位不能开出边外
+	RECT wa{};
+	SystemParametersInfo(SPI_GETWORKAREA, 0, &wa, 0);
+	peekX = std::clamp((int)p.x, (int)wa.left, std::max((int)wa.left, (int)(wa.right - target->w)));
+	peekY = std::clamp((int)p.y, (int)wa.top, std::max((int)wa.top, (int)(wa.bottom - target->h)));
+	target->setPosition(peekX, peekY);
 	target->peek(true);
 	// show() 会把那张贴图提到 topmost 组的最前（组内后显示的在上），正好压住本窗口。
 	// 条被压在底下就再也 hover 不到了，所以这里把它提回来
@@ -179,6 +204,9 @@ void PinHiddenBar::conceal()
 {
 	killTimer(tickId);
 	if (peek) {
+		// 还停在摆位上 = 用户没拖过 → 挪回原位再藏，「显示」按钮与既往行为一致；
+		// 拖走了就就地藏 —— 窗口自己的 x/y 就是新原位，拖动手感不丢
+		if (peek->x == peekX && peek->y == peekY) peek->setPosition(prevX, prevY);
 		peek->peek(false);
 		peek = nullptr;
 	}

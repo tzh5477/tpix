@@ -44,6 +44,8 @@ private:
 	void reveal(int index);
 	// 把露出来的那张收回去，并停掉复核的定时器
 	void conceal();
+	// 第 index 条线旁边的摆位（物理像素，不钳位 —— 钳位需要贴图宽高，只有 reveal 拿得到）
+	POINT calcPeekPos(int index) const;
 	// 鼠标是不是还压在"露出来的那张"或它的两条工具条或本窗口上
 	bool isOverPeek() const;
 private:
@@ -56,12 +58,20 @@ private:
 	// 条四周的内边距。它同时是"这条窗口的命中范围比那 4 像素宽多少" ——
 	// 鼠标得能落在窗口里才有 hover 可谈，所以不能贴着条画
 	static constexpr float pad{ 4.f };
+	// 回显贴图与那条线之间的缝（逻辑像素）
+	static constexpr float peekGap{ 4.f };
 	// 复核间隔：露出来之后每隔这么久看一眼鼠标还在不在，不在就收回去
 	static constexpr UINT tickMs{ 250 };
 	static constexpr UINT tickId{ 100 };
 	std::vector<Ling::Node*> bars;
 	// 当前露出来的那一张。nullptr = 什么都没露
 	WinPin* peek{ nullptr };
+	// peek 期间的原位记忆（物理像素）。reveal 记下、conceal 用它把没被拖动的图挪回去；
+	// 被拖走的图就地藏，窗口自己的 x/y 自然成为新原位 —— 「显示」按钮 show() 当前 x/y 即可
+	int prevX{ 0 }, prevY{ 0 };
+	// 本次 peek 的摆位（物理像素）。收回时拿它跟当前位置比，判定"用户拖过没有"。
+	// 必须在 reveal 时存下来：conceal 时条序号可能已因增删重建而对不上
+	int peekX{ 0 }, peekY{ 0 };
 	// 条落在哪。建窗口时就要用，所以缓存下来（见构造函数里那两条边的落点）
 	int barX{ 0 }, barY{ 0 };
 	WinPin::BarEdge edge;
