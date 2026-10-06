@@ -29,7 +29,8 @@ std::unique_ptr<WinCap> winCap;
 
 WinCap::WinCap() : Ling::WinBase()
 {
-	setTitle(L"Screen Capture");
+	// 窗口标题。ScreenCapture → tpix 全量改名时这一处漏了，全屏覆盖窗还挂着旧名
+	setTitle(L"tpix");
     auto [x1, y1, w1, h1] = App::get()->getScreenArea();
 	this->x = x1;this->y = y1;this->w = (float)w1;this->h = (float)h1;
     onMouseDown.add([this](POINT pos, bool isRight) { this->onDown(pos, isRight); });
