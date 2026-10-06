@@ -420,6 +420,9 @@ private:
 	// 「选择画布」的采样点填充与图标白描边用的白色。单独一支：别的白刷各有各的用途，
 	// 哪天改了色不该把选区一起带偏
 	Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brushSelWhite;
+	// 「选择画布」选区那圈虚线用的笔型（作者要的是 fasCapture 那种虚线框，而不是实线）。
+	// 与 ShapeText 的那条一样是自定义虚线，建一次够用一辈子
+	Microsoft::WRL::ComPtr<ID2D1StrokeStyle> selDashStyle;
 	// 右上角的倍数提示。非空即显示，缩放停手一会儿由定时器清掉
 	Microsoft::WRL::ComPtr<IDWriteTextLayout> scaleTip;
 	Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brushTipBg, brushTipText;

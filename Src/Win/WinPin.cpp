@@ -715,9 +715,12 @@ D2D1_RECT_F WinPin::selActionRect(const int i) const
 {
 	if (!hasSel() || i < 0 || i > 1) return D2D1::RectF(0.f, 0.f, 0.f, 0.f);
 	const auto& r = selRect;
-	const float rad{ 9.f * dpi };
-	// 离角远一点，别和角上的采样点挤在一起
-	const float gap{ 20.f * dpi };
+	// 图标半径与其它组件的动作按钮一致（ShapeBase 是 draggerSize(6*dpi) * 0.9）——
+	// 原来是 9*dpi，压在同一张图上比别人的复制 / 删除按钮大了一圈（作者提的）
+	const float rad{ 5.4f * dpi };
+	// 离角多远：内边缘到角的距离与原来（20 - 9）保持一致，图标缩小之后仍贴在角上，
+	// 不会因为变小而看着飘出去
+	const float gap{ 16.4f * dpi };
 	float cx = (i == 0) ? (r.left - gap) : (r.right + gap);
 	float cy = r.top - gap;
 	// 顶到画布边上就翻到内侧，否则被裁掉、点都点不到
@@ -747,7 +750,11 @@ void WinPin::paintCanvasSelection(ID2D1DeviceContext* ctx)
 	const auto& r = selRect;
 	// 搬运期间那块画面跟着选区走（底图上的原位此刻已经是白的，见 pickUpSelection）
 	if (selFloat) ctx->DrawBitmap(selFloat.Get(), r);
-	ctx->DrawRectangle(r, borderBrush.Get(), dpi);
+	// 虚线框（作者要的 fasCapture 那种观感，原来是实线）
+	ctx->DrawRectangle(r, borderBrush.Get(), dpi, selDashStyle.Get());
+	// 选区上这几枚图标的尺寸按其它组件的动作按钮来（ShapeBase 的 draggerSize * 0.9 = 5.4*dpi），
+	// 笔宽也照它那一套：先白描边打底、再上原色
+	const float iconStroke{ dpi }, iconHalo{ 2.6f * dpi };
 	// 8 个采样点：白底 + 蓝边，与剪裁采样点同一套观感
 	D2D1_POINT_2F cs[8];
 	selHandleCenters(cs);
@@ -756,10 +763,11 @@ void WinPin::paintCanvasSelection(ID2D1DeviceContext* ctx)
 		ctx->FillEllipse(D2D1::Ellipse(c, hr, hr), brushSelWhite.Get());
 		ctx->DrawEllipse(D2D1::Ellipse(c, hr, hr), borderBrush.Get(), dpi);
 	}
-	// 中间那个四向箭头 = "可以拖走"。先白描一遍打底，压在图上才看得清
+	// 中间那个四向箭头 = "可以拖走"。先白描一遍打底，压在图上才看得清。
+	// 同样收到其它组件动作按钮那个大小（原来 7+3 个 dpi 的跨度，比别的按钮大了一圈）
 	{
 		auto c = D2D1::Point2F((r.left + r.right) / 2.f, (r.top + r.bottom) / 2.f);
-		const float len{ 7.f * dpi }, head{ 3.f * dpi };
+		const float len{ 3.4f * dpi }, head{ 1.6f * dpi };
 		auto cross = [&](ID2D1Brush* b, float w) {
 			ctx->DrawLine({ c.x - len, c.y }, { c.x + len, c.y }, b, w);
 			ctx->DrawLine({ c.x, c.y - len }, { c.x, c.y + len }, b, w);
@@ -779,26 +787,33 @@ void WinPin::paintCanvasSelection(ID2D1DeviceContext* ctx)
 			addTri({ c.x, c.y - len - head }, { c.x + head, c.y - len }, { c.x - head, c.y - len });
 			addTri({ c.x, c.y + len + head }, { c.x - head, c.y + len }, { c.x + head, c.y + len });
 			sk->Close();
-			ctx->DrawGeometry(mv.Get(), brushSelWhite.Get(), 4.f * dpi);
+			ctx->DrawGeometry(mv.Get(), brushSelWhite.Get(), iconHalo);
 			ctx->FillGeometry(mv.Get(), borderBrush.Get());
-			cross(brushSelWhite.Get(), 4.f * dpi);
-			cross(borderBrush.Get(), 1.5f * dpi);
+			cross(brushSelWhite.Get(), iconHalo);
+			cross(borderBrush.Get(), iconStroke);
 		}
 	}
-	// 两枚动作图标：0 复制（两枚叠着的方框）、1 删除（×）。画法与 ShapeBase 的动作按钮同一套
+	// 两枚动作图标：0 复制（两枚叠着的方框）、1 删除（垃圾桶）。画法与 ShapeBase 的动作按钮同一套
 	for (int i = 0; i < 2; ++i) {
 		auto box = selActionRect(i);
 		if (box.right <= box.left) continue;
 		auto cc = D2D1::Point2F((box.left + box.right) / 2.f, (box.top + box.bottom) / 2.f);
 		auto rad{ (box.right - box.left) / 2.f };
 		if (i == 1) {
-			auto k{ rad * 0.42f };
+			// 垃圾桶，而不是关闭按钮那个 ×（作者要的：两者摆在同一张图上要一眼分得开）。
+			// 盖子一横 + 盖上提手 + 桶身（上宽下窄）+ 一道竖棱，六条线拼出来；
+			// 这个尺寸下也就是勉强认得出，再省一条就成别的形状了
+			auto k{ rad * 0.62f };
 			auto draw = [&](ID2D1Brush* b, float w) {
-				ctx->DrawLine({ cc.x - k, cc.y - k }, { cc.x + k, cc.y + k }, b, w);
-				ctx->DrawLine({ cc.x - k, cc.y + k }, { cc.x + k, cc.y - k }, b, w);
+				ctx->DrawLine({ cc.x - k, cc.y - k * 0.52f }, { cc.x + k, cc.y - k * 0.52f }, b, w);
+				ctx->DrawLine({ cc.x - k * 0.42f, cc.y - k * 0.86f }, { cc.x + k * 0.42f, cc.y - k * 0.86f }, b, w);
+				ctx->DrawLine({ cc.x - k * 0.76f, cc.y - k * 0.18f }, { cc.x - k * 0.56f, cc.y + k * 0.86f }, b, w);
+				ctx->DrawLine({ cc.x - k * 0.56f, cc.y + k * 0.86f }, { cc.x + k * 0.56f, cc.y + k * 0.86f }, b, w);
+				ctx->DrawLine({ cc.x + k * 0.56f, cc.y + k * 0.86f }, { cc.x + k * 0.76f, cc.y - k * 0.18f }, b, w);
+				ctx->DrawLine({ cc.x, cc.y - k * 0.1f }, { cc.x, cc.y + k * 0.7f }, b, w);
 			};
-			draw(brushSelWhite.Get(), 4.f * dpi);
-			draw(borderBrush.Get(), 2.2f * dpi);
+			draw(brushSelWhite.Get(), iconHalo);
+			draw(borderBrush.Get(), iconStroke);
 		}
 		else {
 			auto k{ rad * 0.46f }, off{ rad * 0.32f };
@@ -806,8 +821,8 @@ void WinPin::paintCanvasSelection(ID2D1DeviceContext* ctx)
 				ctx->DrawRectangle(D2D1::RectF(cc.x - k - off, cc.y - k - off, cc.x + k - off, cc.y + k - off), b, w);
 				ctx->DrawRectangle(D2D1::RectF(cc.x - k + off, cc.y - k + off, cc.x + k + off, cc.y + k + off), b, w);
 			};
-			draw(brushSelWhite.Get(), 4.f * dpi);
-			draw(borderBrush.Get(), 2.2f * dpi);
+			draw(brushSelWhite.Get(), iconHalo);
+			draw(borderBrush.Get(), iconStroke);
 		}
 	}
 }
@@ -1437,6 +1452,15 @@ void WinPin::onCreated()
     canvas->setSizePercent(100.f, 100.f);
     d2d->deviceContext->CreateSolidColorBrush(D2D1::ColorF(0x1677ff), borderBrush.GetAddressOf());
     d2d->deviceContext->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::White), brushSelWhite.GetAddressOf());
+    // 「选择画布」选区的虚线笔型：2 实 2 虚（虚线长度按笔宽算，这里是 dpi），
+    // 与 ShapeText 那圈虚线框同一套观感
+    {
+        float dashes[]{ 2.f, 2.f };
+        d2d->d2dFactory->CreateStrokeStyle(
+            D2D1::StrokeStyleProperties(D2D1_CAP_STYLE_FLAT, D2D1_CAP_STYLE_FLAT,
+                D2D1_CAP_STYLE_FLAT, D2D1_LINE_JOIN_MITER, 10.f, D2D1_DASH_STYLE_CUSTOM, 0.f),
+            dashes, ARRAYSIZE(dashes), selDashStyle.GetAddressOf());
+    }
     d2d->deviceContext->CreateSolidColorBrush(D2D1::ColorF(0x000000, 0.46f), brushTipBg.GetAddressOf());
     d2d->deviceContext->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::White), brushTipText.GetAddressOf());
     // 选中的词铺的那层蓝底。半透明：字还得看得清，不然选完不知道选的是哪几个字
