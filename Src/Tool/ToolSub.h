@@ -94,6 +94,12 @@ public:
 	// 按工具取选中色（RGBA 原值）。与 getSelectedColorValue 的区别同上：那个读的是
 	// "当前工具"共享的那一份下标（selectColorIndex），切一次工具就换了人
 	UINT32 getToolColorValue(const std::wstring& tool) const;
+	// 「填充」开关此刻的值 —— 取的是面板正在显示的那个工具的那一份（矩形 / 圆形 / 箭头 / 序号各存一份）。
+	// 语义与 getSelectedColor / getSliderVal 同一档：都是"面板此刻是什么样"。
+	// 元素改样式（ShapeRectBase::applyStyle）要的正是这个，而不是"这个元素自己是哪一类" ——
+	// 元素上那枚动作图标能把矩形翻成圆（kind 变、toolId 不变，见 ShapeRectBase::onAction），
+	// 两者不一致时按后者取，面板上那枚开关就按不动它
+	bool getCurrentFill() const;
 	// ToolMain 与 ToolSub 之间的间距，WinPin::layoutTools() 计算整组高度时要用
 	static constexpr float mainGap{ 2.f };
 public:

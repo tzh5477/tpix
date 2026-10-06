@@ -777,6 +777,16 @@ UINT32 ToolSub::getToolColorValue(const std::wstring& tool) const
 	return colors[(size_t)n];
 }
 
+bool ToolSub::getCurrentFill() const
+{
+	if (curToolId == L"rect") return isRectFill;
+	if (curToolId == L"ellipse") return isEllipseFill;
+	if (curToolId == L"arrow") return isArrowFill;
+	if (curToolId == L"number") return isNumberFill;
+	// 其余工具的面板上没有「填充」这一项（线条那枚是"半透明"，语义不同，不算）
+	return false;
+}
+
 void ToolSub::layout()
 {
 	Ling::WinBase::layout();

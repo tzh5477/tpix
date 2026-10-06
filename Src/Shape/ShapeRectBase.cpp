@@ -423,9 +423,16 @@ void ShapeRectBase::applyStyle()
 	// 就把它们涂掉了 —— 它们原本就没有 applyStyle，这里同样得跳过去
 	if (!allowShapeToggle) return;
 	auto toolSub = win->getToolSub();
+	// 颜色、线宽、填充三样都取"面板此刻显示的那个工具"的那一份，口径一致（见 ToolSub::getCurrentFill）。
+	// 填充原来按 kind 取（椭圆读 isEllipseFill、矩形读 isRectFill），而 kind 会被元素上那枚动作图标
+	// 翻转（见 onAction：那里刻意不动 toolId，所以面板不会跟着换）。于是矩形工具画出的矩形转成圆
+	// 之后，面板仍是矩形面板、显示的是 isRectFill，按 kind 却去读一份没人动过的 isEllipseFill ——
+	// 那枚开关就按不动它。
+	// 实测（A/B：只把下面这一行换回旧写法，其余不动）——矩形工具画矩形→点元素左下角那枚图标转成圆
+	// →点面板「填充」：旧版图形纹丝不动（仍实心，覆盖 0.772），新版按面板的值变空心（0.024）
 	brush->SetColor(toolSub->getSelectedColor());
 	strokeWidth = toolSub->getSliderVal();
-	isFill = kind == Kind::Ellipse ? toolSub->isEllipseFill : toolSub->isRectFill;
+	isFill = toolSub->getCurrentFill();
 }
 
 void ShapeRectBase::paintActionIcon(ID2D1DeviceContext* ctx, const int i, const D2D1_POINT_2F& c,
