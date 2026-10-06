@@ -87,6 +87,13 @@ public:
 	// 返回夹到该工具滑块值域内的物理像素值 —— 调用方拿它当最终尺寸，图形就不会滚出滑块的范围。
 	// 正显示着这个工具的工具条时滑块跟着动，顺带落盘；滚的是别的工具画的图形时只更新配置。
 	float setShapeSliderVal(const std::wstring& tool, float px);
+	// 按工具取尺寸，不跟"当前工具"走。粘贴进来的标注要用它 —— 用户可能是拿着矩形工具
+	// 在图上按的 Ctrl+V，那时 getSliderVal 交出来的是那支笔的线宽，拿来当字号就是错的。
+	// 返回物理像素，与 getSliderVal / setShapeSliderVal 同一套语义，值域共用同一张表
+	float getShapeSliderVal(const std::wstring& tool) const;
+	// 按工具取选中色（RGBA 原值）。与 getSelectedColorValue 的区别同上：那个读的是
+	// "当前工具"共享的那一份下标（selectColorIndex），切一次工具就换了人
+	UINT32 getToolColorValue(const std::wstring& tool) const;
 	// ToolMain 与 ToolSub 之间的间距，WinPin::layoutTools() 计算整组高度时要用
 	static constexpr float mainGap{ 2.f };
 public:

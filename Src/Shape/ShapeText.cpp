@@ -371,6 +371,30 @@ void ShapeText::setAttr()
 	Ling::D2D::get()->deviceContext->CreateSolidColorBrush(color, textBrush.ReleaseAndGetAddressOf());
 }
 
+void ShapeText::setAttrFromTextTool()
+{
+	auto toolSub = win->getToolSub();
+	colorValue = toolSub->getToolColorValue(L"text");
+	color = Ling::Color(colorValue).getD2DColor();
+	// 与 setAttr 的 getSliderVal 同一套语义：交出来的是物理像素，D2D 直接用
+	fontSize = toolSub->getShapeSliderVal(L"text");
+	// 粗体 / 斜体 / 字体这三个只有一份，不随工具切，照取即可
+	isBold = toolSub->isTextBold;
+	isItalic = toolSub->isTextItalic;
+	fontFamily = toolSub->getFontFamily();
+	Ling::D2D::get()->deviceContext->CreateSolidColorBrush(color, textBrush.ReleaseAndGetAddressOf());
+}
+
+void ShapeText::setTextAt(const std::wstring& val, const float x, const float y)
+{
+	setAttrFromTextTool();
+	text = val;
+	// 先落左上角：fitRectToText 只改右 / 下两条边，起点得在这之前定下来
+	rect = D2D1::RectF(x, y, x, y);
+	makeTextLayout();
+	fitRectToText();
+}
+
 bool ShapeText::getShapeBounds(D2D1_RECT_F& out) const
 {
 	// 转过的文字按"看得见的那一块"给动作图标定位，不然 × 会飘在虚线框外面

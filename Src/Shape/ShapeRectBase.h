@@ -62,6 +62,11 @@ protected:
 	virtual void syncFromRect();
 	// 首次落笔（shape 还没成形）用哪个手柄当锚点
 	virtual int firstDraggerIndex() const;
+	// 这一族有没有"内部手柄"（矩形的圆角那四枚、椭圆的扇区那三枚）。
+	// 图片（ShapeImage）从本类借几何，但那几枚一个都用不上 —— 它没有圆角也没有扇区，
+	// 手柄画出来、拖起来却什么都不改，只会让人以为图片能调圆角。覆写成 false 关掉。
+	// 注意"整体拖动"（HitBody）与旋转（HitRotate）不在这条线上，它们照旧生效
+	virtual bool hasInnerHandles() const { return true; }
 	// rect 的中心。旋转、手柄、扇区都以它为准
 	D2D1_POINT_2F rectCenter() const;
 	// 第 i 号八向手柄在局部坐标里的中心点

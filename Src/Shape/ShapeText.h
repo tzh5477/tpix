@@ -27,6 +27,10 @@ public:
 	// 收尾：把 TextBox 里的文字取回来自己画，空文本则把自己从 history 里删掉。
 	// 除了本类内部，Canvas（导出图片前）和 History（删除 shape 前）也会调。
 	void finishEdit();
+	// 粘贴用：把内容和落点直接灌进来，不走 TextBox 那条编辑路 ——
+	// 用户按 Ctrl+V 是要"把剪贴板上的文字放上去"，不该再弹一个输入框让他确认。
+	// 落点是文字的左上角（底图像素），框按文字实际尺寸撑开
+	void setTextAt(const std::wstring& val, const float x, const float y);
 	// Canvas 只认 ShapeBase，收尾时从基类转过来走到 finishEdit
 	void finishEditing() override { finishEdit(); }
 	// ToolSub 上的颜色/字号/粗斜体变了，编辑中的话立即生效
@@ -46,6 +50,10 @@ private:
 	void makeTextLayout();
 	// 从 ToolSub 拉一份当前样式，并重建画刷
 	void setAttr();
+	// 同上，但样式从「文本」那一组取而不是「当前工具」那一组。只有粘贴那条路用它 ——
+	// 用户多半正拿着别的工具（矩形 / 箭头）在图上按 Ctrl+V，那时 getSliderVal 是
+	// 那支笔的线宽、选中色是它的填充色，直接拿来当字号和字色就是错的
+	void setAttrFromTextTool();
 	// 旋转中心。rect 是轴对齐的存法，画的时候才绕这个点转
 	D2D1_POINT_2F center() const;
 	// 按文字实际尺寸把边框盒贴合上去。滚轮改完字号后文字会溢出原来的框，得跟着长

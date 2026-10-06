@@ -758,6 +758,25 @@ float ToolSub::setShapeSliderVal(const std::wstring& tool, float px)
 	return logical * dpi;
 }
 
+float ToolSub::getShapeSliderVal(const std::wstring& tool) const
+{
+	auto cfg = findSliderCfg(tool);
+	// 表里没这一项时退回"当前工具"那一份：调用方传的都是本文件里的工具名，
+	// 真没命中说明表漏了一项，给个能用值比给 0（字号 0、线宽 0，画不出来）好
+	if (!cfg) return getSliderVal();
+	const auto setting = Setting::get();
+	return std::clamp(setting->getToolNum(tool, cfg->key, cfg->def), cfg->min, cfg->max) * dpi;
+}
+
+UINT32 ToolSub::getToolColorValue(const std::wstring& tool) const
+{
+	// 取法与 getWatermarkColorValue 一模一样，只是组名由调用方给。
+	// colors[] 各处都不做边界检查，配置被手工改坏或旧版本写了越界值时这里兜一下
+	auto n = static_cast<int>(Setting::get()->getToolNum(tool, L"colorIndex", 0.f));
+	if (n < 0 || n >= (int)colors.size()) n = 0;
+	return colors[(size_t)n];
+}
+
 void ToolSub::layout()
 {
 	Ling::WinBase::layout();

@@ -208,8 +208,9 @@ void ShapeRectBase::paintDragger(ID2D1DeviceContext* ctx)
 		ctx->DrawRectangle(draggers[i], brushDragger.Get(), dpi);
 	}
 	// 内部那几枚（圆角 / 扇区）只在选中时现身：它们调的是"这个元素自己的参数"，
-	// 光标只是路过时冒出来，会和八向手柄混在一起分不清谁是谁
-	if (win->selected == this) {
+	// 光标只是路过时冒出来，会和八向手柄混在一起分不清谁是谁。
+	// 图片那一族没有这两样东西，整段跳过（见 hasInnerHandles）
+	if (win->selected == this && hasInnerHandles()) {
 		if (kind == Kind::Rect) {
 			for (int i = HitRadiusTL; i <= HitRadiusBL; i++) paintDot(ctx, draggers[i], false);
 		}
@@ -485,8 +486,9 @@ void ShapeRectBase::hitDraggers(const float x, const float y)
 			return;
 		}
 	}
-	// 内部那几枚只在选中时才算数（也只在选中时才画，见 paintDragger）
-	if (win->selected != this) return;
+	// 内部那几枚只在选中时才算数（也只在选中时才画，见 paintDragger）。
+	// 没有内部手柄的那一族（图片）直接到此为止 —— 与 paintDragger 同一条判断
+	if (win->selected != this || !hasInnerHandles()) return;
 	if (kind == Kind::Rect) {
 		for (int i = HitRadiusTL; i <= HitRadiusBL; i++) {
 			if (isInRect(draggers[i], x, y)) {
