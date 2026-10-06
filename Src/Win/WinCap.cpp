@@ -521,6 +521,14 @@ void WinCap::onDown(POINT pos, bool isRight)
 
 void WinCap::onMove(POINT pos)
 {
+    // 点开截图的那一次点击还没松手时，光标这一动属于那次点击 —— 不能拿它去吸附窗口 /
+    // 更新放大镜。悬浮球图标和托盘菜单都是在**鼠标按下**时就触发回调的（Ling::Button::onDown
+    // 直接调 onClick），窗口建出来时手指还在按钮上，松手前抖那么一下就会走到这里；
+    // 光标这时停在屏幕边上的悬浮球处，底下多半压着一个最大化的窗口，吸附一下就是整屏被框住，
+    // 抬手便"替用户框好了整屏"——用户看到的就是"悬浮球截图默认截全屏"。
+    // 只拦 Select 阶段：长截图那条路（CapLong 自己收按下 / 抬手）不经过 isPress，
+    // 一拦就把它的剪裁拖动拦掉了
+    if (stage == CapStage::Select && !isPress && (GetAsyncKeyState(VK_LBUTTON) & 0x8000)) return;
     if (stage == CapStage::Select) {
         if (isPress) {
             if (isPolyDrag) cutMask->addPolyPoint(pos);
@@ -551,6 +559,11 @@ void WinCap::onUp(POINT pos, bool isRight)
 {
     releaseMouse();
     if (stage == CapStage::Select) {
+        // isPress 是在本窗口的 onDown 里立的，为假就说明这一下不是我们按下的 —— 是"点开截图"
+        // 那次点击的残尾（同上）。光标底下那块窗口已经被悬停吸附成了选区，抬手若照常往下走，
+        // 就等于替用户框好了那一块（贴着屏幕边点开的悬浮球底下，通常就是整屏）。
+        // 没在本窗口按下过的一律不认，让用户自己重新框
+        if (!isPress) return;
         isPress = false;
         if (isPolyDrag) {
             isPolyDrag = false;
