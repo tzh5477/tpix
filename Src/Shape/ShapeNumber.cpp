@@ -576,6 +576,29 @@ bool ShapeNumber::hasTail() const
 	return ringStyle == RingStyle::CircleArrow || ringStyle == RingStyle::SquareArrow;
 }
 
+// 「选择对象」框选要用。范围与 mouseMove 的命中范围对齐：圈 + 带尾时的尾巴尖 +
+// 追加的描述文字那一段（描述文字本来就点得中，见 HitDesc）。
+// r 是 mouseDown 才落定的，在那之前返回 false —— 框选时它是个还没成形的元素
+bool ShapeNumber::getShapeBounds(D2D1_RECT_F& out) const
+{
+	if (r <= 0.f) return false;
+	out = D2D1::RectF(cx - r, cy - r, cx + r, cy + r);
+	if (hasTail()) {
+		out.left = std::min(out.left, tip.x);
+		out.right = std::max(out.right, tip.x);
+		out.top = std::min(out.top, tip.y);
+		out.bottom = std::max(out.bottom, tip.y);
+	}
+	if (!customText.empty()) {
+		auto d = descTextRect();
+		out.left = std::min(out.left, d.left);
+		out.right = std::max(out.right, d.right);
+		out.top = std::min(out.top, d.top);
+		out.bottom = std::max(out.bottom, d.bottom);
+	}
+	return true;
+}
+
 void ShapeNumber::makePath()
 {
 	auto d2d = Ling::D2D::get();

@@ -6,6 +6,8 @@
 #include "../SelectPopup.h"
 #include "../Setting.h"
 #include "../History.h"
+#include "../Shape/ShapeArrow.h"
+#include "../Shape/ShapeLine.h"
 #include "../Shape/ShapeNumber.h"
 #include "../Shape/ShapeWatermark.h"
 #include "../Tip.h"
@@ -50,10 +52,15 @@ namespace {
 	// 带箭头的圆 / 带箭头的方。这几个符号在任何语言的字体里都在，不必跟着语言包走；
 	// 箭头用 → 而不是 ➤ 那批符号，后者的字形不一定装得到
 	const wchar_t* RingSample[]{ L"\u25cf", L"\u25a0", L"\u2014", L"\u25cf\u2192", L"\u25a0\u2192" };
-	// 箭头样式的两个图标：普通（首尾等粗）/ 尖尾，码位见 Src/Res/iconfont.ttf
+	// 箭头样式的四档：普通（平口尾、平底实心头）/ 尖尾 / 细箭头（开口 V）/ 凹口实心。
+	// 按钮与列表里画的是真实的那个箭头（ShapeArrow::paintSample），所以不是图标字体。
+	// 这四条字符串只在数档位时用到（SelectPopup 按 items.size() 定行数），
+	// 顺手也让配置读坏了时有个人能看懂的文字兜底
 	const std::vector<std::wstring>& arrowStyleItems()
 	{
-		static const std::vector<std::wstring> items{ L"\ue909", L"\ue90a" };
+		static const std::vector<std::wstring> items{
+			L"\u2014\u25b6", L"\u2794", L"\u2014\u2192", L"\u27a4"
+		};
 		return items;
 	}
 	// 线条类型只有两项，按钮上写汉字，所以走语言包
@@ -61,9 +68,9 @@ namespace {
 	{
 		return { Lang::get(L"tool.lineKind0"), Lang::get(L"tool.lineKind1") };
 	}
-	// 端点的十档，顺序 = config.json 里 line/end 的落盘值，也是 ShapeLine 里那张表的顺序。
-	// 按钮上画不了小图，只能用符号示意：● 圆点、▶ 实心箭头、→ 细箭头。
-	// 这几枚符号在雅黑 / Segoe UI 里都有，不必跟着语言包走
+	// 端点的十档，顺序 = config.json 里 line/end 的落盘值，就是 ShapeLine.cpp 里那张
+	// kEndTable 的顺序。按钮与列表里画的是真实的端点（ShapeLine::paintEndSample），
+	// 这十个字符串只在数档位时用到
 	const std::vector<std::wstring>& lineEndItems()
 	{
 		static const std::vector<std::wstring> items{
@@ -81,8 +88,8 @@ namespace {
 		return items;
 	}
 	// 线条样式六档，顺序 = config.json 里 line/style 的落盘值：
-	// 实线 / 虚线 / 波浪线 / 点状线 / 长短虚线 / 删除线。同样只能符号示意，
-	// 全部用 ASCII 与 Latin-1 的字符，任何字体都不缺字
+	// 实线 / 虚线 / 波浪线 / 点状线 / 长短虚线 / 删除线。
+	// 按钮与列表里画的是真实的线型（ShapeLine::paintStyleSample），这六个字符串只在数档位时用到
 	const std::vector<std::wstring>& lineStyleItems()
 	{
 		static const std::vector<std::wstring> items{
@@ -94,6 +101,9 @@ namespace {
 	// 写的是两个符号，都比一格按钮（btnSize）宽 —— 交给 flex 分会被压到放不下
 	constexpr float lineKindW{ 60.f };
 	constexpr float lineChoiceW{ 42.f };
+	// 下拉里那条样例线的粗细（逻辑像素）。刻意不跟着当前线宽走 —— 线宽 20 的时候
+	// 下拉里就只剩一个箭头了。三个下拉共用这一个数，"端点 / 线型 / 箭头样式"三条线一样粗
+	constexpr float sampleLineW{ 2.f };
 	// 贴图不透明度的四档。index 落盘的是下标，百分比文本由 showPinTools 按这张表生成
 	const float pinOpacitySteps[]{ 1.f, 0.75f, 0.5f, 0.25f };
 	// 水印的旋转档位（角度只有在平铺下才有意义）
@@ -236,6 +246,9 @@ void ToolSub::onCreated()
 	// 画刷与设备（而非某次 BeginDraw 拿到的 context）绑定，建一次就够，paintBorder 每帧复用
 	d2d->deviceContext->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::White), brushBg.GetAddressOf());
 	d2d->deviceContext->CreateSolidColorBrush(D2D1::ColorF(0xA8A8A8), brushBorder.GetAddressOf());
+	// 下拉里那几格样例固定的墨色。作者定的规矩：枚举值一律黑，不跟当前选中色走 ——
+	// 那几格是"这一档长什么样"的说明图，染上红线 / 绿线之后形状反而不如黑的好认
+	d2d->deviceContext->CreateSolidColorBrush(D2D1::ColorF(0x333333), brushSample.GetAddressOf());
 	// 画布先建，才排在 contentNode 之前，按钮才不会被背景盖住
 	canvas = body->makeChild<Ling::Canvas>();
 	canvas->setPositionType(Ling::Position::Absolute);
@@ -282,6 +295,8 @@ void ToolSub::beginTool(const std::wstring& id)
 	slider = nullptr;
 	sliders.clear();
 	sliderNames.clear();
+	// 同上：下拉按钮上那几格自绘的小图也随 contentNode 一起销毁了
+	samples.clear();
 	numberBox = nullptr;
 	numberBoxSilent = false;
 	// 同上：水印的旋转、内容、样式三枚按钮也只在水印面板里存在。
@@ -332,10 +347,16 @@ void ToolSub::showArrowTools()
 	beginTool(L"arrow");
 	initSize(2, true);
 	makeToggleBtn(L"\ue604", &isArrowFill, L"tool.arrowFill", L"fill");
-	// 两种箭头样式：普通（首尾等粗、平口尾）与尖尾渐变。默认普通那一个。
-	// 切完让当前选中的箭头立刻换形状 —— 下一个新建的本来就会用新档位
+	// 四种箭头样式：普通（首尾等粗、平口尾）、尖尾、细箭头（开口 V）、凹口实心。
+	// 默认普通那一个。按钮与列表里画的是真实的箭头 —— 几何与图上画的那个共用一份
+	// （见 ShapeArrow::paintSample），所以不是图标字体。
+	// 切完让当前选中的箭头立刻换形状 —— 下一个新建的本来就会用新档位。
+	// 传 true：换的是"档位"，与颜色 / 填充 / 粗细那些"外观"分流（见 WinPin::onToolStyleChanged）
 	makeSelectBtn(L"tool.arrowStyle", L"style", &arrowStyle, arrowStyleItems(),
-		[this]() { win->onToolStyleChanged(); }, true, false);
+		[this]() { win->onToolStyleChanged(true); }, false, false,
+		[this](ID2D1DeviceContext* ctx, const D2D1_RECT_F& rect, int index) {
+			ShapeArrow::paintSample(ctx, rect, index, sampleLineW * dpi, brushSample.Get());
+		});
 	initSlider();
 	initColorBtns();
 	makeApplyAllBtn();
@@ -393,11 +414,22 @@ void ToolSub::showLineTools()
 	};
 	// 类型排在最前：它管的是"这一笔怎么长出来"，端点和线型都是它下游的样式。
 	// 三个都是改完立刻套到图上选中的那一笔上（没选中就只影响之后新画的）。
-	// 类型的作用面窄一些 —— 只有"普通线条 → 直角折线"这一半改得动已画的那一笔（见 snapExisting）
-	auto applyNow = [this]() { win->onToolStyleChanged(); };
+	// 类型的作用面窄一些 —— 只有"普通线条 → 直角折线"这一半改得动已画的那一笔（见 snapExisting）。
+	// 传 true：这三个是"档位"，与颜色 / 线宽 / 填充那些"外观"分流
+	//（见 WinPin::onToolStyleChanged —— 滚轮调粗细走的也是那个入口，带上档位就把形状一起换了）
+	auto applyNow = [this]() { win->onToolStyleChanged(true); };
+	// 「端点」「线条样式」两格里画的是真实的线条 —— 几何与图上那条线共用一份
+	// （ShapeLine::paintEndSample / paintStyleSample）。线条类型那一个写的是"直角折线"四个
+	// 汉字，没有图形可画，仍是文字按钮。墨色一律用 brushSample 那个固定黑，不跟选中色走
+	auto endPaint = [this](ID2D1DeviceContext* ctx, const D2D1_RECT_F& rect, int index) {
+		ShapeLine::paintEndSample(ctx, rect, index, sampleLineW * dpi, brushSample.Get());
+	};
+	auto stylePaint = [this](ID2D1DeviceContext* ctx, const D2D1_RECT_F& rect, int index) {
+		ShapeLine::paintStyleSample(ctx, rect, index, sampleLineW * dpi, brushSample.Get());
+	};
 	fixW(makeSelectBtn(L"tool.lineKind", L"kind", &lineKind, lineKindItems(), applyNow, false, false), lineKindW);
-	fixW(makeSelectBtn(L"tool.lineEnd", L"end", &lineEnd, lineEndItems(), applyNow, false, false), lineChoiceW);
-	fixW(makeSelectBtn(L"tool.lineStyle", L"style", &lineStyle, lineStyleItems(), applyNow, false, false), lineChoiceW);
+	fixW(makeSelectBtn(L"tool.lineEnd", L"end", &lineEnd, lineEndItems(), applyNow, false, false, endPaint), lineChoiceW);
+	fixW(makeSelectBtn(L"tool.lineStyle", L"style", &lineStyle, lineStyleItems(), applyNow, false, false, stylePaint), lineChoiceW);
 	makeToggleBtn(L"\ue607", &isLineTransparent, L"tool.semiTransparent", L"semiTransparent");
 	initSlider();
 	initColorBtns();
@@ -685,12 +717,23 @@ float ToolSub::setShapeSliderVal(const std::wstring& tool, float px)
 void ToolSub::layout()
 {
 	Ling::WinBase::layout();
-	if (!canvas) return;
-	auto ctx = canvas->startPaint();
-	if (!ctx) return;
-	ctx->Clear(0);
-	paintBorder(ctx);
-	canvas->finishPaint();
+	if (canvas) {
+		auto ctx = canvas->startPaint();
+		if (ctx) {
+			ctx->Clear(0);
+			paintBorder(ctx);
+			canvas->finishPaint();
+		}
+	}
+	// 下拉按钮上那一格自绘的小图。与背景画布分开、前后不套着画：startPaint / finishPaint
+	// 要成对用（没 finish 之前同一设备再 BeginDraw 会失败）
+	for (auto& slot : samples) {
+		auto ctx = slot.canvas->startPaint();
+		if (!ctx) continue;
+		ctx->Clear(0);
+		slot.paint(ctx, D2D1::RectF(0.f, 0.f, slot.canvas->w, slot.canvas->h), *slot.index);
+		slot.canvas->finishPaint();
+	}
 }
 
 void ToolSub::onMinMaxInfo(MINMAXINFO* mmi)
@@ -832,7 +875,8 @@ Ling::Button* ToolSub::makeToggleBtn(const std::wstring& text, bool* flag, const
 
 Ling::Button* ToolSub::makeSelectBtn(const std::wstring& tipKey, const std::wstring& cfgKey,
 	int* index, const std::vector<std::wstring>& items,
-	std::function<void()> onPicked, bool useIconFont, bool refreshNumbers)
+	std::function<void()> onPicked, bool useIconFont, bool refreshNumbers,
+	SelectPopup::SamplePainter paintSample)
 {
 	// 与 makeToggleBtn 同理：上一次的选择在配置文件里，取回来盖掉内存里那份。
 	// 夹值域是因为配置文件可能被手工改坏，而这个值要用来取 items，越界就取到表外了
@@ -842,18 +886,33 @@ Ling::Button* ToolSub::makeSelectBtn(const std::wstring& tipKey, const std::wstr
 	btn->setFlexGrow(1.f);
 	btn->setFontSize(13.f);
 	if (useIconFont) btn->setFontFamily(L"icon");
-	btn->setText(items[*index]);
+	// 自绘的按钮不写字：文字与画布挤在同一格里（按钮内部就一列，居中对齐）。
+	// 画布铺满整格，按钮自身的底色与悬停色从它透上来
+	if (paintSample) {
+		auto sample = btn->makeChild<Ling::Canvas>();
+		sample->setSizePercent(100.f, 100.f);
+		sample->setFlexShrink(0.f);
+		samples.push_back({ sample, index, paintSample });
+	}
+	else btn->setText(items[*index]);
 	// 多档按钮没有"开 / 关"两种态，统一用常态配色
 	btn->setBg(0);
 	btn->setHoverBg(0xF2F2F2ff);
 	tip->bind(btn, Lang::get(tipKey));
-	// 两项的（目前只有箭头样式）单击即在两项间切换：按钮上的图标就是当前是哪一项，
-	// 再弹一个只有两项的列表让用户"点开、看清、再点一次"，比直接切多两步
+	// 换到新档位：自绘的那几个按钮靠重画工具条把那一格的小图换掉（setText 内部就会
+	// refresh，不写字的那几个得自己叫一声）
+	auto switchTo = [this, btn, items, paintSample](int i) {
+		if (paintSample) refresh();
+		else btn->setText(items[i]);
+	};
+	// 只有两项的按钮单击即切换：按钮上写的/画的就是当前那一项，再弹一个只有两项的列表
+	// 让用户"点开、看清、再点一次"，比直接切多两步。目前只有线条类型（直角折线 / 普通线条）
+	// 是两项的；箭头样式、端点、线条样式这些档位多了，都走下面的列表
 	if (items.size() == 2) {
-		btn->onClick.add([this, index, items, cfgKey, btn, onPicked, refreshNumbers](Ling::Button*) {
+		btn->onClick.add([this, index, cfgKey, switchTo, onPicked, refreshNumbers](Ling::Button*) {
 			*index = 1 - *index;
 			Setting::get()->setToolNum(curToolId, cfgKey, (float)*index);
-			btn->setText(items[*index]);
+			switchTo(*index);
 			// 已经画在图上的序号跟着换样子，而不是等下一次新建才生效
 			if (refreshNumbers) win->refreshNumberShapes();
 			if (onPicked) onPicked();
@@ -862,19 +921,19 @@ Ling::Button* ToolSub::makeSelectBtn(const std::wstring& tipKey, const std::wstr
 	}
 	// index 与 items 捕获到 lambda 里，按钮重建时会跟着 contentNode 一起销毁，
 	// 而 ToolSub 与 WinPin 同生命周期，index 指向的成员不会先没
-	btn->onClick.add([this, index, items, cfgKey, btn, onPicked, refreshNumbers, useIconFont](Ling::Button*) {
+	btn->onClick.add([this, index, items, cfgKey, btn, switchTo, onPicked, refreshNumbers, useIconFont, paintSample](Ling::Button*) {
 		// 列表可能翻到按钮上方，那时它正好压在悬停提示的位置上，先把提示收掉
 		tip->hide();
 		SelectPopup::show(this, btn, items, *index,
-			[this, index, items, cfgKey, btn, onPicked, refreshNumbers](int picked) {
+			[this, index, cfgKey, switchTo, onPicked, refreshNumbers](int picked) {
 				*index = picked;
 				Setting::get()->setToolNum(curToolId, cfgKey, (float)picked);
-				btn->setText(items[picked]);
+				switchTo(picked);
 				// 已经画在图上的序号跟着换样子，而不是等下一次新建才生效
 				if (refreshNumbers) win->refreshNumberShapes();
 				if (onPicked) onPicked();
 			},
-			useIconFont ? std::wstring{ L"icon" } : std::wstring{});
+			useIconFont ? std::wstring{ L"icon" } : std::wstring{}, 0.f, paintSample);
 	});
 	return btn;
 }

@@ -37,6 +37,9 @@ public:
 	// ShapeBase 上的统一收尾口子。窗口（关窗 / 缩放 / 导出）与 History（删 shape）都只认它，
 	// 没有这个转发的话正在编辑的序号收不了尾：TextBox 不隐藏、编辑标记不清、订阅不摘
 	void finishEditing() override { finishEdit(); }
+	// 「选择对象」框选要用：圈（带尾时含尾巴尖）加上追加的描述文字那一段。
+	// 与 mouseMove 里的命中范围对齐 —— 描述文字本来就是点得中的一块（见 HitDesc）
+	bool getShapeBounds(D2D1_RECT_F& out) const override;
 	// val 序列化成序号字符串。ToolSub 的样式切换按钮要显示当前样式下的样子，所以是 public static
 	static std::wstring serializeVal(const int val, const NumStyle style);
 public:

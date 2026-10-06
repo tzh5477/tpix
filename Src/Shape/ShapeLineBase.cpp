@@ -148,16 +148,21 @@ void ShapeLineBase::makeDraggers()
 
 void ShapeLineBase::makePath()
 {
-	if (linePoints.empty()) return;
+	buildPath(linePoints);
+}
+
+void ShapeLineBase::buildPath(const std::vector<D2D1_POINT_2F>& pts)
+{
+	if (pts.empty()) return;
 	auto d2d = Ling::D2D::get();
 	// ReleaseAndGetAddressOf 而不是 GetAddressOf：后者不放旧对象，自由画时每个鼠标事件漏一个几何体
 	d2d->d2dFactory->CreatePathGeometry(path.ReleaseAndGetAddressOf());
 	if (!path) return;
 	ComPtr<ID2D1GeometrySink> sink;
 	path->Open(sink.GetAddressOf());
-	sink->BeginFigure(linePoints[0], D2D1_FIGURE_BEGIN_HOLLOW);
-	if (linePoints.size() > 1) {
-		sink->AddLines(&linePoints[1], (UINT32)(linePoints.size() - 1));
+	sink->BeginFigure(pts[0], D2D1_FIGURE_BEGIN_HOLLOW);
+	if (pts.size() > 1) {
+		sink->AddLines(&pts[1], (UINT32)(pts.size() - 1));
 	}
 	sink->EndFigure(D2D1_FIGURE_END_OPEN);
 	sink->Close();
@@ -181,9 +186,11 @@ void ShapeLineBase::hitTest(const D2D1_POINT_2F& mousePos)
 {
 	// 只有笔画边缘那一圈算命中：粗笔画（马赛克、橡皮擦尤其明显）整片都能拖的话，
 	// 就没法在已有笔画上面再画一笔了 —— 鼠标一按下会变成拖动旧元素。
-	// 矩形模式本来就是只有边框附近才响应，这里跟它对齐
+	// 矩形模式本来就是只有边框附近才响应，这里跟它对齐。
+	// 内圈多少由 hitInnerLimit 定：折线族默认照上面的理由挖掉半个夹点宽，
+	// 线条那一支覆写成 0（它不存在"在笔画内部起笔"的用法）
 	float outer = strokeWidth * 0.5f + win->getDpi(); //外沿保持原来的判定范围
-	float inner = outer - draggerSize / 2; //往里让出这么宽算内部。细笔画算出来是负数，等于整条线都能拖
+	float inner = hitInnerLimit(outer);
 	// 得先在所有线段里取最小距离再判断：自交的笔画里，某一段的边缘可能正好压在另一段的
 	// 内部，那种位置视觉上是在笔画里面，逐段判断会误判成边缘
 	float minDist{ FLT_MAX };
@@ -193,4 +200,33 @@ void ShapeLineBase::hitTest(const D2D1_POINT_2F& mousePos)
 	if (minDist <= outer && minDist >= inner) {
 		hoverDraggerIndex = 8;
 	}
+}
+
+float ShapeLineBase::hitInnerLimit(const float outer) const
+{
+	// 往里让出半个夹点算内部。细笔画算出来是负数，等于整条线都能拖
+	return outer - draggerSize / 2;
+}
+
+// 「选择对象」框选要用。量的是点列，不是 path —— path 是照 shaftPoints 建的，
+// 线条那一档带标记的两头往回收了一截（见 ShapeLine::shaftPoints），拿它量会把箭头漏在框外
+bool ShapeLineBase::getShapeBounds(D2D1_RECT_F& out) const
+{
+	if (linePoints.empty()) return false;
+	float l{ linePoints[0].x }, r{ l }, t{ linePoints[0].y }, b{ t };
+	for (auto& p : linePoints) {
+		l = std::min(l, p.x);
+		r = std::max(r, p.x);
+		t = std::min(t, p.y);
+		b = std::max(b, p.y);
+	}
+	// 笔画有宽度：往外让出半个线宽，画出来的像素才全落在框里
+	const float pad{ boundsPad() };
+	out = D2D1::RectF(l - pad, t - pad, r + pad, b + pad);
+	return true;
+}
+
+float ShapeLineBase::boundsPad() const
+{
+	return strokeWidth * 0.5f;
 }

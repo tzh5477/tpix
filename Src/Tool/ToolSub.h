@@ -3,6 +3,7 @@
 #include <functional>
 #include <string>
 #include <vector>
+#include "../SelectPopup.h"
 
 class WinPin;
 class Tip;
@@ -92,7 +93,8 @@ public:
 	// （无尾圆 / 无尾方 / 圆+箭头 / 方+箭头 / 无）。值与 ShapeNumber 的两个枚举一一对应，
 	// 转枚举行取 static_cast
 	int numberStyle{ 0 }, numberRing{ 0 };
-	// 箭头样式：0 = 普通（首尾等粗、平口尾），1 = 尖尾渐变。同 ShapeArrow 的枚举
+	// 箭头样式：0 普通（平口尾、平底实心头）/ 1 尖尾 / 2 细箭头（开口 V）/ 3 凹口实心。
+	// 顺序即落盘值，同 ShapeArrow 的枚举。四档的顶点都是尖的，没有末端带圆头的那一档
 	int arrowStyle{ 0 };
 	// 线条类型：0 = 直角折线（默认，拖拽时按鼠标轨迹吸附成横平竖直），1 = 普通线条（自由画）。
 	// 同 ShapeLine::Kind 的枚举
@@ -164,11 +166,14 @@ private:
 	// "当前编号在各种样式下长什么样"，这个文本随档位变，所以由调用方整份传进来。
 	// onPicked 是选中之后的收尾（贴图不透明度要作用到窗口、水印要重画），没有就传空。
 	// refreshNumbers：切完之后要不要把图上已有的序号重排一遍。只有序号的样式按钮需要，
-	// 马赛克模式那一个跟序号没关系，不该顺带去遍历一遍 shape
+	// 马赛克模式那一个跟序号没关系，不该顺带去遍历一遍 shape。
+	// paintSample：线条那三个下拉传"怎么画这一档"（见 SelectPopup::SamplePainter）——
+	// 它们要显示的是真实的线条而不是一个符号，按钮与列表里画的是同一份几何
 	Ling::Button* makeSelectBtn(const std::wstring& tipKey, const std::wstring& cfgKey,
 		int* index, const std::vector<std::wstring>& items,
 		std::function<void()> onPicked = nullptr,
-		bool useIconFont = false, bool refreshNumbers = true);
+		bool useIconFont = false, bool refreshNumbers = true,
+		SelectPopup::SamplePainter paintSample = {});
 	// pin 面板用的文字开关：跟 makeToggleBtn 一样的两态配色，但按钮上写的是字（圆角 / 锁定 / 穿透）
 	// 而不是图标 —— 图标字体里没有锁、穿透这类符号，硬猜码位只会显示成方块。
 	// apply 由调用方给，开关翻转后直接调 WinPin 上对应的 setter
@@ -215,6 +220,15 @@ private:
 	// 当前的滑块。切换工具时会被销毁重建，重建后由 initSlider 重新赋值。
 	// 存下来是为了在窗口的 onMouseMove 里判断鼠标是否在它上面，好显示数值提示。
 	Ling::Slider* slider{ nullptr };
+	// 下拉按钮上那一格自绘的小图。按钮本体是 Ling::Button（管悬停与点击，Button 不能自绘），
+	// 小图是它底下一个铺满的画布（Canvas 又收不到鼠标），叠起来才两样都有。
+	// 画的内容在 layout() 里现取 —— index 指着的那个字段可能刚被下拉改过
+	struct SampleSlot {
+		Ling::Canvas* canvas;
+		const int* index;
+		SelectPopup::SamplePainter paint;
+	};
+	std::vector<SampleSlot> samples;
 	// 本工具条上摆着的所有滑块（水印有三个）。悬停提示要挨个判，切工具时随内容一起作废。
 	// sliderNames 与它一一对应，是提示里写在数值前面的那一截（单滑块的工具留空串）
 	std::vector<Ling::Slider*> sliders;
@@ -253,6 +267,9 @@ private:
 	WinPin* win;
 	// 背景/边框画刷缓存：layout() 每次刷新都会调 paintBorder，别在里面重复建
 	Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brushBg, brushBorder;
+	// 下拉里那条样例线的画刷。颜色每次画的时候按当前工具的选中色刷新 ——
+	// 换根线色就能先在下拉里看一眼
+	Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brushSample;
 	// 铺满窗口的画布，画的是背景与带箭头的边框，按钮都在 contentNode 上，盖在它上面
 	Ling::Canvas* canvas{ nullptr };
 	bool isVisible{ false };

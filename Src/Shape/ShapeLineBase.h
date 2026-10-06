@@ -21,13 +21,27 @@ public:
 	void mouseUp(const float x, const float y) override;
 	void mouseMove(const float x, const float y) override;
 	void setCursor() override;
+	// 「选择对象」框选要用：这一笔（一串点 + 线宽）的外接框。
+	// 量的是 linePoints 而不是 path —— path 是照 shaftPoints 建的，线条那一档
+	// 两端带标记的要往里缩一截（见 ShapeLine::shaftPoints），拿它量会把两个箭头漏在框外
+	bool getShapeBounds(D2D1_RECT_F& out) const override;
 protected:
 	virtual void makePath();
+	// 按给定的一串点建 path。makePath 与"画的时候要往里缩一截"的派生类（直线）共用
+	void buildPath(const std::vector<D2D1_POINT_2F>& pts);
 	// 命中首尾两个夹点
 	void hitDraggers(const float x, const float y);
 	void makeDraggers();
 	float pointToSegmentDistance(const D2D1_POINT_2F& p, const D2D1_POINT_2F& a, const D2D1_POINT_2F& b);
 	void hitTest(const D2D1_POINT_2F& mousePos);
+	// 命中判定里"离折线多近才算贴在笔画上"的内圈：外圈由线宽定（见 hitTest），
+	// 内圈往外让出半个夹点，也就是**笔画正中那一块不算命中**。
+	// 马赛克 / 橡皮擦要这么挖（理由见 .cpp 的 hitTest），线条不要 —— 线条没有
+	// "在笔画内部起笔"这种用法，挖掉中间只会让粗线的杆点不中（ShapeLine 覆写成 0）
+	virtual float hitInnerLimit(const float outer) const;
+	// 外接框要往外让出多少。折线族的笔画是圆头圆角描边，让半个线宽就够；
+	// 线条那一档两端还要画箭头 / 圆点，横着支出去更多，ShapeLine 覆写它
+	virtual float boundsPad() const;
 protected:
 	// 折线族只有首尾两个夹点，不像矩形族是八个
 	std::vector<D2D1_RECT_F> draggers;

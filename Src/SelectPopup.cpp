@@ -6,10 +6,13 @@
 
 namespace
 {
-	// 每项高度、列表最高多少（再高就滚动）、以及不窄于多少（逻辑像素）
+	// 每项高度、列表最高多少（再高就滚动）、以及不窄于多少（逻辑像素）。
+	// 自绘项（线条那几个样例图）另有更窄的一条下限：样例画的就一条线，用不着 120 那么宽，
+	// 而那条列表比它上面那块 42 宽的按钮宽出快两倍，摆在一起很突兀
 	constexpr float itemH{ 30.f };
 	constexpr float listMaxH{ 320.f };
 	constexpr float listMinW{ 120.f };
+	constexpr float sampleListMinW{ 60.f };
 
 	class Popup;
 	// 声明在类定义之前：Popup 自己的 onDestroy 里要按地址比对后把它放掉
@@ -47,9 +50,9 @@ namespace
 	{
 	public:
 		Popup(std::vector<std::wstring> items, int cur, std::function<void(int)> onPick,
-			std::wstring fontFamily)
+			std::wstring fontFamily, SelectPopup::SamplePainter paintSample)
 			: items{ std::move(items) }, cur{ cur }, onPick{ std::move(onPick) },
-			fontFamily{ std::move(fontFamily) }
+			fontFamily{ std::move(fontFamily) }, paintSample{ std::move(paintSample) }
 		{
 			// 不激活：弹出列表不该把输入焦点从宿主那儿抢走，否则文本框会丢光标、
 			// 贴图窗口也可能因为失焦把自己收了。TOPMOST 保证它盖在宿主之上
@@ -88,10 +91,8 @@ namespace
 			for (int i = 0; i < (int)items.size(); ++i)
 			{
 				auto btn = list->makeChild<Ling::Button>();
-				btn->setText(items[i]);
 				btn->setHeight(itemH);
 				btn->setWidthPercent(100.f);
-				if (!fontFamily.empty()) btn->setFontFamily(fontFamily);
 				btn->setHoverBg(0xF2F2F2FF);
 				btn->setHoverColor(0x000000FF);
 				// 当前那一档标成选中色，与设置页工具勾选的高亮一致
@@ -99,9 +100,38 @@ namespace
 					btn->setBg(0xE6F4FFFF);
 					btn->setColor(0x597EF7FF);
 				}
+				// 自绘项：文字留空，底下铺一层铺满的画布画小图 —— Button 不能自绘，
+				// Canvas 又收不到鼠标，叠起来才两样都有（悬停底色是按钮画的，
+				// 画布清成透明，透下去正好）
+				if (paintSample) {
+					auto canvas = btn->makeChild<Ling::Canvas>();
+					canvas->setSizePercent(100.f, 100.f);
+					canvas->setFlexShrink(0.f);
+					samples.push_back(canvas);
+				}
+				else {
+					btn->setText(items[i]);
+					if (!fontFamily.empty()) btn->setFontFamily(fontFamily);
+				}
 				btn->onClick.add([this, i](Ling::Button*) { picked(i); });
 			}
 			refresh();
+		}
+	private:
+		// 自绘项的小图。画在这一层而不是某个 Canvas 子类自己的 layout 里：startPaint /
+		// finishPaint 要成对用（没 finish 之前同一设备再 BeginDraw 会失败），
+		// 在宿主这里挨个画一遍最省事 —— ToolSub 的背景画布也是这么画的
+		void layout() override
+		{
+			Ling::WinBase::layout();
+			if (!paintSample) return;
+			for (int i = 0; i < (int)samples.size(); ++i) {
+				auto ctx = samples[i]->startPaint();
+				if (!ctx) continue;
+				ctx->Clear(0);
+				paintSample(ctx, D2D1::RectF(0.f, 0.f, samples[i]->w, samples[i]->h), i);
+				samples[i]->finishPaint();
+			}
 		}
 		void picked(int index)
 		{
@@ -116,6 +146,9 @@ namespace
 		int cur{ -1 };
 		std::function<void(int)> onPick;
 		std::wstring fontFamily;
+		// 自绘项的那几格画布，与 items 一一对应（不自绘时是空的）
+		std::vector<Ling::Canvas*> samples;
+		SelectPopup::SamplePainter paintSample;
 	};
 
 	LRESULT CALLBACK hookProc(int code, WPARAM wp, LPARAM lp)
@@ -133,7 +166,7 @@ namespace
 
 void SelectPopup::show(Ling::WinBase* owner, Ling::Node* anchor,
 	const std::vector<std::wstring>& items, int cur, std::function<void(int)> onPick,
-	const std::wstring& fontFamily, float minW)
+	const std::wstring& fontFamily, float minW, SamplePainter paintSample)
 {
 	if (items.empty() || !owner || !anchor) return;
 	// Node 的 x/y 是窗口内坐标，弹层要的是屏幕坐标 —— 宿主的窗口位置得先加上去。
@@ -150,8 +183,9 @@ void SelectPopup::show(Ling::WinBase* owner, Ling::Node* anchor,
 
 	auto dpi = owner->dpi > 0.f ? owner->dpi : 1.f;
 	// 列表宽度跟着按钮走，窄按钮也留个下限，不然"紧凑"两个字就把列表压成一条缝。
-	// minW 是调用方指定的下限（字体名比按钮宽得多）
-	auto listW = std::max(std::max(anchor->w / dpi, listMinW), minW);
+	// minW 是调用方指定的下限（字体名比按钮宽得多）；自绘项走另一条更窄的下限
+	const float baseMinW{ paintSample ? sampleListMinW : listMinW };
+	auto listW = std::max(std::max(anchor->w / dpi, baseMinW), minW);
 	auto listH = std::min(listMaxH, itemH * (float)items.size());
 	// 默认往下弹，底下放不下就翻到按钮上方。用按钮所在显示器的工作区判断，
 	// 而不是虚拟桌面整体 —— 副屏在左上时后者会把翻转判错
@@ -166,7 +200,7 @@ void SelectPopup::show(Ling::WinBase* owner, Ling::Node* anchor,
 
 	anchorRect = RECT{ (int)(ox + anchor->x), (int)(oy + anchor->y),
 		(int)(ox + anchor->x + anchor->w), (int)(oy + anchor->y + anchor->h) };
-	popup = std::make_unique<Popup>(items, cur, std::move(onPick), fontFamily);
+	popup = std::make_unique<Popup>(items, cur, std::move(onPick), fontFamily, std::move(paintSample));
 	// 这里刻意不走 popup->setSize / setPosition / show()：Ling 的 setSize / setPosition
 	// 用的是不带 SWP_NOACTIVATE 的 SetWindowPos，show() 是 ShowWindow(SW_SHOW)，
 	// 两个都会把这个带 WS_EX_NOACTIVATE 的窗口真正激活（连尚未显示、只是摆尺寸时都会），
