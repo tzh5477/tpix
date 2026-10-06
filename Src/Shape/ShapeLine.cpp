@@ -371,3 +371,14 @@ void ShapeLine::paintEnd(ID2D1DeviceContext* ctx, const D2D1_POINT_2F& tip,
 		ctx->DrawLine(tip, b, brush.Get(), w);
 	}
 }
+
+// 滚滚轮 = 调线宽，与矩形 / 箭头那边是同一回事（Canvas 只在光标停在图形身上时才把滚轮转过来）。
+// 一格一个逻辑像素，上下限交给 ToolSub 那张滑块值域表夹 —— 线宽与工具条滑块因此永远是同一个数
+void ShapeLine::mouseWheel(const float x, const float y, const short delta)
+{
+	auto next = strokeWidth + (delta < 0 ? -win->getDpi() : win->getDpi());
+	auto applied = win->getToolSub()->setShapeSliderVal(L"line", next);
+	if (applied == strokeWidth) return;   //已经顶到值域的头了，不用重画
+	strokeWidth = applied;
+	win->refresh();
+}

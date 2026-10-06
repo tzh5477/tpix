@@ -26,6 +26,8 @@ public:
 	void mouseDown(const float x, const float y) override;
 	void mouseDrag(const float x, const float y) override;
 	void mouseUp(const float x, const float y) override;
+	// 光标停在这条线上滚滚轮 = 调线宽
+	void mouseWheel(const float x, const float y, const short delta) override;
 private:
 	bool isOrtho() const;
 	// 把这次拖拽的鼠标轨迹压成一条横平竖直的折线
