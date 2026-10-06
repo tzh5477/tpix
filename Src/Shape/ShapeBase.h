@@ -1,4 +1,5 @@
 #pragma once
+#include <memory>
 #include <include/Ling.h>
 class Canvas;
 class ShapeBase
@@ -39,26 +40,61 @@ public:
 	// 默认返回 false（水印铺满整图、折线族那几笔用户说不用加），派生类按需覆写。
 	// 带旋转的元素要把旋转也算进去（摆图标的是外接框，不是未旋转的那个 rect）
 	virtual bool getShapeBounds(D2D1_RECT_F& out) const { return false; }
-	// 选中元素外侧那几枚按钮。三个角各摆一枚：右上恒是 ×（删除），派生类自己的动作图标
-	// 排在左上角，旋转手柄固定在右下角（见 updateRotateDragger）。
-	// 分成三个角而不是挤在一条边上：挤在一起时相邻两枚挨得太近，
+	// 选中元素外侧那几枚按钮。四个角各摆一枚：左上恒是复制，右上恒是 ×（删除），
+	// 派生类自己的动作图标排到左下角，旋转手柄固定在右下角（见 updateRotateDragger）。
+	// 分成四个角而不是挤在一条边上：挤在一起时相邻两枚挨得太近，
 	// 鼠标移过去点错一个就是误删或者误改形状
 	virtual int actionCount() const { return 0; }
 	// 画第 i 枚动作图标（i 只会在 actionCount 范围内被调到）。c 是圆心、rad 是圆半径
 	virtual void paintActionIcon(ID2D1DeviceContext* ctx, const int i, const D2D1_POINT_2F& c, const float rad) {}
 	// 第 i 枚动作图标被点了
 	virtual void onAction(const int i) {}
-	// 整排图标的枚数（含末尾那枚 ×）
-	int actionBtnTotal() const { return actionCount() + 1; }
-	// 第 i 枚图标的方框（底图坐标）。i == 末尾那枚是右上角的 ×，其余是左上角的动作图标。
+	// 这一样元素能不能复制（见 clone）。默认不行 —— 左上角那枚复制按钮只在覆写成真
+	// 的元素上出现。擦除与水印不参与："再盖一块一模一样的"对它们没有意义
+	virtual bool copyable() const { return false; }
+	// 复制一份自己：几何、样式、画刷颜色都照搬，整体往 (dx, dy) 挪开（底图像素）。
+	// 复制出来的这一份还没有归属，由调用方（History::addShape）收下。
+	// 派生类写一行 `return cloneSelf(*this, dx, dy);` 就够 —— 那套骨架见 cloneSelf
+	virtual std::unique_ptr<ShapeBase> clone(const float dx, const float dy) const { return nullptr; }
+	// 整排图标的枚数（含末尾那枚 × 与左上角那枚复制）
+	int actionBtnTotal() const { return actionCount() + (copyable() ? 2 : 1); }
+	// 第 i 枚图标的方框（底图坐标）。末尾那枚是右上角的 ×，actionCount() 那枚是左上角的
+	// 复制（不可复制时它正好等于末尾那枚，两条分支都先认 ×），其余派生类的动作图标在左下角。
 	// 没有外接矩形、或 i 越界时返回空框
 	D2D1_RECT_F actionBtnRect(const int i) const;
 	// 命中的是第几枚图标，没命中返回 -1
 	int hitActionBtn(const float x, const float y) const;
-	// 画整排图标：白底圆 + 浅蓝边。末尾那枚是右上角的 ×，其余是左上角的动作图标
+	// 画整排图标：白底圆 + 浅蓝边
 	void paintActionBtns(ID2D1DeviceContext* ctx);
-	// 命中之后分发：末尾那枚 = 删掉自己，其余交给 onAction
+	// 命中之后分发：末尾那枚 = 删掉自己，actionCount() 那枚 = 复制一份，其余交给 onAction
 	void onActionBtn(const int i);
+protected:
+	// 复制的公共骨架：拷一份（走隐式拷贝构造 —— 没经过派生类的构造函数，所以"领号"
+	// "读工具条当前样式"那些副作用一概不会发生）→ 摘掉"正在拖 / 已撤销"这两个运行态 →
+	// fixupCopy() 补各自的善后 → 整块几何挪开。
+	// 画刷绝不能跟着拷贝共享：ComPtr 拷过来是同一支画刷，改一方的颜色会连另一方一起改。
+	// static 是因为调用它的 clone() 是 const 的，非静态成员函数收不下一个 const this
+	template <class T>
+	static std::unique_ptr<ShapeBase> cloneSelf(const T& src, const float dx, const float dy)
+	{
+		auto c = std::make_unique<T>(src);
+		// 经 ShapeBase& 去调那两个虚函数：命名类才是 ShapeBase，protected 才访问得到。
+		// 直接 c->fixupCopy() 的话名字查到的是派生类里那份重声明（命名类变成派生类），
+		// 而从基类的成员里访问派生类的 protected 成员是不许的
+		ShapeBase& base = *c;
+		base.isUndo = false;
+		base.hoverDraggerIndex = -1;
+		base.fixupCopy();
+		base.translate(dx, dy);
+		return c;
+	}
+	// 复制之后的善后，默认什么都不做。派生类按需补三样：
+	//   ① 重建自己那几支画刷（理由见 cloneSelf）
+	//   ② 把"指向我自己"的成员改指新的一份（马赛克的 mosaicPaint 就存着这个）
+	//   ③ 清掉编辑态（标号 / 文本那两个共用 TextBox 的订阅不能照抄）
+	virtual void fixupCopy() {}
+	// 整块几何挪 (dx, dy)，并重算由它派生的手柄 / 路径 / 文字排版
+	virtual void translate(const float dx, const float dy) {}
 public:
 	// 所属画布。窗口尺寸、DPI、底图、工具条样式、刷新全从这里出 ——
 	// shape 不认识窗口，换一个画布宿主这层照旧能挂上去

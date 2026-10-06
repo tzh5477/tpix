@@ -10,6 +10,10 @@ public:
 	History(Canvas* canvas);
 	~History();
 	ShapeBase* createShape(const std::wstring& state, const int& x, const int& y);
+	// 收下一份已经建好的 shape —— 目前只有"复制"这一条路（ShapeBase::clone 的产物）。
+	// 与 createShape 同一条规矩：先清掉"已撤销"那一尾巴，新的一份出现之后不该还能
+	// redo 回老状态；收下之后把它设成选中，用户接着就能拖到想要的位置 / 改样式
+	ShapeBase* addShape(std::unique_ptr<ShapeBase> shape);
 	void undo();
 	void redo();
 	// 删掉当前活动的那个：选中的优先，其次悬停的

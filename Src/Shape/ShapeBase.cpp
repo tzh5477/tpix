@@ -27,6 +27,8 @@ D2D1_RECT_F ShapeBase::actionBtnRect(const int i) const
 	D2D1_RECT_F b{};
 	if (i < 0 || i >= actionBtnTotal()) return D2D1::RectF(0.f, 0.f, 0.f, 0.f);
 	if (!getShapeBounds(b)) return D2D1::RectF(0.f, 0.f, 0.f, 0.f);
+	const bool hasCopy{ copyable() };
+	const int last{ actionBtnTotal() - 1 };
 	auto rad{ draggerSize * 0.9f };
 	// 离框多远。角上正压着八向手柄，而 WinPin::onDown 里 hitActionBtn 排在 shape 派发之前：
 	// 两者贴太近时，瞄着角手柄去 resize 就会先被按钮截住（点 × 直接把元素删了）。
@@ -35,16 +37,22 @@ D2D1_RECT_F ShapeBase::actionBtnRect(const int i) const
 	auto gap{ draggerSize * 3.0f };
 	// 图标之间留一点缝
 	auto step{ rad * 2.f + draggerSize * 0.5f };
-	auto last{ actionBtnTotal() - 1 };
-	// 末尾那枚（×）恒定在右上角；派生类自己的动作图标在左上角，从角上往外排。
-	// 分居两个角：挤在同一条边上时相邻两枚只隔一个手柄宽，鼠标移过去极易点错 ——
-	// 点错 × 就是把刚画的东西删了，点错互转就是形状忽然变了
-	float cx{}, cy{ b.top - gap };
+	float cx{}, cy{};
 	if (i == last) {
+		// 末尾那枚（×）恒定在右上角
 		cx = b.right + gap;
+		cy = b.top - gap;
+	}
+	else if (hasCopy && i == actionCount()) {
+		// 复制恒定在左上角：与右上角的 × 分居两个角 —— 分在同一条边上时相邻两枚只隔一个
+		// 手柄宽，鼠标移过去极易点错，而点错 × 就是把刚画的东西删了
+		cx = b.left - gap;
+		cy = b.top - gap;
 	}
 	else {
-		cx = b.left - gap - (last - 1 - i) * step;
+		// 派生类自己的动作图标在左下角。多枚时沿框的左边往外排
+		cx = b.left - gap - i * step;
+		cy = b.bottom + gap;
 	}
 	// 顶到画布边上就翻到内侧 —— 否则按钮被画布裁掉，点都点不到
 	auto img = win->getImgSize();
@@ -52,7 +60,10 @@ D2D1_RECT_F ShapeBase::actionBtnRect(const int i) const
 		if (cx + rad > (float)img.width) cx = b.right - gap;
 		if (cx - rad < 0.f) cx = b.left + gap;
 	}
-	if (cy - rad < 0.f) cy = b.top + gap;
+	if (img.height > 0) {
+		if (cy - rad < 0.f) cy = b.top + gap;
+		if (cy + rad > (float)img.height) cy = b.bottom - gap;
+	}
 	return D2D1::RectF(cx - rad, cy - rad, cx + rad, cy + rad);
 }
 
@@ -66,6 +77,8 @@ int ShapeBase::hitActionBtn(const float x, const float y) const
 
 void ShapeBase::paintActionBtns(ID2D1DeviceContext* ctx)
 {
+	const int last{ actionBtnTotal() - 1 };
+	const bool hasCopy{ copyable() };
 	for (int i = 0; i < actionBtnTotal(); i++) {
 		auto box = actionBtnRect(i);
 		if (box.right <= box.left) continue;
@@ -74,11 +87,21 @@ void ShapeBase::paintActionBtns(ID2D1DeviceContext* ctx)
 		// 与序号那四个动作按钮同一套画法：先垫一层白圆再描边，压在底图上才看得清
 		ctx->FillEllipse(D2D1::Ellipse(c, rad, rad), brushDraggerFill.Get());
 		ctx->DrawEllipse(D2D1::Ellipse(c, rad, rad), brushDragger.Get(), win->getDpi());
-		if (i == actionBtnTotal() - 1) {
+		if (i == last) {
 			auto k{ rad * 0.42f };
 			auto stroke{ draggerSize * 0.15f };
 			ctx->DrawLine({ c.x - k, c.y - k }, { c.x + k, c.y + k }, brushDragger.Get(), stroke);
 			ctx->DrawLine({ c.x - k, c.y + k }, { c.x + k, c.y - k }, brushDragger.Get(), stroke);
+		}
+		else if (hasCopy && i == actionCount()) {
+			// 复制：两枚叠着的方框。后面那枚只描边，前面那枚填白再描边压在它上面 ——
+			// 不填白的话两条边在重叠处交叉成一团花，看不出是"两张纸叠着"
+			auto k{ rad * 0.46f }, off{ rad * 0.32f };
+			ctx->DrawRectangle(D2D1::RectF(c.x - k - off, c.y - k - off, c.x + k - off, c.y + k - off),
+				brushDragger.Get(), win->getDpi());
+			auto front = D2D1::RectF(c.x - k + off, c.y - k + off, c.x + k + off, c.y + k + off);
+			ctx->FillRectangle(front, brushDraggerFill.Get());
+			ctx->DrawRectangle(front, brushDragger.Get(), win->getDpi());
 		}
 		else {
 			paintActionIcon(ctx, i, c, rad);
@@ -92,6 +115,15 @@ void ShapeBase::onActionBtn(const int i)
 	if (i == actionBtnTotal() - 1) {
 		// 走 History 的统一删除口子：它会先把可能开着的编辑器收尾，再删、再刷新
 		win->history->removeActiveShape();
+		return;
+	}
+	if (copyable() && i == actionCount()) {
+		// 复制：照原样再画一份，往右下挪开一点摆在原件的旁边。收下之后它就是选中态，
+		// 接着能直接拖到想要的位置 / 改样式 —— 与刚画完的那一笔同一套
+		auto off{ draggerSize * 3.f };
+		if (auto copy = clone(off, off)) {
+			win->history->addShape(std::move(copy));
+		}
 		return;
 	}
 	onAction(i);

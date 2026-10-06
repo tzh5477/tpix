@@ -240,6 +240,11 @@ ShapeLine::~ShapeLine()
 
 }
 
+std::unique_ptr<ShapeBase> ShapeLine::clone(const float dx, const float dy) const
+{
+	return cloneSelf(*this, dx, dy);
+}
+
 // 外观：颜色、半透明、线宽。滚轮调粗细也走这里，所以它不能顺手改档位
 //（档位在 applyToolStyle 里，理由见 ShapeBase::applyToolStyle）
 void ShapeLine::applyStyle()

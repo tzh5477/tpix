@@ -19,3 +19,8 @@ ShapeRect::ShapeRect(Canvas* win) :ShapeRectBase(win)
 ShapeRect::~ShapeRect()
 {
 }
+
+std::unique_ptr<ShapeBase> ShapeRect::clone(const float dx, const float dy) const
+{
+	return cloneSelf(*this, dx, dy);
+}

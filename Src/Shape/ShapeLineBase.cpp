@@ -146,6 +146,28 @@ void ShapeLineBase::makeDraggers()
 	draggers[1].bottom = end.y + half;
 }
 
+// ---- 复制（见 ShapeBase::cloneSelf）----
+// 画刷重建一份：ComPtr 拷过来是同一支，改一方的颜色会连另一方一起改
+void ShapeLineBase::fixupCopy()
+{
+	if (!brush) return;
+	auto color = brush->GetColor();
+	Ling::D2D::get()->deviceContext->CreateSolidColorBrush(color, brush.ReleaseAndGetAddressOf());
+}
+
+void ShapeLineBase::translate(const float dx, const float dy)
+{
+	for (auto& p : linePoints) {
+		p.x += dx;
+		p.y += dy;
+	}
+	// 走的必须是虚的 makePath：直线那一档两端带标记的要往里缩一截（ShapeLine::makePath
+	// 覆写了它），直接用 buildPath(linePoints) 建出来的线与夹点会差一截。
+	// 涂抹马赛克也在这儿覆写，顺手把算好的马赛克丢掉
+	makePath();
+	makeDraggers();
+}
+
 void ShapeLineBase::makePath()
 {
 	buildPath(linePoints);

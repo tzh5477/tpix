@@ -23,6 +23,31 @@ ShapeMosaicRect::~ShapeMosaicRect()
 
 }
 
+std::unique_ptr<ShapeBase> ShapeMosaicRect::clone(const float dx, const float dy) const
+{
+	return cloneSelf(*this, dx, dy);
+}
+
+void ShapeMosaicRect::fixupCopy()
+{
+	ShapeRectBase::fixupCopy();
+	// mosaicPaint 里存着"我是哪一个 shape"（它按"画到自己为止"回读画面来算），拷过来
+	// 还指着原件 —— 不换掉的话，新的一份会把原件自己也算进画面里
+	mosaicPaint = ShapeMosaicPaint(win, this);
+}
+
+void ShapeMosaicRect::translate(const float dx, const float dy)
+{
+	ShapeRectBase::translate(dx, dy);
+	// 挪了地方，原来那一块画面的马赛克就不对了 —— 照 mouseUp 那条路重算一遍
+	resetMosaic();
+	if (isErase) {
+		buildErase();
+		return;
+	}
+	buildMosaic();
+}
+
 // 马赛克块大小是从 strokeWidth 折算的，改线宽要按新块大小重新生成马赛克位图。
 // 只在已经生成过时重建 —— 还没 mouseUp 的那一笔交回 paint 自己处理
 void ShapeMosaicRect::applyStyle()

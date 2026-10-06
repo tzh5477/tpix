@@ -18,6 +18,25 @@ ShapeMosaicLine::~ShapeMosaicLine()
 
 }
 
+std::unique_ptr<ShapeBase> ShapeMosaicLine::clone(const float dx, const float dy) const
+{
+	return cloneSelf(*this, dx, dy);
+}
+
+void ShapeMosaicLine::fixupCopy()
+{
+	ShapeLineBase::fixupCopy();
+	// 同矩形马赛克：mosaicPaint 里存着"我是哪一个"，不能跟着拷贝留在原件上
+	mosaicPaint = ShapeMosaicPaint(win, this);
+}
+
+void ShapeMosaicLine::translate(const float dx, const float dy)
+{
+	// 基类那一步走的是虚的 makePath，本类覆写的那个会顺手 resetMosaic（几何一动就作废）
+	ShapeLineBase::translate(dx, dy);
+	buildMosaic();
+}
+
 // strokeWidth 既是描边宽度也是马赛克块大小的来源，改了要把马赛克重新糊一遍
 void ShapeMosaicLine::applyStyle()
 {

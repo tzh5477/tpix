@@ -19,3 +19,8 @@ ShapeEllipse::ShapeEllipse(Canvas* win) :ShapeRectBase(win)
 ShapeEllipse::~ShapeEllipse()
 {
 }
+
+std::unique_ptr<ShapeBase> ShapeEllipse::clone(const float dx, const float dy) const
+{
+	return cloneSelf(*this, dx, dy);
+}

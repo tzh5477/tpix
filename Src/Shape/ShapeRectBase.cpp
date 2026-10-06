@@ -453,6 +453,28 @@ void ShapeRectBase::onAction(const int i)
 	win->refresh();
 }
 
+// ---- 复制（见 ShapeBase::cloneSelf）----
+// 画刷重建一份：ComPtr 拷过来是同一支画刷，改一方的颜色会连另一方一起改。
+// 马赛克 / 擦除那几支派生类自己的画刷不在这儿：它们要么是按画面算出来的位图刷
+//（不可变，共享无妨），要么在 translate 里跟着几何重算
+void ShapeRectBase::fixupCopy()
+{
+	if (!brush) return;
+	auto color = brush->GetColor();
+	Ling::D2D::get()->deviceContext->CreateSolidColorBrush(color, brush.ReleaseAndGetAddressOf());
+}
+
+void ShapeRectBase::translate(const float dx, const float dy)
+{
+	rect.left += dx;
+	rect.right += dx;
+	rect.top += dy;
+	rect.bottom += dy;
+	// 椭圆那套派生量（cx/cy/rx/ry）与所有手柄都按 rect 现算，改完 rect 走这两条就够
+	syncFromRect();
+	makeDraggers();
+}
+
 void ShapeRectBase::hitDraggers(const float x, const float y)
 {
 	for (int i = 0; i <= 7; i++) {

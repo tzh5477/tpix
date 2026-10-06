@@ -9,4 +9,7 @@ class ShapeEllipse : public ShapeRectBase
 public:
 	ShapeEllipse(Canvas* win);
 	~ShapeEllipse();
+	// 复制（见 ShapeBase::clone）：与矩形同一套几何，只是 kind 不同
+	bool copyable() const override { return true; }
+	std::unique_ptr<ShapeBase> clone(const float dx, const float dy) const override;
 };

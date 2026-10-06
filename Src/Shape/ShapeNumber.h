@@ -42,6 +42,12 @@ public:
 	bool getShapeBounds(D2D1_RECT_F& out) const override;
 	// val 序列化成序号字符串。ToolSub 的样式切换按钮要显示当前样式下的样子，所以是 public static
 	static std::wstring serializeVal(const int val, const NumStyle style);
+	// 复制（见 ShapeBase::clone）。复制出来的是同一个编号 —— 作者要的是"一模一样的一份"
+	bool copyable() const override { return true; }
+	std::unique_ptr<ShapeBase> clone(const float dx, const float dy) const override;
+protected:
+	void fixupCopy() override;
+	void translate(const float dx, const float dy) override;
 public:
 	int val{ 1 };
 	bool isEditing{ false };

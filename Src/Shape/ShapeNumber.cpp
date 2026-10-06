@@ -84,6 +84,42 @@ ShapeNumber::~ShapeNumber()
 {
 }
 
+std::unique_ptr<ShapeBase> ShapeNumber::clone(const float dx, const float dy) const
+{
+	return cloneSelf(*this, dx, dy);
+}
+
+void ShapeNumber::fixupCopy()
+{
+	// 复制出来的一份永远不在编辑态。那两个订阅句柄是挂在 Canvas 那个共用 TextBox 上的，
+	// 照抄过来会让新的一份以为自己在编辑，收尾时还会去摘别人家的订阅
+	isEditing = false;
+	textChangedTok = {};
+	focusTok = {};
+	// 画刷重建一份（圈 / 方框的底色 + 圈里的白字）：ComPtr 拷过来是同一支，
+	// 改一方的颜色会连另一方一起改
+	auto d2d = Ling::D2D::get();
+	if (brush) {
+		auto color = brush->GetColor();
+		d2d->deviceContext->CreateSolidColorBrush(color, brush.ReleaseAndGetAddressOf());
+	}
+	if (brushText) {
+		auto color = brushText->GetColor();
+		d2d->deviceContext->CreateSolidColorBrush(color, brushText.ReleaseAndGetAddressOf());
+	}
+}
+
+void ShapeNumber::translate(const float dx, const float dy)
+{
+	cx += dx;
+	cy += dy;
+	// 路径、描述引线（descJoint 也读 cx/cy）、四个动作按钮都按圆心现算；
+	// 三个夹点原本只在 mouseUp 里重算，这里直接借它走一遍
+	makePath();
+	makeTextLayout();
+	mouseUp(cx, cy);
+}
+
 // 鼠标还没落笔时，把"将要落下的那个编号"画在光标处。样式取工具条当前那一份，
 // 所以它就是最终效果的预演；不落进 history、也不推进计数（见 ctor 的 preview）
 void ShapeNumber::previewAt(const float x, const float y, const int previewVal)

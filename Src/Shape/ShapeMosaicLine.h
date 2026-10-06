@@ -12,7 +12,12 @@ public:
 	void paint(ID2D1DeviceContext* ctx) override;
 	void mouseUp(const float x, const float y) override;
 	void applyStyle() override;
+	// 复制（见 ShapeBase::clone）
+	bool copyable() const override { return true; }
+	std::unique_ptr<ShapeBase> clone(const float dx, const float dy) const override;
 protected:
+	void fixupCopy() override;
+	void translate(const float dx, const float dy) override;
 	// 几何一动，之前算好的马赛克就不对了。ShapeLineBase 每次改完点都调 makePath，
 	// 覆写它顺手把马赛克丢掉，比在 mouseDrag 里再开一个钩子少一层
 	void makePath() override;

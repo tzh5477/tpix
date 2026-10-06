@@ -90,6 +90,23 @@ ShapeBase* History::createShape(const std::wstring& state, const int& x, const i
     return result;
 }
 
+ShapeBase* History::addShape(std::unique_ptr<ShapeBase> shape)
+{
+    if (!shape) return nullptr;
+    // 与 createShape 同一条规矩：先清掉"已撤销"那一尾巴 —— 新的一份出现之后，
+    // 中间那几笔就没法再 redo 回来了
+    removeUndoShape();
+    auto result = shape.get();
+    shapes.push_back(std::move(shape));
+    // 收下即选中：复制出来的这一份接着能拖、能改样式，与刚画完的那一笔同一套。
+    // 悬停也一起指过去 —— 鼠标这会儿还压在复制按钮上（在外框之外），
+    // 原来那个悬停目标已经没意义了
+    canvas->selected = result;
+    canvas->shapeHover = result;
+    canvas->refresh();
+    return result;
+}
+
 void History::undo()
 {
     int i{ (int)(shapes.size() - 1) };

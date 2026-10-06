@@ -420,6 +420,33 @@ void ShapeArrow::setCursor()
 	SetCursor(LoadCursor(nullptr, IDC_SIZEALL));
 }
 
+std::unique_ptr<ShapeBase> ShapeArrow::clone(const float dx, const float dy) const
+{
+	return cloneSelf(*this, dx, dy);
+}
+
+// 画刷重建一份：ComPtr 拷过来是同一支，改一方的颜色会连另一方一起改
+void ShapeArrow::fixupCopy()
+{
+	if (!brush) return;
+	auto color = brush->GetColor();
+	Ling::D2D::get()->deviceContext->CreateSolidColorBrush(color, brush.ReleaseAndGetAddressOf());
+}
+
+void ShapeArrow::translate(const float dx, const float dy)
+{
+	startX += dx;
+	startY += dy;
+	endX += dx;
+	endY += dy;
+	makeArrow();
+	// 两个夹点的重算原本只在 mouseUp 里做（那一下是"这一笔画完了"的收尾），
+	// 复制出来的这一份没有那一下，照它的算法补一遍
+	auto half{ draggerSize / 2 };
+	draggers[0] = D2D1::RectF(startX - half, startY - half, startX + half, startY + half);
+	draggers[1] = D2D1::RectF(endX - half, endY - half, endX + half, endY + half);
+}
+
 void ShapeArrow::makeArrow()
 {
 	auto d2d = Ling::D2D::get();

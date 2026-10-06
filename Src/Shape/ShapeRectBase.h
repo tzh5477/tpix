@@ -38,6 +38,10 @@ public:
 	void paintActionIcon(ID2D1DeviceContext* ctx, const int i, const D2D1_POINT_2F& c, const float rad) override;
 	void onAction(const int i) override;
 protected:
+	// 复制（见 ShapeBase::clone）。这一族只多两件事：rect 挪开、自己那支画刷重建一份，
+	// 具体是"哪个类"由派生类各写一行 cloneSelf
+	void fixupCopy() override;
+	void translate(const float dx, const float dy) override;
 	// hoverDraggerIndex 的取值。0~7 是八向手柄（与 makeDraggers 的顺序一一对应），
 	// 8 是"整体拖动"，9 起是本族新增的：
 	// 9 旋转、10~13 圆角（左上/右上/右下/左下）、14 扇区内径、15/16 扇区缺角的起始边/终止边

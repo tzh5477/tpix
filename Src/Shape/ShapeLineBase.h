@@ -26,6 +26,10 @@ public:
 	// 两端带标记的要往里缩一截（见 ShapeLine::shaftPoints），拿它量会把两个箭头漏在框外
 	bool getShapeBounds(D2D1_RECT_F& out) const override;
 protected:
+	// 复制（见 ShapeBase::clone）：这一族负责把整串顶点挪开、画刷重建一份，
+	// "复制出来是哪一类"（直线 / 涂抹马赛克）由派生类各写一行 cloneSelf
+	void fixupCopy() override;
+	void translate(const float dx, const float dy) override;
 	virtual void makePath();
 	// 按给定的一串点建 path。makePath 与"画的时候要往里缩一截"的派生类（直线）共用
 	void buildPath(const std::vector<D2D1_POINT_2F>& pts);

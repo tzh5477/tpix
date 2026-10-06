@@ -17,6 +17,12 @@ public:
 	void mouseDrag(const float x, const float y) override;
 	void mouseUp(const float x, const float y) override;
 	void applyStyle() override;
+	// 复制（见 ShapeBase::clone）
+	bool copyable() const override { return true; }
+	std::unique_ptr<ShapeBase> clone(const float dx, const float dy) const override;
+protected:
+	void fixupCopy() override;
+	void translate(const float dx, const float dy) override;
 private:
 	// 打好的马赛克画刷。与 eraseBrush 互斥：一个 shape 只会走到其中一条路上
 	Microsoft::WRL::ComPtr<ID2D1BitmapBrush> mosaicBrush;

@@ -32,6 +32,33 @@ ShapeText::~ShapeText()
 
 }
 
+std::unique_ptr<ShapeBase> ShapeText::clone(const float dx, const float dy) const
+{
+	return cloneSelf(*this, dx, dy);
+}
+
+void ShapeText::fixupCopy()
+{
+	// 同标号：复制出来的一份不在编辑态（挂在共用 TextBox 上的那两个订阅不能照抄）
+	isEditing = false;
+	textChangedTok = {};
+	focusTok = {};
+	// 画刷重建一份：ComPtr 拷过来是同一支，改一方的颜色会连另一方一起改。
+	// 排版（textLayout）是不带位置的对象，共享无妨
+	if (!textBrush) return;
+	auto color = textBrush->GetColor();
+	Ling::D2D::get()->deviceContext->CreateSolidColorBrush(color, textBrush.ReleaseAndGetAddressOf());
+}
+
+void ShapeText::translate(const float dx, const float dy)
+{
+	// 文字的落点由 rect 现算（见 paint 与 startEdit 里的 setPosition）
+	rect.left += dx;
+	rect.right += dx;
+	rect.top += dy;
+	rect.bottom += dy;
+}
+
 D2D1_POINT_2F ShapeText::center() const
 {
 	return { (rect.left + rect.right) / 2.f, (rect.top + rect.bottom) / 2.f };

@@ -28,6 +28,12 @@ public:
 	// 每个枚举值一样长（都铺满整格），不会有"普通箭头很长、细箭头很短"这种参差
 	static void paintSample(ID2D1DeviceContext* ctx, const D2D1_RECT_F& rect, int styleIndex,
 		float strokeW, ID2D1Brush* brush);
+	// 复制（见 ShapeBase::clone）
+	bool copyable() const override { return true; }
+	std::unique_ptr<ShapeBase> clone(const float dx, const float dy) const override;
+protected:
+	void fixupCopy() override;
+	void translate(const float dx, const float dy) override;
 private:
 	void makeArrow();
 	// 细箭头（arrowStyle 2）的画面：箭杆一条线 + 开口 V 头。
