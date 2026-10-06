@@ -101,6 +101,13 @@ void ToolMain::onCreated()
 			//（图标字体里没有指针形状，41 个码位全都有主；见 layout / paintSelectIcon）。
 			// 其余各枚照旧走 icon 字体
 			if (id == L"selector") {
+				// 宽度写死，不交给 flex 分：它不写字、里面那张画布又是按百分比铺的，
+				// 于是它的"基准尺寸（auto = 内容尺寸）"算出来是 0，而 flexGrow 是在各自
+				// 基准上平分剩余空间 —— 结果这一格比其它格窄一大截（实测 26px vs 41px），
+				// 就是作者说的"背景宽度与其它小图标不同"。其余各枚的基准都是 glyph 宽度、
+				// 彼此相等，照旧由 flex 平分
+				btn->setFlexGrow(0.f);
+				btn->setWidth(btnSize);
 				auto icon = btn->makeChild<Ling::Canvas>();
 				icon->setSizePercent(100.f, 100.f);
 				icon->setFlexShrink(0.f);
@@ -109,7 +116,16 @@ void ToolMain::onCreated()
 			else {
 				btn->setText(btnCodes[i]);
 				btn->setFontFamily(L"icon");
-				btn->setFontSize(13.f);
+				// \ue907（「隐藏贴图」）那枚的字形天生又扁又小、墨迹还长在字身框的上半截：
+				// 13 号下只有 11x6 逻辑像素，比同排普遍小四成、位置还高 4 个像素
+				//（作者报的"大小与其它小图标不同"）。字形改不了 —— 按光学尺寸单独放大字号，
+				// 再用上内边距把偏上去的那一截补回中线（Button 的文字在内容框里居中，
+				// 上内边距让内容框整块下移，补的是它的一半）
+				if (id == L"pinHide") {
+					btn->setFontSize(20.f);
+					btn->setPaddingTop(9.f);
+				}
+				else btn->setFontSize(13.f);
 			}
 			btn->onClick.add([this](Ling::Button* btn) {onClick(btn);});
 			tip->bind(btn, Lang::get(std::format(L"tool.{}", id)));
@@ -141,12 +157,12 @@ void ToolMain::paintSelectIcon(ID2D1DeviceContext* ctx, const float w, const flo
 		{ 0.294f, 0.849f }, { 0.435f, 0.792f }, { 0.318f, 0.510f },
 		{ 0.529f, 0.510f },
 	};
-	// 上面那串点自己的外接尺寸（0.529 × 0.849）；pad 是描边要占的边，
-	// 留窄了指针会贴着按钮边缘，描边被切掉半个像素
+	// 上面那串点自己的外接尺寸（0.529 × 0.849）
 	constexpr float bw{ 0.529f }, bh{ 0.849f };
-	const float pad{ 5.f * dpi };
-	const float sx{ (w - pad * 2.f) / bw }, sy{ (h - pad * 2.f) / bh };
-	const float s{ sx < sy ? sx : sy };
+	// 指针的墨迹高度：图标字体那一排（13 号）的墨迹落在 11~13 个逻辑像素之间，取中间那一档。
+	// 原来是把画布撑满、只留 pad 的边 —— 格子越宽指针画得越大，比别的图标高出一大截，
+	// 正是作者说的"大小与其它小图标不同"。这里按固定尺寸画，横向居中
+	const float s{ 10.f * dpi / bh };
 	const float ox{ (w - bw * s) / 2.f }, oy{ (h - bh * s) / 2.f };
 
 	Microsoft::WRL::ComPtr<ID2D1PathGeometry> geo;
