@@ -6,6 +6,11 @@
 namespace {
 	// 默认窗口尺寸（逻辑像素）。文本钉窗比贴图小一圈，居中摆放就好找
 	constexpr int kDefW{ 380 }, kDefH{ 260 };
+	// 缩放时的最小尺寸（逻辑像素）。别缩成一条看不清内容
+	constexpr int kMinW{ 160 }, kMinH{ 100 };
+	// 关闭按钮宽度（逻辑像素），与 onCreated 里 setWidth 的那个值保持一致 ——
+	// onHitTest 要靠它把那枚按钮从"标题栏拖拽区"里挖出来，否则点关闭会被当成拖窗
+	constexpr float kCloseW{ 30.f };
 }
 
 std::vector<std::unique_ptr<WinTextPin>> WinTextPin::winTextPins;
@@ -13,9 +18,8 @@ std::vector<std::unique_ptr<WinTextPin>> WinTextPin::winTextPins;
 WinTextPin::WinTextPin(const std::wstring& text)
 	: Ling::WinBase(), content(text)
 {
-	onMouseDown.add([this](POINT pos, bool isRight) { this->onDown(pos, isRight); });
-	onMouseMove.add([this](POINT pos) { this->onMove(pos); });
-	onMouseUp.add([this](POINT, bool) { this->onUp(); });
+	// 拖窗 / 缩放交给系统（见 onHitTest），窗口自己不再订阅鼠标事件 ——
+	// 文本选择那些交互由 Ling::TextBox 自己挂在窗口事件上，不需这里转发。
 	onDestroy.add([this]() { this->onClosed(); });
 }
 
@@ -50,9 +54,24 @@ bool WinTextPin::hasWindow()
 
 void WinTextPin::onMinMaxInfo(MINMAXINFO* mmi)
 {
-	// 同 WinBall / WinPin：小窗口得把最小跟踪尺寸放到 1，否则系统按回 800×600
-	mmi->ptMinTrackSize.x = 1;
-	mmi->ptMinTrackSize.y = 1;
+	// 允许拖边框缩放，但不缩到看不清内容。默认那条把最小跟踪尺寸放到 800×600，
+	// 那样小窗口根本缩不成，这里改小
+	mmi->ptMinTrackSize.x = (LONG)(kMinW * dpi);
+	mmi->ptMinTrackSize.y = (LONG)(kMinH * dpi);
+}
+
+LRESULT WinTextPin::onHitTest(const POINT pos)
+{
+	// onHitTest 收到的是屏幕坐标，先换成客户区坐标再判边界 / 标题栏
+	POINT pt = pos;
+	ScreenToClient(hwnd, &pt);
+	// 四边 / 四角：交给系统做窗口缩放（拖边框改大小）
+	auto result = borderHitTest(pt);
+	if (result != HTCLIENT) return result;
+	// 标题栏当拖拽带。挖掉右边那枚关闭按钮 —— 它要收自己的点击，不能当标题栏吞掉。
+	// 返回 HTCAPTION 后由系统接管移动，平滑、不会再抖（见头文件 onHitTest 的说明）
+	if (pt.y >= 0 && pt.y < kTitleH * dpi && pt.x < w - kCloseW * dpi) return HTCAPTION;
+	return HTCLIENT;
 }
 
 void WinTextPin::onCreated()
@@ -76,7 +95,7 @@ void WinTextPin::onCreated()
 
 	closeBtn = titleBar->makeChild<Ling::Button>();
 	closeBtn->setText(L"×");
-	closeBtn->setWidth(30.f);
+	closeBtn->setWidth(kCloseW);
 	closeBtn->setHeight(kTitleH);
 	closeBtn->setBg(Ling::Color(0));
 	closeBtn->setHoverBg(Ling::Color(0xE81123FF));
@@ -84,9 +103,11 @@ void WinTextPin::onCreated()
 	closeBtn->setHoverColor(Ling::Color(0xFFFFFFFF));
 	closeBtn->onClick.add([this](Ling::Button*) { close(); });
 
-	// 文本区：真控件，双击选词 / 三击选段 / Ctrl+A C X V 全自带
+	// 文本区：真控件，双击选词 / 三击选段 / Ctrl+A C X V 全自带。
+	// 宽高不在这里定死，交给 layout() —— Ling::TextBox 构造函数里写死了 setWidth(240)，
+	// 而 flexGrow 只管主轴（纵向），交叉轴（横向）压不过那个确定宽度，不显式撑满的话
+	// 控件只有 240 宽，滚动条会落在窗口中间而不是右缘
 	textBox = body->makeChild<Ling::TextBox>();
-	textBox->setFlexGrow(1.f);
 	textBox->setBg(Ling::Color(0xFFFFFFFF));
 	textBox->setPadding(8.f);
 	textBox->setFontSize(14.f);
@@ -95,30 +116,17 @@ void WinTextPin::onCreated()
 	show();
 }
 
-void WinTextPin::onDown(POINT pos, bool isRight)
+void WinTextPin::layout()
 {
-	// 只有点在标题栏（且不是关闭按钮）上才拖动；点文本区交给 TextBox 自己处理
-	if (isRight) return;
-	if (closeBtn && closeBtn->isPosIn(pos)) return;
-	if (pos.y > kTitleH * dpi) return;
-	dragging = true;
-	dragStartMouse = pos;
-	dragStartX = x;
-	dragStartY = y;
-	SetCapture(hwnd);
-}
-
-void WinTextPin::onMove(POINT pos)
-{
-	if (!dragging) return;
-	setPosition(dragStartX + (pos.x - dragStartMouse.x), dragStartY + (pos.y - dragStartMouse.y));
-}
-
-void WinTextPin::onUp()
-{
-	if (!dragging) return;
-	dragging = false;
-	ReleaseCapture();
+	// 文本区尺寸跟着窗口走：宽度撑满，高度 = 窗口高 - 标题栏高（w/h 是物理像素，除以 dpi
+	// 换成 Node 要的逻辑像素）。建窗与每次拖边框缩放都会走到这里
+	if (textBox) {
+		float tw = w / dpi;
+		float th = h / dpi - kTitleH;
+		textBox->setWidth(tw > 1.f ? tw : 1.f);
+		textBox->setHeight(th > 1.f ? th : 1.f);
+	}
+	Ling::WinBase::layout();
 }
 
 void WinTextPin::onClosed()

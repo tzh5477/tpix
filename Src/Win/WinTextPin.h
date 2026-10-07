@@ -20,10 +20,14 @@ public:
 private:
 	explicit WinTextPin(const std::wstring& text);
 	void onCreated() override;
+	// 文本区尺寸跟着窗口走（宽度撑满、高度 = 窗口高 - 标题栏高）。放在这里而不是 onCreated：
+	// 拖边框缩放时 WinBase::sizeChange 会再调一次 layout()，尺寸据此重算
+	void layout() override;
 	void onMinMaxInfo(MINMAXINFO* mmi) override;
-	void onDown(POINT pos, bool isRight);
-	void onMove(POINT pos);
-	void onUp();
+	// 标题栏拖窗 / 边框缩放都走这里：WS_POPUP 没有系统标题栏，自己认 HTCAPTION / HTxxxx 边界。
+	// 交给系统走那套非客户区拖拽，比在自己窗口里按客户端坐标算位移稳得多（后者会和窗口
+	// 自身移动互相追赶，抖得厉害）。见 WinAiChat::onHitTest 同款做法
+	LRESULT onHitTest(const POINT pos) override;
 	void onClosed();
 private:
 	Ling::TextBox* textBox{ nullptr };
@@ -31,10 +35,6 @@ private:
 	Ling::Label* titleLabel{ nullptr };
 	Ling::Button* closeBtn{ nullptr };
 	std::wstring content;
-	// 标题栏拖动整扇窗
-	bool dragging{ false };
-	POINT dragStartMouse{ 0, 0 };
-	int dragStartX{ 0 }, dragStartY{ 0 };
 	bool isClosed{ false };
 	// 标题栏逻辑高度（实际物理高度 = 它 × dpi）
 	static constexpr float kTitleH{ 30.f };

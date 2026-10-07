@@ -170,13 +170,10 @@ void PinSource::fromClipboard()
 		return;
 	}
 	if (kind != Util::ClipContent::Text || text.empty()) return;
-	// 复制来的就是个颜色值（从取色器、CSS 里拷的），贴一块色比贴一行字有用
-	uint32_t rgba{ 0 };
-	if (parseColor(text, rgba)) {
-		fromColor(text);
-		return;
-	}
-	fromText(text);
+	// 剪贴板里是文本就一律贴成文本 —— 连 "复制来的颜色值"（取色器 / CSS 里拷的 #rrggbb、
+	// rgb(...)）也不例外：以前那种会贴成一块色，可那块色改不了字面值，用户想拿回原始文本
+	// 反而没地方取。贴成可编辑文本钉窗之后，颜色字符串照样看得见、选得中、复制得走
+	WinTextPin::init(text);
 }
 
 void PinSource::fromFile(HWND hwnd)
