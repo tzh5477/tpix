@@ -710,10 +710,18 @@ void WinPin::paintSelection(ID2D1DeviceContext* ctx)
 	for (auto* shape : drawing->multiSelected) {
 		D2D1_RECT_F b{};
 		if (!shape->getShapeBounds(b)) continue;
-		ctx->DrawRectangle(b, borderBrush.Get(), dpi);
+		// 框线与标记点都要**让到元素外面**画，别压在它自己的描边上。
+		// 空心的矩形画的正是 getShapeBounds 那个矩形，蓝色框线落在红描边的中线上、
+		// 8 个白点落在它的角与边中点上 —— 整个边框就被混成紫的了
+		//（作者报的"ctrl 框选之后矩形边框线的颜色会变"）。
+		// 让开三样：元素自己描边的半宽（shape->selectionGap）+ 框线自己的一半 + 同样宽的一条缝。
+		// 椭圆族、填满的矩形、线条族那边 selectionGap 都是 0（理由见 ShapeBase::selectionGap）
+		const float inset{ shape->selectionGap() + dpi };
+		const D2D1_RECT_F f{ b.left - inset, b.top - inset, b.right + inset, b.bottom + inset };
+		ctx->DrawRectangle(f, borderBrush.Get(), dpi);
 		if (!withHandles) continue;
 		D2D1_POINT_2F cs[8];
-		rectHandleCenters(b, cs);
+		rectHandleCenters(f, cs);
 		for (auto& c : cs) {
 			auto box = D2D1::RectF(c.x - hr, c.y - hr, c.x + hr, c.y + hr);
 			ctx->FillRectangle(box, brushSelWhite.Get());

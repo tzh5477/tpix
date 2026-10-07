@@ -16,4 +16,9 @@ public:
 	// 定下"复制出来还是我自己这一类"
 	bool copyable() const override { return true; }
 	std::unique_ptr<ShapeBase> clone(const float dx, const float dy, Canvas* target = nullptr) const override;
+	// 多选那圈提示框线要离外接框再让多远（见 ShapeBase::selectionGap）。
+	// 矩形与椭圆共用这一族，但只有**空心的矩形**需要让：
+	// 它画的就是外接框那个矩形本身、描边以它为中线，框线压上去就把红描边混成紫的；
+	// 椭圆族画的是一条弧、只在 4 个切点上碰到外接框，填满的又没有描边，都让 0
+	float selectionGap() const override { return isFill ? 0.f : strokeWidth * 0.5f; }
 };
