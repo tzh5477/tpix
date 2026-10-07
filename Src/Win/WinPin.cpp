@@ -702,10 +702,16 @@ void WinPin::paintSelection(ID2D1DeviceContext* ctx)
 	// 标记点半边长。比单选那 8 枚夹点（draggerSize*0.5 = 3*dpi）小一圈：
 	// 多选时一圈标记点只是"选中提示"，不需要那么好点，太大会把细小的标注整个盖住
 	const float hr{ 2.6f * dpi };
+	// 框住的对象一多，逐人一圈 8 个点就糊成一片，反倒看不清到底圈进了谁
+	//（作者：超过 2 个只留框线）。这些点本来就是纯提示、不可交互 —— 批量只能整体挪 /
+	// 整体转 / 整体删，没有"拖某个人的角改大小"这回事。<=2 时仍然给，两个对象时
+	// 那圈点还能帮着确认"是哪两个"
+	const bool withHandles{ drawing->multiSelected.size() <= 2 };
 	for (auto* shape : drawing->multiSelected) {
 		D2D1_RECT_F b{};
 		if (!shape->getShapeBounds(b)) continue;
 		ctx->DrawRectangle(b, borderBrush.Get(), dpi);
+		if (!withHandles) continue;
 		D2D1_POINT_2F cs[8];
 		rectHandleCenters(b, cs);
 		for (auto& c : cs) {
