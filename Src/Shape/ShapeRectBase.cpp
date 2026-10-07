@@ -238,6 +238,9 @@ void ShapeRectBase::mouseDrag(const float x, const float y)
 	case HitRotate:
 		angle = rotateAngleAt(rectCenter(), x, y);
 		return;
+	// 圆角：四个分支都留着，但只有 HitRadiusTL 走得到 —— makeDraggers 只给左上角建了框
+	//（作者：四枚收成一枚）。四个角共用同一个 radius，所以拖左上那枚四个角一起变。
+	// 留全四支是为了"以后想再放开某个角"时不用回来重写这段几何
 	case HitRadiusTL:
 	case HitRadiusTR:
 	case HitRadiusBR:
@@ -594,12 +597,16 @@ void ShapeRectBase::makeDraggers()
 	draggers[5] = box(rect.left + w / 2, rect.bottom);
 	draggers[6] = box(rect.left, rect.bottom);
 	draggers[7] = box(rect.left, rect.top + h / 2);
-	// 圆角手柄：四个角沿对角线往里让开"初始位置 + 当前半径"，正好落在圆角弧的起止点上
+	// 圆角手柄：**只留左上角那一枚**（作者：四个角各摆一枚太密，一个就够）。
+	// 位置沿对角线往里让开"初始位置 + 当前半径"，正好落在圆角弧的起点上。
+	// 四角共用同一个 radius，所以拖这一枚四个角一起变圆 —— 这正是"改圆角"的语义。
+	// 另外三枚留零尺寸框：paintDot 见 box.right <= box.left 直接 return，isInRect 也恒假，
+	// 于是绘制与命中都不用再写一遍"只有一枚"（见 Hit 枚举里那四个下标仍在的原因）
 	auto off{ radiusHome() + radius };
 	draggers[HitRadiusTL] = kind == Kind::Rect ? box(rect.left + off, rect.top + off) : none;
-	draggers[HitRadiusTR] = kind == Kind::Rect ? box(rect.right - off, rect.top + off) : none;
-	draggers[HitRadiusBR] = kind == Kind::Rect ? box(rect.right - off, rect.bottom - off) : none;
-	draggers[HitRadiusBL] = kind == Kind::Rect ? box(rect.left + off, rect.bottom - off) : none;
+	draggers[HitRadiusTR] = none;
+	draggers[HitRadiusBR] = none;
+	draggers[HitRadiusBL] = none;
 	// 扇区那三枚：内径那一枚落在"缺角起点"那条边上、离圆心 innerRatio 倍半径处
 	// （内径为 0 时正好在圆心）；另外两枚分别落在缺角的两条边与外弧的交点上
 	if (kind == Kind::Ellipse) {

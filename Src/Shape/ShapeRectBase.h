@@ -47,7 +47,9 @@ protected:
 	void translate(const float dx, const float dy) override;
 	// hoverDraggerIndex 的取值。0~7 是八向手柄（与 makeDraggers 的顺序一一对应），
 	// 8 是"整体拖动"，9 起是本族新增的：
-	// 9 旋转、10~13 圆角（左上/右上/右下/左下）、14 扇区内径、15/16 扇区缺角的起始边/终止边
+	// 9 旋转、10~13 圆角（左上/右上/右下/左下）、14 扇区内径、15/16 扇区缺角的起始边/终止边。
+	// ⚠️ 圆角那四枚现在**只有 10（左上）真的建得出来**（作者：四枚太密，收成一枚）——
+	// 11~13 留着占位，是给"绘制 / 命中"那两处 for 循环用的，别顺手把它们当成还能拖
 	enum Hit {
 		HitBody = 8, HitRotate = 9, HitRadiusTL = 10, HitRadiusTR, HitRadiusBR, HitRadiusBL,
 		HitInner = 14, HitNotchStart, HitNotchEnd
