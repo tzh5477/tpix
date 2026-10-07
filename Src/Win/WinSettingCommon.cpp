@@ -65,7 +65,6 @@ WinSettingCommon::WinSettingCommon(Ling::WinBase* parent):Ling::Node(parent)
 {    
     initAutoStartCtrls();
     initLangCtrls();
-    initCapBtnCtrls();
     initCapCtrls();
     initSaveCtrls();
     initHistoryCtrls();
@@ -163,84 +162,6 @@ void WinSettingCommon::initLangCtrls()
             });
         });
         });
-    auto border = makeChild<Ling::Node>();
-    border->setHeight(1.f);
-    border->setBg(0xE0E0E0FF);
-}
-
-// ToolCap 上可配的标注工具。图标码位与 ToolMain 一一对应，
-// 默认主行五项与 ToolCap::defaultShapeIds 必须保持一致 —— 两处（工具条摆按钮、设置界面显示默认态）
-// 各写一份默认值的话，改一边就会冒出"设置里看着是关的、工具条上却出现了"这种事。
-namespace {
-    struct CapBtnDef { const wchar_t* id; const wchar_t* code; const wchar_t* tip; };
-    const CapBtnDef capBtnDefs[]{
-        { L"rect",    L"\ue8e8", L"tool.rect" },
-        { L"ellipse", L"\ue6bc", L"tool.ellipse" },
-        { L"arrow",   L"\ue603", L"tool.arrow" },
-        { L"number",  L"\ue776", L"tool.number" },
-        { L"line",    L"\ue601", L"tool.line" },
-        { L"text",    L"\ue6ec", L"tool.text" },
-        { L"mosaic",  L"\ue82e", L"tool.mosaic" },
-        { L"eraser",  L"\ue6be", L"tool.eraser" },
-        { L"watermark", L"\ue607", L"tool.watermark" },
-    };
-    // 默认值在这份文件里也必须再写一遍：这里是"配置从来没写过"时的兜底，
-    // 与 ToolCap::defaultShapeIds 是同一套语义
-    const std::vector<std::wstring> capBtnDefaultIds{
-        L"rect", L"arrow", L"text", L"mosaic", L"number"
-    };
-}
-
-void WinSettingCommon::applyCapBtnStyle(Ling::Button* btn, bool selected)
-{
-    if (selected) {
-        btn->setBg(0xe6f4ffff);
-        btn->setHoverBg(0xe6f4ffff);
-    }
-    else {
-        btn->setBg(0);
-        btn->setHoverBg(0xF2F2F2ff);
-    }
-}
-
-void WinSettingCommon::initCapBtnCtrls()
-{
-    auto box = makeChild<Ling::Node>();
-    box->setHeight(39.f);
-    box->setFlexDirection(Ling::FlexDirection::Row);
-    box->setAlignItems(Ling::Align::Center);
-
-    auto label = box->makeChild<Ling::Label>();
-    label->setText(Lang::get(L"setting.capBtn"));
-    label->setHeightPercent(100.f);
-    label->setJustifyContent(Ling::Justify::Center);
-    label->setFlexGrow(1.f);
-
-    auto setting = Setting::get();
-    for (auto& def : capBtnDefs)
-    {
-        bool onMain = false;
-        for (auto& id : capBtnDefaultIds) {
-            if (id == def.id) { onMain = true; break; }
-        }
-        auto btn = box->makeChild<Ling::Button>();
-        btn->setWidth(28.f);
-        btn->setHeight(28.f);
-        btn->setText(def.code);
-        btn->setFontFamily(L"icon");
-        btn->setFontSize(13.f);
-        auto selected = setting->getToolFlag(L"toolCap", def.id, onMain);
-        applyCapBtnStyle(btn, selected);
-        // 每次都按同一个默认值去读：没写过的键读出来就是 onMain（与初始显示一致），
-        // 写过之后读到的就是上次写进去的值，所以这里不能换成"上次显示的那个布尔"
-        btn->onClick.add([this, id = std::wstring(def.id), onMain](Ling::Button* b) {
-            auto s = Setting::get();
-            auto next = !s->getToolFlag(L"toolCap", id, onMain);
-            s->setToolFlag(L"toolCap", id, next);
-            applyCapBtnStyle(b, next);
-        });
-    }
-
     auto border = makeChild<Ling::Node>();
     border->setHeight(1.f);
     border->setBg(0xE0E0E0FF);

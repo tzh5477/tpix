@@ -162,12 +162,6 @@
     <ClCompile Include="Shape\ShapeWatermark.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
-    <ClCompile Include="Tool\ToolCap.cpp">
-      <Filter>源文件</Filter>
-    </ClCompile>
-    <ClCompile Include="Tool\ToolCapStage.cpp">
-      <Filter>源文件</Filter>
-    </ClCompile>
     <ClCompile Include="Tool\ToolLong.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
@@ -367,12 +361,6 @@
       <Filter>头文件</Filter>
     </ClInclude>
     <ClInclude Include="Shape\ShapeRectBase.h">
-      <Filter>头文件</Filter>
-    </ClInclude>
-    <ClInclude Include="Tool\ToolCap.h">
-      <Filter>头文件</Filter>
-    </ClInclude>
-    <ClInclude Include="Tool\ToolCapStage.h">
       <Filter>头文件</Filter>
     </ClInclude>
     <ClInclude Include="Tool\ToolLong.h">

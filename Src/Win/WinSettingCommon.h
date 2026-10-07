@@ -11,8 +11,6 @@ public:
 private:
 	void initAutoStartCtrls();
 	void initLangCtrls();
-	// 一级工具条（ToolCap）上显示哪些标注工具。开关走 Setting 的 toolCap 组
-	void initCapBtnCtrls();
 	// 捕获：延时 / 包含鼠标指针 / 定时自动截图。都走 Setting 的 cap 组
 	void initCapCtrls();
 	// 输出格式、自动保存目录与命名模板。存盘路径由 Util::resolveSavePath 消费
@@ -27,8 +25,6 @@ private:
 	void initConfigCtrls();
 	// 导入导出失败时的提示（系统提示标题 + 一行说明）
 	void showConfigTip(const std::wstring& key);
-	// 开 / 关两套配色，与 ToolSub::applyToggleStyle 保持一致
-	static void applyCapBtnStyle(Ling::Button* btn, bool selected);
 	// 一行「标签 + 控件」。生成的行节点作为返回值交给调用方塞控件，分隔线是本节点的
 	// 子节点而不是行内的，必须在下一行入列之前加好，所以顺手在这里加掉
 	Ling::Node* makeRow(const std::wstring& labelKey);
