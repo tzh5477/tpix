@@ -267,6 +267,7 @@
     <ClCompile Include="Win\PinHiddenBar.cpp" />
     <ClCompile Include="Win\CapLong.cpp" />
     <ClCompile Include="Win\WinPin.cpp" />
+    <ClCompile Include="Win\WinTextPin.cpp" />
     <ClCompile Include="Win\WinCap.cpp" />
     <ClCompile Include="Win\WinSettingAbout.cpp" />
     <ClCompile Include="Win\WinSettingCommon.cpp" />
@@ -344,6 +345,7 @@
     <ClInclude Include="Win\PinHiddenBar.h" />
     <ClInclude Include="Win\CapLong.h" />
     <ClInclude Include="Win\WinPin.h" />
+    <ClInclude Include="Win\WinTextPin.h" />
     <ClInclude Include="Win\WinCap.h" />
     <ClInclude Include="Win\WinSettingAbout.h" />
     <ClInclude Include="Win\WinSettingCommon.h" />

@@ -14,6 +14,9 @@
 #include "WinHistory.h"
 #include "WinOverlay.h"
 #include "WinSetting.h"
+#include <ObjIdl.h>
+#include <shlobj.h>
+#include "Win/WinTextPin.h"
 
 namespace {
 	std::unique_ptr<WinBall> ballIns;
@@ -38,6 +41,67 @@ namespace {
 		}
 		return CallWindowProc(ballOrigProc, hwnd, msg, wParam, lParam);
 	}
+
+	// 单个文件的分流：文本文件开文本钉窗，其余交给 PinSource 当图片贴
+	void routeOneFile(const std::wstring& path)
+	{
+		if (PinSource::isTextFile(path)) PinSource::fromTextFile(path);
+		else PinSource::fromPath(path);
+	}
+
+	// OLE 拖放目标：跨程序拖来的裸文本（CF_UNICODETEXT）走这里，Ling 不转发这条消息，
+	// 只能自己在窗口上挂一个 IDropTarget 并 RegisterDragDrop。文件（CF_HDROP）现在也走 OLE，
+	// 所以这里顺手把文件也接了，免得和 WM_DROPFILES 两条路各写一遍
+	class BallDropTarget : public IDropTarget
+	{
+	public:
+		BallDropTarget() = default;
+		HRESULT STDMETHODCALLTYPE QueryInterface(REFIID riid, void** ppv) override
+		{
+			if (!ppv) return E_POINTER;
+			if (riid == IID_IUnknown || riid == IID_IDropTarget) {
+				*ppv = static_cast<IDropTarget*>(this);
+				AddRef();
+				return S_OK;
+			}
+			*ppv = nullptr;
+			return E_NOINTERFACE;
+		}
+		ULONG STDMETHODCALLTYPE AddRef() override { return (ULONG)InterlockedIncrement(&ref_); }
+		ULONG STDMETHODCALLTYPE Release() override
+		{
+			auto r = (ULONG)InterlockedDecrement(&ref_);
+			if (r == 0) delete this;
+			return r;
+		}
+		HRESULT STDMETHODCALLTYPE DragEnter(IDataObject* pDataObj, DWORD, POINTL, DWORD* pdwEffect) override
+		{
+			*pdwEffect = canDrop(pDataObj) ? DROPEFFECT_COPY : DROPEFFECT_NONE;
+			return S_OK;
+		}
+		HRESULT STDMETHODCALLTYPE DragOver(DWORD, POINTL, DWORD* pdwEffect) override
+		{
+			*pdwEffect = DROPEFFECT_COPY;
+			return S_OK;
+		}
+		HRESULT STDMETHODCALLTYPE DragLeave() override { return S_OK; }
+		HRESULT STDMETHODCALLTYPE Drop(IDataObject* pDataObj, DWORD, POINTL, DWORD* pdwEffect) override
+		{
+			*pdwEffect = DROPEFFECT_NONE;
+			if (pDataObj && ballPtr) { ballPtr->onDropData(pDataObj); *pdwEffect = DROPEFFECT_COPY; }
+			return S_OK;
+		}
+	private:
+		static bool canDrop(IDataObject* p)
+		{
+			if (!p) return false;
+			FORMATETC fe{ CF_UNICODETEXT, nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL };
+			if (SUCCEEDED(p->QueryGetData(&fe))) return true;
+			fe.cfFormat = CF_HDROP;
+			return SUCCEEDED(p->QueryGetData(&fe));
+		}
+		ULONG ref_{ 1 };
+	};
 }
 
 WinBall::WinBall()
@@ -90,6 +154,7 @@ void WinBall::init()
 
 void WinBall::dispose()
 {
+	if (ballPtr) ballPtr->revokeDrop();
 	ballPtr = nullptr;
 	ballIns.reset();
 }
@@ -141,6 +206,22 @@ void WinBall::onCreated()
 	ChangeWindowMessageFilterEx(hwnd, WM_COPYDATA, MSGFLT_ALLOW, nullptr);
 	ballOrigProc = reinterpret_cast<WNDPROC>(GetWindowLongPtr(hwnd, GWLP_WNDPROC));
 	SetWindowLongPtr(hwnd, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(ballProc));
+	// 跨程序拖放（CF_UNICODETEXT）走 OLE：Ling 不转发，只能自己挂 IDropTarget。
+	// RegisterDragDrop 要求本线程是 STA（Ling::init 已用 COINIT_APARTMENTTHREADED 初始化且
+	// 正在跑消息循环）。提权运行时低权限程序拖来的 OLE 会被 UIPI 拦，与 WM_DROPFILES 同属已知限制。
+	// 这里若已处于 STA（Ling 初始化过，返回 S_FALSE）就不配对 CoUninitialize，由 Ling 收尾
+	HRESULT cohr = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+	if (SUCCEEDED(cohr)) {
+		// new 出来引用计数就是 1，正好是我们持有的那一份；RegisterDragDrop 自己再加一份。
+		// revokeDrop 里 RevokeDragDrop（减掉 OLE 那份）+ Release（减掉我们这份）= 0 归零释放。
+		// 这里若再 AddRef 一次就永远回不到 0，整个 BallDropTarget 泄漏
+		dropTarget_ = new BallDropTarget();
+		if (FAILED(RegisterDragDrop(hwnd, dropTarget_))) {
+			dropTarget_->Release();
+			dropTarget_ = nullptr;
+		}
+		if (cohr == S_OK) coInitializedHere_ = true;
+	}
 	tip = std::make_unique<Tip>(this);
 	buildBody();
 	applyGeometry();
@@ -480,8 +561,57 @@ void WinBall::onDropFiles(HDROP drop)
 	{
 		wchar_t buf[MAX_PATH]{};
 		if (DragQueryFile(drop, i, buf, MAX_PATH) == 0) continue;
-		// 非图片（目录、txt…）由 PinSource 自己认出来什么都不做
-		PinSource::fromPath(std::wstring{ buf });
+		// 文本文件开文本钉窗，图片交给 PinSource 当贴图；目录由 PinSource 自己认出忽略
+		routeOneFile(std::wstring{ buf });
 	}
 	DragFinish(drop);
+}
+
+void WinBall::onDropText(const std::wstring& text)
+{
+	if (text.empty()) return;
+	// 跨程序拖来的文本 = 一扇可编辑的文本钉窗，不是烤死图
+	WinTextPin::init(text);
+}
+
+void WinBall::onDropData(IDataObject* data)
+{
+	if (!data) return;
+	// 先试跨程序裸文本（Notepad / 浏览器里选中一段拖过来）
+	FORMATETC fe{ CF_UNICODETEXT, nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL };
+	STGMEDIUM med{};
+	if (SUCCEEDED(data->GetData(&fe, &med)) && med.tymed == TYMED_HGLOBAL && med.hGlobal) {
+		auto* p = static_cast<const wchar_t*>(GlobalLock(med.hGlobal));
+		if (p) {
+			std::wstring text(p);
+			GlobalUnlock(med.hGlobal);
+			ReleaseStgMedium(&med);
+			onDropText(text);
+			return;
+		}
+		ReleaseStgMedium(&med);
+	}
+	// 再试文件（资源管理器拖出来的图 / 文本文件）。OLE 给的 HDROP 归 STGMEDIUM 管，
+	// 用 DragQueryFile 读出路径后交给和 WM_DROPFILES 同一份路由
+	FORMATETC feH{ CF_HDROP, nullptr, DVASPECT_CONTENT, -1, TYMED_HGLOBAL };
+	STGMEDIUM medH{};
+	if (SUCCEEDED(data->GetData(&feH, &medH)) && medH.tymed == TYMED_HGLOBAL && medH.hGlobal) {
+		HDROP h = (HDROP)medH.hGlobal;
+		UINT n = DragQueryFile(h, 0xFFFFFFFF, nullptr, 0);
+		for (UINT i = 0; i < n; ++i) {
+			wchar_t buf[MAX_PATH]{};
+			if (DragQueryFile(h, i, buf, MAX_PATH)) routeOneFile(std::wstring{ buf });
+		}
+		ReleaseStgMedium(&medH);
+	}
+}
+
+void WinBall::revokeDrop()
+{
+	if (dropTarget_) {
+		RevokeDragDrop(hwnd);
+		dropTarget_->Release();
+		dropTarget_ = nullptr;
+	}
+	if (coInitializedHere_) { CoUninitialize(); coInitializedHere_ = false; }
 }

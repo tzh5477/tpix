@@ -1,10 +1,12 @@
 ﻿#include "pch.h"
 #include <shobjidl.h>
 #include <cmath>
+#include <algorithm>
 #include "PinSource.h"
 #include "Util.h"
 #include "AnimImage.h"
 #include "Win/WinPin.h"
+#include "Win/WinTextPin.h"
 #include "ShotHistory.h"
 
 using Microsoft::WRL::ComPtr;
@@ -117,6 +119,44 @@ namespace {
 		}
 		return false;
 	}
+
+	// 读文本文件：先认 BOM（UTF-8 / UTF-16 LE / UTF-16 BE），没有 BOM 就先按 UTF-8 严格解析，
+	// 解析不过再退回系统默认代码页（中文 Windows 上是 GBK）。过大（>8MB）不读，避免把巨型
+	// 日志 / 打包文件塞进一个编辑框
+	bool readTextFile(const std::wstring& path, std::wstring& out)
+	{
+		HANDLE h = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr,
+			OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+		if (h == INVALID_HANDLE_VALUE) return false;
+		LARGE_INTEGER sz{};
+		if (!GetFileSizeEx(h, &sz)) { CloseHandle(h); return false; }
+		if (sz.QuadPart == 0) { out.clear(); CloseHandle(h); return true; }
+		if (sz.QuadPart > 8 * 1024 * 1024) { CloseHandle(h); return false; }
+		std::vector<BYTE> buf((size_t)sz.QuadPart);
+		DWORD rd = 0;
+		if (!ReadFile(h, buf.data(), (DWORD)sz.QuadPart, &rd, nullptr)) { CloseHandle(h); return false; }
+		CloseHandle(h);
+		auto toWide = [&](UINT cp, DWORD flags) -> bool {
+			int n = MultiByteToWideChar(cp, flags, (char*)buf.data(), (int)buf.size(), nullptr, 0);
+			if (n <= 0) return false;
+			out.resize((size_t)n);
+			return MultiByteToWideChar(cp, flags, (char*)buf.data(), (int)buf.size(), out.data(), n) > 0;
+		};
+		if (buf.size() >= 3 && buf[0] == 0xEF && buf[1] == 0xBB && buf[2] == 0xBF)
+			return toWide(CP_UTF8, 0);
+		if (buf.size() >= 2 && buf[0] == 0xFF && buf[1] == 0xFE) {
+			size_t n = (buf.size() - 2) / 2; out.resize(n);
+			for (size_t i = 0; i < n; ++i) out[i] = (wchar_t)(buf[2 + 2 * i] | (buf[2 + 2 * i + 1] << 8));
+			return true;
+		}
+		if (buf.size() >= 2 && buf[0] == 0xFE && buf[1] == 0xFF) {
+			size_t n = (buf.size() - 2) / 2; out.resize(n);
+			for (size_t i = 0; i < n; ++i) out[i] = (wchar_t)((buf[2 + 2 * i] << 8) | buf[2 + 2 * i + 1]);
+			return true;
+		}
+		if (toWide(CP_UTF8, MB_ERR_INVALID_CHARS)) return true;  // 无 BOM 且是合法 UTF-8
+		return toWide(CP_ACP, 0);                                // 否则按系统代码页（GBK…）
+	}
 }
 
 void PinSource::fromClipboard()
@@ -164,6 +204,8 @@ void PinSource::fromFile(HWND hwnd)
 void PinSource::fromPath(const std::wstring& path)
 {
 	if (path.empty()) return;
+	// 文本文件不再烤成一张死图，而是开一扇可编辑的文本钉窗
+	if (isTextFile(path)) { fromTextFile(path); return; }
 	// 动图走另一条路：解出帧序列交给贴图窗口自己播，静态图才合成一块像素
 	std::vector<AnimFrame> frames;
 	if (AnimImage::load(path, frames)) {
@@ -185,6 +227,32 @@ void PinSource::fromText(const std::wstring& text)
 	int w{ 0 }, h{ 0 };
 	if (!renderText(text, data, w, h)) return;
 	pin(data, w, h);
+}
+
+bool PinSource::isTextFile(const std::wstring& path)
+{
+	auto dot = path.rfind(L'.');
+	if (dot == std::wstring::npos) return false;
+	std::wstring ext = path.substr(dot + 1);
+	std::transform(ext.begin(), ext.end(), ext.begin(), ::towlower);
+	static const std::wstring_view kExts[] = {
+		L"txt", L"md", L"markdown", L"log", L"csv", L"tsv", L"json", L"xml",
+		L"html", L"htm", L"ini", L"yaml", L"yml", L"toml", L"cfg", L"conf",
+		L"cpp", L"cxx", L"cc", L"c", L"h", L"hpp", L"hxx",
+		L"py", L"js", L"jsx", L"ts", L"tsx", L"java", L"go", L"rs", L"cs",
+		L"sh", L"bat", L"cmd", L"ps1", L"sql", L"tex", L"rtf",
+		L"gitignore", L"editorconfig", L"properties"
+	};
+	for (auto e : kExts) if (ext == e) return true;
+	return false;
+}
+
+void PinSource::fromTextFile(const std::wstring& path)
+{
+	if (path.empty()) return;
+	std::wstring text;
+	if (!readTextFile(path, text)) return;
+	WinTextPin::init(text);
 }
 
 void PinSource::fromColor(const std::wstring& color)

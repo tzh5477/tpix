@@ -16,6 +16,10 @@ public:
 	static void fromPath(const std::wstring& path);
 	// 一段文字渲染成一张图贴出来。空串什么都不做
 	static void fromText(const std::wstring& text);
+	// 按扩展名判断一个路径是不是纯文本文件（.txt/.md/.json/.cpp…）
+	static bool isTextFile(const std::wstring& path);
+	// 文本文件：探测编码（BOM / UTF-8 / 系统代码页）读成 wstring，开一扇可编辑文本钉窗。读不出就什么都不做
+	static void fromTextFile(const std::wstring& path);
 	// 颜色值渲染成一块纯色图贴出来。认不出来（不是 # 开头的十六进制）就什么都不做
 	static void fromColor(const std::wstring& color);
 	// 从截图历史里贴图：连着按 = 依次把第 2、第 3… 新的那张贴出来，停手两秒重新从第 2 张数

@@ -4,6 +4,9 @@
 #include <string>
 #include <vector>
 
+struct IDataObject;
+struct IDropTarget;
+
 class Tip;
 
 // 悬浮球：常驻屏幕边缘的一条细线，鼠标移上去展开成一排操作图标，移开就收回去。
@@ -27,6 +30,10 @@ public:
 	static void reload();
 	// 拖到球上的文件，由 .cpp 里接管的那个窗口过程转进来
 	void onDropFiles(HDROP drop);
+	// 跨程序拖来的裸文本（Notepad / 浏览器选中一段拖过来）：开一扇可编辑文本钉窗
+	void onDropText(const std::wstring& text);
+	// OLE 拖放（IDropTarget）落点：文本走 onDropText，文件走和 WM_DROPFILES 同一份路由
+	void onDropData(IDataObject* data);
 private:
 	// 贴着哪条边。折叠态那条细线就贴着它，展开时窗口往屏幕里长
 	enum class Edge { Left = 0, Right = 1, Top = 2 };
@@ -82,4 +89,10 @@ private:
 	std::vector<Ling::Button*> itemBtns;
 	std::vector<std::wstring> itemIds;
 	std::unique_ptr<Tip> tip;
+	// OLE 拖放目标（跨程序文本）。RegisterDragDrop 会持有一份引用，dispose 时 Revoke + Release
+	IDropTarget* dropTarget_{ nullptr };
+	// 仅当本次调用真正初始化了 COM（CoInitializeEx 返回 S_OK）才在收尾时配对 CoUninitialize
+	bool coInitializedHere_{ false };
+	// 卸掉 OLE 拖放并配对 COM（若有）
+	void revokeDrop();
 };
