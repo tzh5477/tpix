@@ -1664,12 +1664,34 @@ void WinPin::setToolsVisible(bool on)
 {
 	if (!toolMain) return;
 	if (!on) {
+		// 收起来之前先把激活收回来给自己（顺序很要紧，见下）。
+		// 收的这一组窗口里可能有一个正被系统当作"活动窗口" —— 多半就是刚才点工具条那一下
+		// 激活的 ToolMain / ToolSub：它们带 WS_EX_TOPMOST 却**没有 WS_EX_NOACTIVATE**，
+		// 点上面的按钮就会把它们激活。而**隐藏活动窗口会让系统把激活转给 z 序里的下一个
+		// 窗口**，那个窗口通常不是 tpix 的（实测落到了别的程序上）⇒ 键盘跟着整个跑掉：
+		// 再按空格请不回工具条，ESC / Ctrl+Z / Ctrl+C 这些也一起失灵。作者看到的就是
+		// "第一次空格收掉了，第二次按空格没反应，得先单击一下截图"。
+		// 之所以排在最前面：**得趁自己还是前台进程**才要得到（此刻前台窗口是本进程的，
+		// 系统允许把前台交给自己人；下面的 hide 一旦把激活甩出去，再调就会被防抢焦点挡住）。
+		// 焦点本来就落在本窗口上时这一句是空操作，没有副作用
+		SetForegroundWindow(hwnd);
 		// cancelSelect 自带配色复位、ToolSub 收起与整组重排；curId 本来就空时它会提前返回，
 		// 所以 ToolSub 这一下自己再收一次
 		toolMain->cancelSelect();
 		toolMain->hide();
 		toolSub->hideTools();
 		setSideBarVisible(false);
+		// 再确认一遍。上面这几下会**隐藏掉"正被系统当作活动窗口"的那一个**：
+		//   · 刚点过工具条 → ToolMain / ToolSub 是活动的（它们带 WS_EX_TOPMOST 却没有
+		//     WS_EX_NOACTIVATE，点按钮就激活）
+		//   · 刚"请回来"过 → 右侧竖排是活动的（setSideBarVisible(true) 走 sideBar->show()，
+		//     而 Ling 的 show() 就是 ShowWindow(SW_SHOW)，SW_SHOW 会顺带激活）
+		// 而**隐藏活动窗口会让系统把激活转给 z 序里的下一个窗口**，那个窗口多半不是 tpix 的
+		//（实测落到了别的程序上）⇒ 键盘跟着跑掉：再按空格请不回工具条，ESC / Ctrl+Z / Ctrl+C
+		// 也一起失灵 —— 作者看到的正是"第一次空格收掉了，第二次按空格没反应，得先单击一下截图"。
+		// 这里补一次：系统允许"收到过最后一次输入的进程"改前台，而刚刚那一下按键就落在本进程里，
+		// 所以还要得回来。要不到也不比不补更糟
+		if (GetForegroundWindow() != hwnd) SetForegroundWindow(hwnd);
 		return;
 	}
 	// 缩略图 / 贴边细条这两种收法本来就没给工具条留位置，先还原再谈显示

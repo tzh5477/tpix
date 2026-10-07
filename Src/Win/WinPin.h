@@ -50,8 +50,11 @@ public:
 	static void restoreAll();
 	void layoutTools();
 	// 工具栏整组显示 / 隐藏（ToolMain + ToolSub）。空格键走它。
-	// 只动窗口、不动 curId：再显示时手里选着的工具还在，ToolSub 按它重建出来。
-	// （右键收起是另一套语义，那边会顺带把画笔放掉）
+	// 它不只是"开关窗口"，两边各带一步：收起来时连画笔一起放掉（cancelSelect），
+	// 请回来时预选矩形工具（selectTool(L"rect")）—— 于是空格就是"编辑"与"拖着图走"
+	// 两个状态之间的硬切换，来回都落在同一个起点上（框选完直接进编辑界面那条路也是
+	// 预选 rect，见 WinCap::onUp，两个入口手感才对得上）。
+	//（右键收起是另一套语义，那边只动窗口，见 onDown 里那段）
 	void setToolsVisible(bool on);
 	bool isToolsVisible() const;
 	// 把底图与所有未撤销的 shape 合成后写入剪切板，成功即关窗
