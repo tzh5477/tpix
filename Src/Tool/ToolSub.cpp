@@ -101,9 +101,6 @@ namespace {
 	// 写的是两个符号，都比一格按钮（btnSize）宽 —— 交给 flex 分会被压到放不下
 	constexpr float lineKindW{ 60.f };
 	constexpr float lineChoiceW{ 42.f };
-	// 「选择器」子面板上那两枚按钮的宽度。同 lineKindW 的道理：写的是四个汉字，
-	// 比一格按钮（btnSize）宽，交给 flex 分会被压到放不下
-	constexpr float selectorBtnW{ 60.f };
 	// 下拉里那条样例线的粗细（逻辑像素）。刻意不跟着当前线宽走 —— 线宽 20 的时候
 	// 下拉里就只剩一个箭头了。三个下拉共用这一个数，"端点 / 线型 / 箭头样式"三条线一样粗
 	constexpr float sampleLineW{ 2.f };
@@ -300,8 +297,6 @@ void ToolSub::beginTool(const std::wstring& id)
 	sliderNames.clear();
 	// 同上：下拉按钮上那几格自绘的小图也随 contentNode 一起销毁了
 	samples.clear();
-	// 同上：「选择器」子面板那两枚按钮
-	selectorBtns.clear();
 	numberBox = nullptr;
 	numberBoxSilent = false;
 	// 同上：水印的旋转、内容、样式三枚按钮也只在水印面板里存在。
@@ -345,45 +340,6 @@ void ToolSub::showEllipseTools()
 	initSlider();
 	initColorBtns();
 	makeApplyAllBtn();
-}
-
-// 「选择器」的子面板：选择对象（默认）/ 选择画布。作者要求这两种操作挂在「选择器」下面。
-// 没有色板也没有滑块 —— 选择器本身没有"样式"可调，所以 initSize 的 sliderCount 给 0，
-// 否则会白留一格滑块的宽度
-void ToolSub::showSelectorTools()
-{
-	beginTool(L"selector");
-	// 两枚按钮都比一格按钮宽（四个汉字），差额从 extraW 里补；sliderCount 0 表示不摆滑块
-	initSize(2, false, false, selectorBtnW * 2 - btnSize * 2, 0);
-	// 两枚互斥的按钮。特意不用 makeStateToggle —— 那是开关，点第二下会把自己关掉；
-	// 这两个是单选，点哪个就切到哪个
-	auto add = [&](const int sub, const std::wstring& tipKey) {
-		auto btn = contentNode->makeChild<Ling::Button>();
-		btn->setText(Lang::get(tipKey));
-		btn->setHeight(btnSize - 2.5);
-		// 宽度写死，不让 flex 分：四个汉字压到一格按钮宽就糊成一团
-		btn->setFlexGrow(0.f);
-		btn->setFlexShrink(0.f);
-		btn->setWidth(selectorBtnW);
-		btn->setFontSize(12.f);
-		btn->setBg(0);
-		btn->setHoverBg(0xF2F2F2ff);
-		applyToggleStyle(btn, win->selectorSub == sub);
-		tip->bind(btn, Lang::get(tipKey));
-		btn->onClick.add([this, sub](Ling::Button*) { win->setSelectorSub(sub); });
-		selectorBtns.push_back(btn);
-	};
-	// 文字按钮而不是图标：图标字体 41 个码位全都有主（见工作区笔记），
-	// "指针 / 画布"这类形状本来就没有，硬猜码位只会显示成方块
-	add(0, L"tool.selectorObject");
-	add(1, L"tool.selectorCanvas");
-}
-
-void ToolSub::syncSelectorBtns()
-{
-	for (size_t i = 0; i < selectorBtns.size(); ++i) {
-		applyToggleStyle(selectorBtns[i], (int)i == win->selectorSub);
-	}
 }
 
 void ToolSub::showArrowTools()

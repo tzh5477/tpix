@@ -641,9 +641,9 @@ bool WinPin::hasDrawTool() const
 // 区别只在于点中的是已有元素，不是新建一笔
 bool WinPin::selecting() const
 {
-	// 读的是模式标志，不是 curId —— 点中元素后 curId 已经换成那个元素的工具，
-	// 拿它当判据的话第二次点选就不生效了（见 selectMode）
-	return selectMode;
+	// 「选择画布」之外都是"可以点选对象"的状态。它不再是一个要用户先按一下的模式 ——
+	// 手里拿着画笔就默认开着（见头文件上的说明）
+	return !canvasMode;
 }
 
 D2D1_RECT_F WinPin::marqueeRect() const
@@ -1155,9 +1155,9 @@ void WinPin::deleteSelection()
 		CopyMemory(px.data() + ((size_t)y * w + l) * 4, white.data(), white.size());
 	}
 	if (!writeScreenImg(px, w, h)) return;
-	// 删掉这一块就回到「选择对象」（作者定的）：这一趟画布上的活儿已经做完了，
-	// 再留在「选择画布」里等着框下一块没有道理。复制 / 搬移两条路同理
-	setSelectorSub(0);
+	// 删掉这一块就退出「选择画布」（作者定的）：这一趟画布上的活儿已经做完了，
+	// 再留在那个模式里等着框下一块没有道理。复制 / 搬移两条路同理
+	setCanvasMode(false);
 	refresh();
 }
 
@@ -1178,8 +1178,8 @@ void WinPin::copySelectionToClipboard()
 	}
 	Util::saveToClipboard(sw, sh, block.data());
 	showToast(Lang::get(L"tool.canvasCopied"));
-	// 复制完回到「选择对象」，理由同 deleteSelection 末尾那条
-	setSelectorSub(0);
+	// 复制完退出「选择画布」，理由同 deleteSelection 末尾那条
+	setCanvasMode(false);
 }
 
 void WinPin::canvasSelectDown(const POINT& imgPos)
@@ -1274,11 +1274,11 @@ void WinPin::canvasSelectUp()
 {
 	if (selDrag == 2) {
 		// 搬完了：把抠下来的画面落到新位置（选区跟着画面走，已经在那儿了）。
-		// 真搬过一趟就回到「选择对象」（作者定的）—— 只按了一下没拖动的不算，
-		// 那种情况下画面没动过，工具还留在「选择画布」里等下一笔更顺手
+		// 真搬过一趟就退出「选择画布」（作者定的）—— 只按了一下没拖动的不算，
+		// 那种情况下画面没动过，留在那个模式里等下一笔更顺手
 		if (selFloat) {
 			dropSelection();
-			setSelectorSub(0);
+			setCanvasMode(false);
 		}
 	}
 	else if (selDrag == 1) {
@@ -1292,40 +1292,40 @@ void WinPin::canvasSelectUp()
 	refresh();
 }
 
-void WinPin::setSelectorSub(const int sub)
+void WinPin::setCanvasMode(const bool on)
 {
-	selectorSub = sub;
-	if (drawing) {
-		// 两套选中互不相干：画布模式下没有"选中的元素"，留着它的夹点 / 动作图标会跟选区抢鼠标
-		drawing->selected = nullptr;
-		drawing->shapeHover = nullptr;
-		drawing->multiSelected.clear();
-		// 多选的拖动 / 旋转态跟着一起收（拖的就是刚清掉的那一批）
-		clearBatchState();
-	}
+	// 已经是这个状态就什么都不做（幂等）。进出画布模式的两处调用方都会先问一次，
+	// 重复一遍只是白清一次选中态、白重画一帧
+	if (canvasMode == on) return;
+	canvasMode = on;
+	// 两套选中互不相干：画布模式下没有"选中的元素"（留着它的夹点 / 动作图标会跟选区抢鼠标），
+	// 从画布模式出去时也要收干净 —— 那批是在"上一个语境"里挑出来的
+	clearObjectSelection();
 	hideNumberPreview();
 	// 选区只属于「选择画布」：切走就收掉（正拖着的时候不收，等抬手自己收）
-	if (sub != 1 && selDrag == 0) {
+	if (!on && selDrag == 0) {
 		selRect = D2D1::RectF(0.f, 0.f, 0.f, 0.f);
 		selFloat.Reset();
 		selBlockPx.clear();
 		selBlockW = selBlockH = 0;
 	}
-	if (toolSub) toolSub->syncSelectorBtns();
+	// 退出去时还得把这个工具本身也放掉：curId == selector 表示"选择画布被选中"，
+	// 模式退了它就自相矛盾 —— hasDrawTool() 仍为真，紧接着点画布空白会去
+	// "画一个选择器"（History 里根本没有这种元素，只会落一个空指针）。
+	// 它没有"模式之外的形态"可回（撤掉「选择对象」之后就不用再留在里面挑元素了），
+	// 所以直接取消选中，回到"手里没拿工具"的常态
+	if (!on && toolMain && toolMain->curId == L"selector") toolMain->cancelSelect();
 	refresh();
 }
 
-void WinPin::enterSelector()
+void WinPin::clearObjectSelection()
 {
-	if (!toolMain) return;
-	// 已经在「选择器」上就什么都不做：Ctrl 按住不放会一直自动重复，每次重来一遍会把
-	// 用户刚选的「选择画布」掰回「选择对象」，而画布模式下的 Ctrl+C 正是"复制选区"
-	if (selectMode) return;
-	selectMode = true;
-	selectorSub = 0;
-	toolMain->setToggle(L"selector", true);
-	// selectTool 会重建工具条内容并按 curId 重排整组；对同一个 id 再走一遍是幂等的
-	toolMain->selectTool(L"selector");
+	if (!drawing) return;
+	drawing->selected = nullptr;
+	drawing->shapeHover = nullptr;
+	drawing->multiSelected.clear();
+	// 多选的拖动 / 旋转态跟着一起收（拖的就是刚清掉的那一批）
+	clearBatchState();
 }
 
 // 藏进屏幕边上的那条书签条里（见 PinHiddenBar），再按一次就是放回来。
@@ -1542,13 +1542,11 @@ void WinPin::layoutTools()
 	if (drawing && drawing->selected && drawing->selected->toolId != toolMain->curId) {
 		drawing->selected = nullptr;
 	}
-	// 退出「选择对象」模式时把多选那一批一起收掉 —— 那批是"在选择模式里挑出来的"。
-	// 模式没了还留着的话，换个画笔随手按一下 Delete 会连整批一起删；
-	// 拖拽旋转态也一并收（它拖的就是这一批）
-	if (drawing && !selectMode && !drawing->multiSelected.empty()) {
-		drawing->multiSelected.clear();
-		clearBatchState();
-	}
+	// 选中态 / 多选那一批的清理**不在这里做**。原来挂的是"退出选择模式"这个时机，而对象
+	// 选择现在是常驻的，没有"退出"可挂；本函数在挪窗口 / 改尺寸时每个鼠标事件都要跑一遍，
+	// 把清理挂在这儿等于每帧都清一次，刚框选出来的一批会当场没掉。
+	// 改由两个明确的时机去收（都调 clearObjectSelection）：用户在工具条上换工具
+	// （ToolMain::onClick）与取消画笔 / 右键 / ESC（ToolMain::cancelSelect）
 }
 
 void WinPin::raiseTools()
@@ -1947,22 +1945,24 @@ void WinPin::onDown(POINT pos, BOOL isRight)
 	// 以下都是交给 shape 的坐标，一律换算成底图像素（拖窗口那条路仍用窗口坐标）
 	auto imgPos = toImgPos(pos);
 	// 「选择画布」：拉选区 / 搬画面 / 改大小 / 点选区上的复制删除。整条排在对象选择之前 ——
-	// 两者由子模式分开，同一时刻只有一个在跑（capture / isMouseDown 上面已经置好了）
+	// 它开着的整个期间画布上的左键都归底图选区，不参与对象选择
+	//（capture / isMouseDown 上面已经置好了）
 	if (canvasSelecting()) {
-		drawing->selected = nullptr;
-		drawing->shapeHover = nullptr;
-		drawing->multiSelected.clear();
+		clearObjectSelection();
 		canvasSelectDown(imgPos);
 		return;
 	}
-	// Ctrl+单击：在框选那一批上做加减。Ctrl+拖动一次框出一二十个之后，想剔掉多选的
+	// 从这儿往下手里都是拿着画笔的（hasDrawTool 上面问过），对象选择一律生效：
+	// 点元素 = 选中它，点空白 = 用当前画笔落一笔。不必先切到"选择对象"
+	//
+	// Ctrl+单击：在选中那一批上做加减。Ctrl+拖动一次框出一二十个之后，想剔掉多选的
 	// 那几个、或者补上漏掉的那一个，就靠这一下。必须排在下面那句 clear 之前 ——
 	// 否则整批先被清空，这一下就成了"换成单选它"。
 	// 用 Ctrl 而不是 Shift：Shift 在矩形 / 圆那边是"约束成正圆"（见 ShapeRectBase 的
 	// mouseDrag），拿它当加减选的修饰键会和那个手势打架。
 	// 空白处的 Ctrl+拖动仍然是框选（下面那条分支），两者不冲突：这一条要压在元素上，
 	// 那一条要落在空白处
-	if (selecting() && drawing->shapeHover && (GetKeyState(VK_CONTROL) & 0x8000)) {
+	if (drawing->shapeHover && (GetKeyState(VK_CONTROL) & 0x8000)) {
 		auto& batch = drawing->multiSelected;
 		// 上一次那个"单选"先并进来。用户心里的那一批常常就是从它开始的：
 		// 先点一个（单选）、再 Ctrl 点第二个（想变成两个一起选）——
@@ -1984,7 +1984,7 @@ void WinPin::onDown(POINT pos, BOOL isRight)
 	// 拖多选那一批里的任意一个 = 整批一起挪位置。必须排在下面那句 clear 之前 ——
 	// 那一句会把整批清掉，之后就没得拖了。Ctrl 的那一支排在更前面：按着 Ctrl 压在
 	// 同一批里的某个上，意思是"把它剔出去"，不该同时开始拖
-	if (selecting() && drawing->shapeHover
+	if (drawing->shapeHover
 		&& std::find(drawing->multiSelected.begin(), drawing->multiSelected.end(), drawing->shapeHover)
 			!= drawing->multiSelected.end()) {
 		auto ip = toImgPos(pos);
@@ -1998,44 +1998,27 @@ void WinPin::onDown(POINT pos, BOOL isRight)
 	// Delete 会连上次框的一起删（下面的分支会按需要重新填）
 	drawing->multiSelected.clear();
 	clearBatchState();
-	if (selecting()) {
-		if (drawing->shapeHover) {
-			// 点在元素上：与别的工具走同一套 —— 建立单选、把按下转给它，
-			// 于是拖它能挪位置、拉夹点能改大小。抬手时若一步没拖过才切工具（见 onUp）
-			drawing->selected = drawing->shapeHover;
-			drawing->shapeCur = nullptr; //改的是已有元素，不参与空元素判定
-			drawing->shapeHover->mouseDown((float)imgPos.x, (float)imgPos.y);
-			return;
-		}
-		// 点在空白处。默认让给"拖窗口"—— 挪窗口是贴图窗口里最常用的手势，选择模式
-		// 不该整条吃掉它；框选是一次性的批量操作，按住 Ctrl 再拖
-		drawing->selected = nullptr;
-		if (GetKeyState(VK_CONTROL) & 0x8000) {
-			// 框选。刻意不走 createShape —— select 这个 id 在 History 里没有对应的元素，
-			// 走了也只是白建一个空指针
-			marqueeOn = true;
-			marqueeAnchor = imgPos;
-			marqueeCur = imgPos;
-			refresh();
-			return;
-		}
-		// 拖窗口：与"没选画笔"那条路同一套收尾（这里先把工具条收起来，onUp 重排并请回来）。
-		// 得用 selectDrag 把 onUp 一起带过去 —— 这会儿 curId 是「选」或点中那个元素的工具，
-		// hasDrawTool 为真，那条路自己认不出这一下是拖窗口
-		selectDrag = true;
-		toolsWereVisible = isToolsVisible();
-		toolMain->hide();
-		return;
-	}
 	if (drawing->shapeHover) {
-		// 点在已有元素上：这一下建立选中。选中态独立于悬停，移开鼠标也不会丢
+		// 点在已有元素上：建立单选、把按下转给它 —— 于是拖它能挪位置、拉夹点能改大小。
+		// 选中态独立于悬停，移开鼠标也不会丢。抬手时若一步没拖过才把工具条切到这个元素的
+		// 工具上去（见 onUp）
 		drawing->selected = drawing->shapeHover;
 		drawing->shapeCur = nullptr; //改的是已有元素，不参与空元素判定
 		drawing->shapeHover->mouseDown((float)imgPos.x, (float)imgPos.y);
 		return;
 	}
-	// 点在空白处：取消选中。下面新建的这笔如果只是单击，抬手时空笔判定会把它自己收掉
+	// 点在空白处：取消选中。Ctrl+拖 = 框选；否则用当前画笔落新的一笔
+	//（下面新建的这笔如果只是单击，抬手时空笔判定会把它自己收掉）
 	drawing->selected = nullptr;
+	if (GetKeyState(VK_CONTROL) & 0x8000) {
+		// 框选。刻意不走 createShape —— 它在 History 里没有对应的元素，
+		// 走了也只是白建一个空指针
+		marqueeOn = true;
+		marqueeAnchor = imgPos;
+		marqueeCur = imgPos;
+		refresh();
+		return;
+	}
 	drawing->shapeHover = drawing->history->createShape(toolMain->curId, imgPos.x, imgPos.y);
 	drawing->shapeCur = drawing->shapeHover;
 }
@@ -2106,8 +2089,7 @@ void WinPin::onMove(POINT pos)
 			}
 			return;
 		}
-		// selectDrag：选择模式下按在空白处拖窗口的那一下，也归这条路（见 onDown）
-		if (!hasDrawTool() || selectDrag) {
+		if (!hasDrawTool()) {
 			auto newX = x + pos.x - pressPos.x;
 			auto newY = y + pos.y - pressPos.y;
 			auto dx = newX - x, dy = newY - y;
@@ -2161,8 +2143,6 @@ void WinPin::onMove(POINT pos)
 		if (drawing->shapeHover) {
 			drawing->shapeHover = nullptr;
 		}
-		// 「选择对象」没有"将要落下的号"可预览，别给它画一个
-		if (selecting()) return;
 		updateNumberPreview(imgPos);
 	}
 }
@@ -2222,8 +2202,7 @@ void WinPin::onUp(POINT pos, BOOL isRight)
 	drawing->shapeCur = nullptr;
 	// 这一下按下有没有新建出一个留得住的元素：紧接着来第二下凑成双击时要把它撤掉（见 onDown）
 	prevPressCreatedShape = false;
-	if (!hasDrawTool() || selectDrag) {
-		selectDrag = false;
+	if (!hasDrawTool()) {
 		// 拖到屏幕最左边 / 最顶上松手 = 把这张图藏到那条边上（左 / 上各挂一条书签，
 		// 见 PinHiddenBar）。藏起来之后窗口就没了，工具条自然也不该再请出来，所以到此为止
 		if (hasDragged) {
@@ -2256,12 +2235,16 @@ void WinPin::onUp(POINT pos, BOOL isRight)
 		// 画完的这一笔保持选中，紧接着就能改它的样式。上面空笔那条路已经 return 了，
 		// 走到这里的都是留在图上的
 		drawing->selected = drawing->shapeHover;
-		// 「选择对象」点一下元素 = 选中它，再把这个元素的工具请出来 —— 于是不必先判断
-		// "这是哪个组件"、再回头切一次工具。判的是模式而不是 curId，所以接着点下一个元素
-		// 照样切（curId 已经被上一次点选换成了那个元素的工具，见 selecting）。
+		// 点一下元素 = 选中它，再把这个元素的工具请出来 —— 于是不必先判断"这是哪个组件"、
+		// 再回头切一次工具，接着点下一个元素照样切。
 		// 拖过的（拖位置 / 拉夹点）不切：那种手势要的是"就地把这一笔调一下"，
-		// 切走反而把刚拉开的夹点收起来了
-		if (selecting() && !hasDragged) toolMain->selectTool(drawing->shapeHover->toolId);
+		// 切走反而把刚拉开的夹点收起来了。
+		// 已经拿着同一个工具也不切：selectTool 会按 curId 重建整个子面板，而刚画完的这一笔
+		// 本来就还拿着它的工具 —— 白重建一次会把「编号」那个输入框拨回 1（连续编号时每画
+		// 一个都重置，正是 refreshToolSub 特意保存 / 还原它的原因）
+		if (!hasDragged && drawing->shapeHover->toolId != toolMain->curId) {
+			toolMain->selectTool(drawing->shapeHover->toolId);
+		}
 		refresh();
 		setTimer(800, 100);
 	}
@@ -2742,14 +2725,9 @@ void WinPin::onKey(UINT key)
 	// 这一句必须排在派发之前 —— 序号拿到 F2 会去开它自己那份描述编辑框，而共用的那个
 	// TextBox 上还挂着当前这一个的订阅，两个编辑叠在一起就会把正在写的文字冲掉
 	if (editingShape) return;
-	// 按下 Ctrl 就切到「选择器-选择对象」（作者定的默认快捷键）。放在编辑 / 选文 / 锁定之后：
-	// 那几种情况下 Ctrl 另有归属（复制选中的文字、框选文字），不该被这一下抢走。
-	// 已经在「选择器」里就不再动 —— 否则会把刚选的「选择画布」掰回「选择对象」，
-	// 而画布模式下的 Ctrl+C 正是"复制选区"
-	if (key == VK_CONTROL) {
-		enterSelector();
-		return;
-	}
+	// 这里原来有一条"按下 Ctrl 就切到「选择器-选择对象」"。那套模式已经撤掉：对象选择
+	// 现在是常驻的（见 selecting），Ctrl 的语义变成了"在选中批次上追加 / 剔除"以及
+	// "空白处拖动 = 框选"（见 onDown），不再需要按一下去切模式
 	// 选中某个元素时先把按键交给它：序号用 +/- 改编号、F2 编辑序号里的文字。
 	// 这几个键不与下面的全局快捷键冲突，所以不用抢返回值
 	if (drawing->shapeHover) drawing->shapeHover->onKey(key);

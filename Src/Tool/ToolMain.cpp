@@ -208,6 +208,12 @@ void ToolMain::setToggle(const std::wstring& id, bool on)
 // ToolSub 由 curId 是否为空驱动，所以清空 curId 后 layoutTools() 会自动把它收起来。
 void ToolMain::cancelSelect()
 {
+	// 「选择画布」跟着一起退出：右键收工具条、ESC 退一步、锁定贴图都走到这儿，
+	// 那几种情况下"还在框底图"没有意义（选区与按钮底色一并收掉）。
+	// 这一步排在下面那个"curId 本来就空"的早退之前 —— 否则那种情况下它就漏了
+	win->setCanvasMode(false);
+	// 画布上挑着的那一批同理，一并收掉：没有了画笔，"还选着哪些元素"没有意义
+	win->clearObjectSelection();
 	if (curId.empty()) return;
 	for (auto b : btns)
 	{
@@ -216,9 +222,6 @@ void ToolMain::cancelSelect()
 		}
 	}
 	curId.clear();
-	// 选择模式跟着一起退出：右键收工具条、ESC 退一步、锁定贴图都走到这儿，
-	// 那几种情况下"还在挑元素"没有意义（「选」那枚的底色也一并复位了）
-	win->selectMode = false;
 	win->toolSub->hideTools();
 	// curId 空了 ToolMain 要下移收回 ToolSub 让出的空间，交给 WinPin 重排整组
 	win->layoutTools();
@@ -277,20 +280,24 @@ void ToolMain::onClick(Ling::Button* btn)
 		win->setTextSelect(!win->getTextSelect());
 		return;
 	}
-	// 「选择器」是个模式，只在用户按工具条这一处开 / 关：按它进模式，按别的工具出模式。
-	// 程序内部按元素换工具不走这里（见 WinPin::onUp），所以"点中元素后面板跟着换"不会
-	// 把模式关掉。出模式时顺手把「选」那枚的底色复位
-	if (win->selectMode && btn->id != L"selector") setToggle(L"selector", false);
-	win->selectMode = (btn->id == L"selector");
-	// 按「选择器」进来一律回到默认子模式「选择对象」，并把上一次留下的画布选区收掉
-	//（作者定的默认；子面板里再点「选择画布」才切过去）
-	if (win->selectMode) win->setSelectorSub(0);
 	// 再次点击已选中的按钮 = 取消选中（开关式）。cancelSelect 里已经做了配色复位、
 	// 隐藏 ToolSub 和重排，这里直接返回，不要再往下走选中流程。
+	// 这一条必须排在 setCanvasMode 之前：curId == selector（选择画布）时它正好就是
+	// "退出"那一下，而 setCanvasMode(false) 自己也会去 cancelSelect —— 顺序颠倒的话
+	// 模式刚关掉，又会被下面那行 selectTool 选回来
 	if (btn->id == curId) {
 		cancelSelect();
 		return;
 	}
+	// 最前那枚是「选择画布」模式（原来叫「选择器」，底下还挂着「选择对象」子模式，
+	// 那层已经撤掉了）：按它进模式，按别的工具出模式。程序内部按元素换工具不走这里
+	//（见 WinPin::onUp），所以"点中元素后面板跟着换"不会把模式关掉。
+	// 进出统一走 setCanvasMode —— 它自带按钮底色复位、选区收尾与重画
+	win->setCanvasMode(btn->id == L"selector");
+	// 用户主动换了工具：画布上还挑着的那一批（单选 / 多选）到此为止 —— 那些是"上一个
+	// 工具手里挑出来的"，留着的话换个画笔随手按一下 Delete 就会连整批一起删。
+	// 程序内部按元素切工具**不**走这儿（那条路正要把新点的那个选中，不能清）
+	win->clearObjectSelection();
 	selectTool(btn->id);
 }
 
@@ -301,10 +308,7 @@ void ToolMain::selectTool(const std::wstring& id)
 	win->setTextSelect(false);
 	for (auto b : btns)
 	{
-		// 选择模式下「选」那枚一直亮着：它表示"鼠标现在是在挑元素"，与"面板此刻显示
-		// 哪个工具的属性"是两件事。点中元素后 curId 换成了那个元素的工具，但模式没退
-		//（见 WinPin::selectMode），把它一起按常态复位就看着像模式掉了
-		if (b->id == curId && !(win->selectMode && b->id == L"selector"))
+		if (b->id == curId)
 		{
 			applyNormalStyle(b);
 		}
@@ -347,14 +351,9 @@ void ToolMain::selectTool(const std::wstring& id)
 		// 选了水印工具就把水印铺上，不再要求用户去点一下截图区域
 		win->ensureWatermark();
 	}
-	else if (curId == L"selector") {
-		// 「选择器」的子面板：两枚按钮「选择对象」/「选择画布」，默认选择对象。
-		// 点中的是哪个元素、样式就切到那个元素的工具上去（见 WinPin::onUp）；
-		// 框选出来的那一批不接受批量改样式，只用于整批高亮 + Delete 一次删掉
-		win->toolSub->showSelectorTools();
-	}
 	else {
-		// 兜底：curId 是空的（没选工具）或别的没面板的工具，把子工具条收起来
+		// 兜底：curId 是空的（没选工具）、「选择画布」，或别的没面板的工具，把子工具条收起来。
+		// 「选择画布」没有样式可调 —— 撤掉「选择对象」之后它连子面板也没有了
 		win->toolSub->hideTools();
 	}
 	// curId 变化后 ToolMain 可能要上移给 ToolSub 腾位置，交给 WinPin 重新排布整组

@@ -38,12 +38,6 @@ public:
 	void showPinTools();
 	// 文字水印：文字、字号、颜色、透明度、旋转、平铺
 	void showWatermarkTools();
-	// 「选择器」的子面板：两枚按钮「选择对象」（默认）/「选择画布」。作者要求把这两种操作
-	// 挂在「选择器」下面，与其它工具的属性面板同一位置
-	void showSelectorTools();
-	// 按 WinPin::selectorSub 更新那两枚按钮的高亮。WinPin::setSelectorSub 调它
-	void syncSelectorBtns();
-
 	// 文本当前的字体族名（DWrite 认的名字）。工具条还没建过字体按钮时给默认的微软雅黑 ——
 	// ShapeText 在文本工具下取它，空串会让 DWrite 退回默认字体，不如直接给个明确的
 	const std::wstring& getFontFamily() const;
@@ -247,9 +241,6 @@ private:
 		SelectPopup::SamplePainter paint;
 	};
 	std::vector<SampleSlot> samples;
-	// 「选择器」子面板上的两枚按钮（选择对象 / 选择画布）。切工具时随 contentNode 一起销毁，
-	// beginTool 里必须清空 —— 否则 syncSelectorBtns 会往已经删掉的控件上写
-	std::vector<Ling::Button*> selectorBtns;
 	// 本工具条上摆着的所有滑块（水印有三个）。悬停提示要挨个判，切工具时随内容一起作废。
 	// sliderNames 与它一一对应，是提示里写在数值前面的那一截（单滑块的工具留空串）
 	std::vector<Ling::Slider*> sliders;

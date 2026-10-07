@@ -117,18 +117,17 @@ public:
 	// 本次按下之后光标有没有真的移动过。判"按下马上弹起"只认这个，
 	// 不去看各 shape 的几何 —— 那些成员的初值状态不一，不可靠
 	bool hasDragged{ false };
-	// 「选择对象」模式（工具条上那枚按钮按下的状态）。与 curId 分开记：点中一个元素后
-	// curId 会换成那个元素的工具（ToolSub 的面板才切得过去），若拿 curId 当判据，
-	// 第二次点选就把自己判没了。开与关都发生在 ToolMain::onClick（用户按工具条那一下）
-	bool selectMode{ false };
-	// ---- 「选择器」的第二个子模式（见 ToolSub::showSelectorTools）----
-	// 0 = 选择对象（默认），1 = 选择画布。只有 curId == selector 时才有意义
-	int selectorSub{ 0 };
-	bool canvasSelecting() const { return selectMode && selectorSub == 1; }
-	// 切换子模式唯一的入口：改状态 + 收掉另一套的选中 / 选区 + 通知 ToolSub 刷新高亮
-	void setSelectorSub(const int sub);
-	// 按下 Ctrl 就切到「选择器-选择对象」（作者定的默认快捷键，见 onKey）
-	void enterSelector();
+	// 「选择画布」模式（工具条最前那枚按钮按下的状态，原「选择器」）。它作用在**底图像素**上
+	// （拉选区 / 搬画面），所以在它里面画布上的点击不参与对象选择。
+	// 对象选择（点中元素 + Ctrl 加减选 + Ctrl 框选）**不再需要模式**，见 selecting()
+	bool canvasMode{ false };
+	bool canvasSelecting() const { return canvasMode; }
+	// 进出「选择画布」唯一的入口：改状态 + 收掉对侧的选中 / 选区 + 重排工具条
+	void setCanvasMode(bool on);
+	// 把画布上的对象选中态整批收掉（单选 / 悬停 / 多选那一批 / 批量拖动与旋转态）。
+	// 用户主动在工具条上换工具、或退出画笔时才调 —— 那两种情况下"还挑着上一批元素"
+	// 没有意义：留着的话换个画笔随手按一下 Delete 会连整批一起删掉
+	void clearObjectSelection();
 	// 水印工具选中时把水印层铺上（没有才建）。整张图一层，所以不进"点击才落笔"那条路。
 	// ToolMain 切到水印工具时调（ToolMain.cpp 的 selectTool）
 	void ensureWatermark();
@@ -203,13 +202,13 @@ private:
 	// pin（只开着贴图属性面板）都画不了 —— 这两种状态下左键该拖动贴图本身，
 	// 而不是当成画笔落笔，否则选过一次贴图属性后整张图就拖不动了
 	bool hasDrawTool() const;
-	// ---- 「选择对象」（ToolMain 上排在最前的那枚按钮）----
-	// 它算"能画东西"的工具（见 hasDrawTool）：左键要留在画布上，不能落进"拖窗口"那条路。
-	// 点的却是已有元素，不是新建一笔。
+	// ---- 画布上的"选择对象" ----
+	// 它**不是一个工具、也没有模式**：只要手里拿着画笔（hasDrawTool），左键就先看光标底下
+	// 有没有元素 —— 有就选中它（抬手时再把工具条切到那个元素的工具），没有才按当前画笔
+	// 落新的一笔。唯一的例外是「选择画布」（canvasSelecting），那时候左键归底图选区。
 	//
-	// 它是个**模式**，与 curId 分开记（见 selectMode）—— 点中一个元素之后 curId 会换成那个
-	// 元素的工具（ToolSub 的面板才切得过去、滑块色板才有正确的档位），但鼠标在画布上仍然
-	// 是"选择"，接着点下一个元素照样生效。拿 curId 当判据的话，第一次点选就把自己判没了
+	// 所以判据不能看 curId：点中元素后 curId 换成了那个元素的工具（ToolSub 的面板才切得
+	// 过去、滑块色板才有正确档位），拿它当判据的话第二次点选就不生效了
 	bool selecting() const;
 	// 选框的矩形（标注坐标系）。anchor / cur 谁大谁小不确定，统一归一化成矩形
 	D2D1_RECT_F marqueeRect() const;
@@ -364,10 +363,6 @@ private:
 	// 开始拖那一刻源图左上角在屏幕上的位置。窗口可以被拖走 / 被缩放，所以这个值不能长期存着，
 	// 只在一次拖拽期间有效 —— 拖左边 / 上边时窗口自己就在挪，靠它算光标落在源图的哪个像素
 	POINT dragSrcPos{ 0, 0 };
-	// ---- 「选择对象」的框选与拖窗口（见 onDown / onUp）----
-	// 选择模式下按在空白处拖窗口的那一下（没按 Ctrl）。onDown 当场让它走"拖窗口"那条路，
-	// onUp 得知道该照那条路收尾（重排工具条并请回来），所以记一下
-	bool selectDrag{ false };
 	// 这一下是"Ctrl+单击"在框选那一批上加减选（见 onDown）。onUp 见它为真就到此为止 ——
 	// 照常走"选中这一笔"那条路会把整批换成它一个
 	bool ctrlToggling{ false };
