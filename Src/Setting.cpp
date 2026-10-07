@@ -665,6 +665,16 @@ void Setting::applyShortcutKeys()
     }
 }
 
+void Setting::setShortcutCapture(const bool on)
+{
+    if (!on) {
+        applyShortcutKeys();
+        return;
+    }
+    auto lingApp = Ling::App::get();
+    for (auto& def : shortcutDefs) lingApp->unRegHotKey(def.msgId);
+}
+
 void Setting::initShortcutKeys()
 {
     applyShortcutKeys();

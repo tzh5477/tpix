@@ -18,6 +18,11 @@ public:
 	const JsonObject getConfigObj();
 	void setShortcutKey(const std::wstring& type, const std::vector<std::wstring>& keys);
 	std::wstring getShortcutKey(const std::wstring& type);
+	// 设置页"按一下键盘来录快捷键"期间必须把全局热键全摘掉：按下的组合若正好是已注册的
+	// 那一个，Windows 只把修饰键送进窗口、把那一下"主键"吞掉换成 WM_HOTKEY（实测见
+	// 2026-10-07 的 hkprobe 探针），设置页于是什么也录不到，还会顺带把那个动作触发一次。
+	// on=false 时按当前配置重新注册一遍
+	void setShortcutCapture(bool on);
 	void setAutoStart(bool autoStart);
 	bool getAutoStart();
 	std::wstring getLang();

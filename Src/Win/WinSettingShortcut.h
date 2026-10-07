@@ -11,6 +11,8 @@ private:
 	void endCapture();
 	void onKeyDown(UINT key);
 	void onKeyUp(UINT key);
+	// 录键过程中把已按下的键实时显示到那个按钮上
+	void updateCaptureText();
 	std::wstring keyToStr(UINT vkCode);
 private:
 	std::vector<Ling::Button*> btns;

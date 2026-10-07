@@ -153,6 +153,8 @@ WinSettingShortcut::WinSettingShortcut(Ling::WinBase* parent):Ling::Node(parent)
 
 WinSettingShortcut::~WinSettingShortcut()
 {
+    // 录键录到一半就被销毁（切页 / 关设置窗）：热键还摘着，得装回去，否则整机快捷键都失效
+    if (!curKey.empty()) Setting::get()->setShortcutCapture(false);
     win->onMouseDown.remove(onMouseDownToken);
     win->onKeyDown.remove(onKeyDownToken);
     win->onKeyUp.remove(onKeyUpToken);
@@ -176,12 +178,19 @@ void WinSettingShortcut::beginCapture(Ling::Button* btn)
 {
     curKey = btn->id;
     tempKeys.clear();
+    // 录键期间把全局热键全摘掉：用户按下的组合若正好是已注册的那一个，Windows 会吞掉
+    // 那一下"主键"（只把 Ctrl/Alt 这类修饰键送进窗口）并把它变成 WM_HOTKEY，
+    // 于是这里永远录不到、还会顺带触发那个动作
+    Setting::get()->setShortcutCapture(true);
     btn->setText(Lang::get(L"shortcut.pressKey"));
 }
 
 void WinSettingShortcut::endCapture()
 {
     if (curKey.empty()) return;
+    // 无论这次录到了没有（取消、只按了修饰键、按的还是原来那个）都要走到这里，
+    // 所以热键的恢复放在这 —— 它是唯一出口
+    Setting::get()->setShortcutCapture(false);
     for (auto& btn : btns)
     {
         if (btn->id == curKey) {
@@ -191,6 +200,19 @@ void WinSettingShortcut::endCapture()
     }
     curKey.clear();
     tempKeys.clear();
+}
+
+// 录键过程中把已经按下的键实时写回按钮。只显示一句"请按键..."的话，用户按住 Ctrl+Alt 时
+// 屏幕上一点变化都没有，看起来正像"按键没被捕获"
+void WinSettingShortcut::updateCaptureText()
+{
+    for (auto& btn : btns)
+    {
+        if (btn->id != curKey) continue;
+        // 末尾留一个加号：还在等下一个键
+        btn->setText(tempKeys.empty() ? Lang::get(L"shortcut.pressKey") : joinShortcutKeys(tempKeys) + L"+");
+        return;
+    }
 }
 
 void WinSettingShortcut::onKeyDown(UINT key)
@@ -217,6 +239,8 @@ void WinSettingShortcut::onKeyDown(UINT key)
     bool isContains = std::find(tempKeys.begin(), tempKeys.end(), keyStr) != tempKeys.end();
     if (isContains) return;
     tempKeys.push_back(keyStr);
+    normalizeShortcutKeys(tempKeys);
+    updateCaptureText();
 }
 
 void WinSettingShortcut::onKeyUp(UINT key)
