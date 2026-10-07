@@ -160,6 +160,13 @@ private:
 	void onMove(POINT pos);
 	void onUp(POINT pos, BOOL isRight);
 	void onKey(UINT key);
+	// Ctrl 的抬键。单独留一个是为了"再点一下 Ctrl 就取消框选"（见 onKey 开头那段）——
+	// 键盘消息只送到有焦点的窗口，ToolMain / ToolSub 会把它们的 keydown 转回来，
+	// keyup 也照转（那两处各一行）。
+	// ⚠️ 名字**不能叫 onKeyUp**：那是 Ling::WinBase 上的事件成员名（winrt::event），
+	// 在派生类里声明同名函数会把它整个藏起来，构造函数里那句 onKeyUp.add(...) 当场
+	// 报 C2228（".add 的左边必须有类/结构/联合"）
+	void onKeyRelease(UINT key);
 	// ESC 的"退一步"：先退出当前操作（收起画笔 / 放掉选中），返回是否已经消费掉这一次 ESC。
 	// 返回 false 表示已经没什么可退的了，调用方接着才关窗。已画下的标注一概不动
 	bool stepBack();
@@ -375,6 +382,15 @@ private:
 	// 这一下是"Ctrl+单击"在框选那一批上加减选（见 onDown）。onUp 见它为真就到此为止 ——
 	// 照常走"选中这一笔"那条路会把整批换成它一个
 	bool ctrlToggling{ false };
+	// "Ctrl 空点了一下"：按下 Ctrl 后没拿它当修饰键使（没点鼠标、没滚轮、没按别的键），
+	// 松开就把框选那一批收掉。按下时置位，一被"用掉"就撤（见 onKey / onDown / onWheel），
+	// 抬起时还立着才真收 —— 之所以不在按下那一下就收，见 onKeyUp 里的说明
+	bool ctrlTapArmed{ false };
+	// 这一轮 Ctrl 已经被当修饰键用掉过了（点过鼠标 / 滚过轮）。语义与 ctrlTapArmed 相近，
+	// 但**只在 Ctrl 抬起来时才复位**，中间一直压着 —— 用来挡掉按住 Ctrl 时系统的自动重复键：
+	// 那些重复的 WM_KEYDOWN 会紧跟在 onDown 之后到达，不压着就会把 ctrlTapArmed 又立回去，
+	// 于是"放开 Ctrl 就把刚框中的一批收掉"（见 onKey 里的说明）
+	bool ctrlUsedAsModifier{ false };
 	// 正在拉的那个选框。两个点都在标注坐标系里，与 shape 同一套（toImgPos 换算过）。
 	// 抬手就清 —— 它只在一次拖拽期间有效
 	bool marqueeOn{ false };

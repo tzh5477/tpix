@@ -230,6 +230,12 @@ ToolSub::ToolSub(WinPin* win) :Ling::WinBase(), win(win)
 		if (numberBox && numberBox->isFocused()) return;
 		this->win->onKeyDown(key);
 	});
+	// 抬起同理转回去：WinPin 的"再点一下 Ctrl = 取消框选"在 WinPin::onKeyRelease 里
+	// （挂在 WinPin 的 onKeyUp 事件上），见那里
+	onKeyUp.add([this](UINT key) {
+		if (numberBox && numberBox->isFocused()) return;
+		this->win->onKeyUp(key);
+	});
 	// 工具栏不参与激活：编辑文本时点一下颜色/字号，WinPin 不该因此丢掉键盘焦点
 	// （丢焦点 = WM_KILLFOCUS = TextBox 失焦 = 编辑被打断）。
 	createNativeWindow(WS_EX_TOPMOST | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW, WS_POPUP);

@@ -17,6 +17,9 @@ ToolMain::ToolMain(WinPin* win) : Ling::WinBase(), win(win)
 	// 点按钮会把 ToolMain 激活，此后键盘消息进的是它而不是 WinPin。
 	// 直接把按键转触给 WinPin 的同名事件，快捷键在两个窗口上表现一致。
 	onKeyDown.add([this](UINT key) { this->win->onKeyDown(key); });
+	// 抬起也照转一路：WinPin 靠它做"再点一下 Ctrl = 取消框选"（见 WinPin::onKeyRelease，
+	// 它挂在 WinPin 的 onKeyUp 事件上）。焦点落在工具条上时那一下才收得到
+	onKeyUp.add([this](UINT key) { this->win->onKeyUp(key); });
 	// DPI 变了（工具条被挪到缩放比例不同的显示器上，或者用户改了系统缩放）：
 	// Ling 只会把窗口按系统给的建议矩形整体缩放一遍，我们自己定的那套摆放规则不会重跑，
 	// 工具条就歪在别处了。位置也不能在 onDpiChanged 里直接改 —— 那个事件在 Ling 应用建议矩形

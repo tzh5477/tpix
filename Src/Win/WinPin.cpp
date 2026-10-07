@@ -160,6 +160,10 @@ WinPin::WinPin(int x, int y, int w, int h, const std::vector<BYTE>* data, const 
 		if (isThumb) setThumbMode(false);
 		// Ling 的滚轮事件不带修饰键状态，自己查：按住 Ctrl 是缩放窗口，不是调 shape
 		if (GetKeyState(VK_CONTROL) & 0x8000) {
+			// 滚过轮也是在拿 Ctrl 当修饰键（Ctrl+滚轮 = 缩放），同 onDown：
+			// 抬手别再把这一轮 Ctrl 当成"空点一下"去收框选
+			ctrlTapArmed = false;
+			ctrlUsedAsModifier = true;
 			// 一格 10%，按当前倍数等比走，放大和缩小的手感才对称
 			applyScale(scale * (space > 0 ? 1.1f : 1.f / 1.1f), pos);
 			return;
@@ -177,6 +181,8 @@ WinPin::WinPin(int x, int y, int w, int h, const std::vector<BYTE>* data, const 
 	});
 	onTimer.add([this](UINT id) {this->onTimerCB(id);});
 	onKeyDown.add([this](UINT key) {this->onKey(key);});
+	// 抬起也接一路：Ctrl 的"空点一下"要在这里收掉框选（见 onKeyRelease）
+	onKeyUp.add([this](UINT key) {this->onKeyRelease(key);});
 	// 被激活同样会把本窗口提到 topmost 同类的最前面（Alt+Tab、别的窗口让位给它……），
 	// 这一条兜住所有"不是点出来的"激活，道理与 onDown 开头那次一样
 	onFocus.add([this]() { this->raiseTools(); });
@@ -1803,6 +1809,13 @@ void WinPin::onDown(POINT pos, BOOL isRight)
 	// 按下之后把光标拖到窗口外再松手，onUp 根本不会来 —— 留着的这个标志会把
 	// 下一次抬手整个吃掉（那一下本该选中元素 / 收尾空笔）。它只对同一次按放有效
 	ctrlToggling = false;
+	// 这一下按过鼠标，说明这一轮 Ctrl 是当修饰键使的（追加 / 框选），
+	// 抬手时不该再被当成"空点一下 Ctrl"去收框选（见 onKeyUp）
+	ctrlTapArmed = false;
+	// 同上，而且要**一直记到 Ctrl 抬起来**才复位：按住 Ctrl 拖框选时系统会不停补
+	// Ctrl 的 WM_KEYDOWN（自动重复），只清 ctrlTapArmed 的话下一条重复键就把它立回去了
+	//（见 onKey 里那段说明）
+	ctrlUsedAsModifier = true;
 	// 同 ctrlToggling：上一次按的是批量按钮、抬手又没落在窗口里（没 SetCapture），
 	// 标志就会留着 —— 在这里一并复位，免得吃掉下一次抬手
 	batchBtnClicked = false;
@@ -2741,6 +2754,25 @@ bool WinPin::takeDoubleClick()
 
 void WinPin::onKey(UINT key)
 {
+	// Ctrl 的"空点一下"：按下时先把"还没被用掉"立起来，之后按下任何一个别的键
+	//（Ctrl+C / Ctrl+Z / Ctrl+滚轮…）都说明这一轮 Ctrl 是当修饰键使的，撤掉。
+	// 真正收框选的那一下在 onKeyUp —— 为什么不能按下就收，见那里的说明。
+	// 这两句必须排在最前面：下面那几处早退（选文态 / 锁定 / 编辑中）都是"按键归别人"，
+	// 而"有没有拿 Ctrl 当修饰键"这件事与它们无关
+	//
+	// ⚠️ **Ctrl 按住不放时系统会一直补 WM_KEYDOWN**（自动重复：先等 500ms 上下，之后每 ~33ms 一条）。
+	// 不滤掉这些重复键会出事：按住 Ctrl 拖框选的那几百毫秒里，onDown 刚把标记清掉，
+	// 紧接着来的一条重复键又把它立起来 —— 抬手放开 Ctrl 那一刻就被判成"空点一下 Ctrl"，
+	// 刚框中的那一批当场被收掉（按住 Ctrl 稍久一点做框选就必然中招，实测把重复键投进去就能复现）。
+	// 判据**不能用时间**：自动重复的首次延迟随系统设置可到 1s，跟"两次真按"分不开。
+	// 改用"这一轮 Ctrl 已经被当修饰键用掉了没有"（onDown / onWheel 里置位，Ctrl 抬起来才复位）——
+	// 重复键于是永远立不起标记，而"真·空点一下 Ctrl"（自始至终没碰鼠标）照旧成立。
+	// 极端情况下漏掉一次 Ctrl 抬起（按着 Ctrl 切走了窗口，keyup 落在别人身上）只会让
+	// 下一按不生效，再按一下自己就好了 —— 不会一直哑下去
+	if (key == VK_CONTROL) {
+		if (!ctrlUsedAsModifier) ctrlTapArmed = true;
+	}
+	else ctrlTapArmed = false;
 	// 选文态：只认 Ctrl+C（把选中的那段文字送进剪贴板，**不关窗**）、Ctrl+A（全选）、
 	// ESC（先清掉选区，再退整个模式）。这一句必须排在 isLocked 和所有全局快捷键之前 ——
 	// 别的键在这里一概不认，否则 Delete 会删掉图上标注、回车会把整张图复制走并关窗
@@ -2861,6 +2893,35 @@ void WinPin::onKey(UINT key)
 		if (stepBack()) return;
 		close();
 	}
+}
+
+// Ctrl 抬起来：这一轮 Ctrl 如果从头到尾没被用掉（没点鼠标、没滚轮、没按别的键），
+// 就把它当成"再点一下 Ctrl = 取消框选"。
+//
+// 为什么收在**抬起**而不是按下：按住 Ctrl 还要能去点元素做"追加选中"（见 onDown 里那条
+// Ctrl+单击）。按下就收的话，用户按住 Ctrl 去点第二个元素时，批里原来那几个已经被清空了，
+// 追加就永远只能加到刚点的那一个上。把"这一轮 Ctrl 用过没有"分开记，两种用法就不打架：
+//   · 空点一下 Ctrl（抬手时标记还立着）        → 收掉框选那一批
+//   · Ctrl 按住 + 点元素 / 拖框选 / 滚轮       → onDown / onWheel 里已把标记撤掉，抬手不收
+// 空白处单击本来就能收（onDown 里那句 multiSelected.clear），两条路互不依赖
+//
+// ⚠️ 抬手这一路还有个坑：Ctrl 按住时的**自动重复键**会一直来，只靠 onDown 清标记挡不住
+//（重复键在 onDown 之后又把标记立起来 → 放开 Ctrl 就把刚框中的一批收掉了）。
+// 所以 onKey 那边用 ctrlUsedAsModifier 一直压着，这里收尾时连同它一起复位
+void WinPin::onKeyRelease(UINT key)
+{
+	if (key != VK_CONTROL) return;
+	const bool tapped = ctrlTapArmed;
+	ctrlTapArmed = false;
+	ctrlUsedAsModifier = false;      // 这一轮 Ctrl 结束了，下一次按下重新算
+	if (!tapped) return;
+	// 选文 / 锁定 / 编辑文本时 Ctrl 有别的用途（Ctrl+A 全选、Ctrl+C 复制选中的字），
+	// 顺手把框选收掉会让那些操作变得莫名其妙
+	if (textSelect || isLocked || editingShape) return;
+	if (drawing->multiSelected.empty()) return;
+	drawing->multiSelected.clear();
+	clearBatchState();
+	refresh();
 }
 
 // ---- 常驻剪裁 ----
