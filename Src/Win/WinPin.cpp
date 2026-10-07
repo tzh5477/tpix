@@ -2091,14 +2091,24 @@ void WinPin::onMove(POINT pos)
 			}
 			return;
 		}
-		// 拖拽旋转态里正按着：绕按下时定下的中心整批转。两帧鼠标方向角之差就是这一帧要转的量
+		// 拖拽旋转态里正按着：两帧鼠标方向角之差就是这一帧要转的量。
+		// "转了多大角度"是绕整组外接框中心（batchRotateCenter）量出来的，但**落到每个元素上
+		// 传的是它自己的中心** —— 也就是"各自原地转个角度"，与单选那枚旋转手柄同一条逻辑。
+		// 原来传的是整组中心：那一批会绕着那个点公转，两个元素各自跑到新方位上
+		//（作者报的"旋转后 2 个标注对象位置都变了、中心点偏移了原来的位置"）。
+		// 逐个取自己的外接框中心而不是 rectCenter：getShapeBounds 已经把自身旋转算进去了，
+		// 而"绕自己中心转"不改变外接框中心 —— 两者本来就是同一个点
 		if (batchRotating) {
 			auto now = atan2f((float)imgPos.y - batchRotateCenter.y, (float)imgPos.x - batchRotateCenter.x)
 				* 180.f / 3.14159265358979323846f;
 			auto d = now - batchRotatePrevAngle;
 			if (d != 0.f) {
 				hasDragged = true;
-				for (auto* s : drawing->multiSelected) s->rotateBy(d, batchRotateCenter);
+				for (auto* s : drawing->multiSelected) {
+					D2D1_RECT_F b{};
+					if (!s->getShapeBounds(b)) continue;   // 没有外接框的（水印）本来也不参与框选
+					s->rotateBy(d, D2D1::Point2F((b.left + b.right) / 2.f, (b.top + b.bottom) / 2.f));
+				}
 				batchRotatePrevAngle = now;
 				refreshNow();
 			}

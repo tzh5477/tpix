@@ -70,7 +70,9 @@ void ShapeText::rotateBy(const float deg, const D2D1_POINT_2F& c)
 {
 	auto rc = center();
 	auto nr = rotatePoint(rc, c, deg);
-	translate(nr.x - rc.x, nr.y - rc.y);
+	auto dx{ nr.x - rc.x }, dy{ nr.y - rc.y };
+	// 同 ShapeRectBase::rotateBy：c 就是自己中心时不必白跑一趟 translate
+	if (dx != 0.f || dy != 0.f) translate(dx, dy);
 	angle += deg;
 }
 

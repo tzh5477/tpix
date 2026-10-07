@@ -441,7 +441,10 @@ void ShapeRectBase::rotateBy(const float deg, const D2D1_POINT_2F& center)
 {
 	auto rc = rectCenter();
 	auto nr = rotatePoint(rc, center, deg);
-	translate(nr.x - rc.x, nr.y - rc.y);
+	auto dx{ nr.x - rc.x }, dy{ nr.y - rc.y };
+	// center 就是自己的中心时（WinPin 的批量旋转现在逐个传"它自己的中心"）
+	// 位移恒为 0，这一步纯属白跑 —— 马赛克 / 擦除的 translate 还会顺手把位图重建一遍
+	if (dx != 0.f || dy != 0.f) translate(dx, dy);
 	angle += deg;
 }
 
