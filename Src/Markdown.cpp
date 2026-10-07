@@ -1,0 +1,405 @@
+#include "pch.h"
+#include <algorithm>
+#include <cstddef>
+#include "Markdown.h"
+
+namespace {
+	// Markdown 是个类，成员类型只能起别名，不能写 using Markdown::Block（那是给命名空间的）
+	using Block = Markdown::Block;
+	using Inline = Markdown::Inline;
+	using Kind = Markdown::Kind;
+
+	constexpr float baseFont{ 14.f };
+	constexpr float codeFont{ 12.5f };
+	constexpr const wchar_t* monoFamily{ L"Consolas" };
+
+	std::wstring trim(const std::wstring& s)
+	{
+		const size_t b = s.find_first_not_of(L" \t");
+		if (b == std::wstring::npos) return L"";
+		const size_t e = s.find_last_not_of(L" \t");
+		return s.substr(b, e - b + 1);
+	}
+
+	bool startsWith(const std::wstring& s, const wchar_t* p)
+	{
+		return s.rfind(p, 0) == 0;
+	}
+
+	// 分割线：至少三个 - / * / _（中间可以有空格），且不能混用
+	bool isRule(const std::wstring& s)
+	{
+		wchar_t mark = 0;
+		int n = 0;
+		for (const wchar_t c : s) {
+			if (c == L' ' || c == L'\t') continue;
+			if (c != L'-' && c != L'*' && c != L'_') return false;
+			if (mark == 0) mark = c;
+			else if (c != mark) return false;
+			++n;
+		}
+		return n >= 3;
+	}
+
+	// 表格的分隔行：只有 | - : 和空白，且至少有一个 -
+	bool isTableSep(const std::wstring& s)
+	{
+		if (s.find(L'|') == std::wstring::npos) return false;
+		bool dash{ false };
+		for (const wchar_t c : s) {
+			if (c == L'-') { dash = true; continue; }
+			if (c == L'|' || c == L':' || c == L' ' || c == L'\t') continue;
+			return false;
+		}
+		return dash;
+	}
+
+	// 列表项。命中就把 marker 填上（有序是 "1."，无序留空）并返回 true
+	bool listMarker(const std::wstring& line, std::wstring& marker)
+	{
+		if (line.empty()) return false;
+		if (line.size() >= 2 && (line[0] == L'-' || line[0] == L'*' || line[0] == L'+') && line[1] == L' ') {
+			marker.clear();
+			return true;
+		}
+		size_t i = 0;
+		while (i < line.size() && line[i] >= L'0' && line[i] <= L'9' && i < 9) ++i;
+		if (i == 0 || i >= line.size()) return false;
+		if (line[i] != L'.' && line[i] != L')') return false;
+		if (i + 1 >= line.size() || line[i + 1] != L' ') return false;
+		marker = line.substr(0, i + 1);   // 统一成 "N." 的样子，原文用 ")" 也换成 "."
+		return true;
+	}
+
+	// 这一行是不是"块的开头"（段落遇到它就该收尾）
+	bool isBlockStart(const std::wstring& t)
+	{
+		if (t.empty()) return true;
+		if (startsWith(t, L"```") || startsWith(t, L"~~~")) return true;
+		if (t[0] == L'#' || t[0] == L'>') return true;
+		if (isRule(t)) return true;
+		std::wstring m;
+		if (listMarker(t, m)) return true;
+		return false;
+	}
+
+	// 行内解析。** / ` 成对才算，单个落回普通文字；*斜体* 只认星号 —— 下划线在
+	// 代码标识符里太常见（foo_bar_baz），当斜体标记会误伤
+	std::vector<Inline> parseInline(const std::wstring& src)
+	{
+		std::vector<Inline> out;
+		std::wstring plain;
+		auto push = [&out](const std::wstring& t, const bool b, const bool i, const bool mo) {
+			if (t.empty()) return;
+			if (!out.empty() && out.back().bold == b && out.back().italic == i && out.back().mono == mo) {
+				out.back().text += t;
+				return;
+			}
+			out.push_back(Inline{ t, b, i, mo });
+		};
+		auto flush = [&plain, &push]() { push(plain, false, false, false); plain.clear(); };
+
+		for (size_t i = 0; i < src.size();) {
+			const wchar_t c = src[i];
+			if (c == L'`') {
+				const size_t e = src.find(L'`', i + 1);
+				if (e != std::wstring::npos && e > i + 1) {
+					flush();
+					push(src.substr(i + 1, e - i - 1), false, false, true);
+					i = e + 1;
+					continue;
+				}
+			}
+			if (c == L'*' && i + 1 < src.size() && src[i + 1] == L'*') {
+				const size_t e = src.find(L"**", i + 2);
+				if (e != std::wstring::npos && e > i + 2) {
+					flush();
+					push(src.substr(i + 2, e - i - 2), true, false, false);
+					i = e + 2;
+					continue;
+				}
+			}
+			if (c == L'*') {
+				const size_t e = src.find(L'*', i + 1);
+				if (e != std::wstring::npos && e > i + 1) {
+					flush();
+					push(src.substr(i + 1, e - i - 1), false, true, false);
+					i = e + 1;
+					continue;
+				}
+			}
+			// 链接只留可见文字；![...] 是图片，也同样只留文字（图不在这里加载）
+			const bool image = (c == L'!' && i + 1 < src.size() && src[i + 1] == L'[');
+			if (c == L'[' || image) {
+				const size_t lb = image ? i + 1 : i;
+				const size_t rb = src.find(L']', lb + 1);
+				if (rb != std::wstring::npos) {
+					const size_t usedTo = (rb + 1 < src.size() && src[rb + 1] == L'(') ? rb + 1 : rb;
+					const size_t rp = (usedTo == rb + 1) ? src.find(L')', rb + 2) : std::wstring::npos;
+					flush();
+					push(src.substr(lb + 1, rb - lb - 1), false, false, false);
+					i = (rp == std::wstring::npos) ? rb + 1 : rp + 1;
+					continue;
+				}
+			}
+			plain.push_back(c);
+			++i;
+		}
+		flush();
+		return out;
+	}
+
+	// 行内片段 -> 一整段文字 + 落在它上面的样式区间。区间下标是 UTF-16 单位，
+	// 与 DWrite 的 TEXT_RANGE 一致
+	struct Flat
+	{
+		std::wstring text;
+		std::vector<Ling::TextRun> runs;
+	};
+	Flat flatten(const std::vector<Inline>& ins)
+	{
+		Flat f;
+		for (const auto& in : ins) {
+			const size_t at = f.text.size();
+			f.text += in.text;
+			if (in.bold || in.italic || in.mono) {
+				f.runs.push_back(Ling::TextRun{ at, in.text.size(), in.bold, in.italic, in.mono });
+			}
+		}
+		return f;
+	}
+
+	// 都会用到的那几项：折行 + 不超容器宽 + 行距
+	void setupText(Ling::Label* lab)
+	{
+		lab->setWrap(true);
+		lab->setMaxWidthPercent(100.f);
+		lab->setFontSize(baseFont);
+		lab->setColor(0x333333FF);
+		lab->setLineSpacing(Markdown::lineSpacing);
+	}
+}
+
+std::vector<Block> Markdown::parse(const std::wstring& src)
+{
+	std::vector<std::wstring> lines;
+	{
+		std::wstring cur;
+		for (const wchar_t c : src) {
+			if (c == L'\r') continue;
+			if (c == L'\n') { lines.push_back(cur); cur.clear(); }
+			else cur.push_back(c);
+		}
+		lines.push_back(cur);
+	}
+
+	std::vector<Block> out;
+	for (size_t i = 0; i < lines.size();) {
+		const std::wstring line = trim(lines[i]);
+		if (line.empty()) { ++i; continue; }
+
+		// 围栏代码块。收尾栅栏只认同一种字符，没等到就吃到末尾（回答没写完时就是这样）
+		if (startsWith(line, L"```") || startsWith(line, L"~~~")) {
+			const wchar_t fence = line[0];
+			const std::wstring close(3, fence);
+			++i;
+			std::wstring code;
+			while (i < lines.size()) {
+				if (startsWith(trim(lines[i]), close.c_str())) { ++i; break; }
+				if (!code.empty()) code += L'\n';
+				code += lines[i];
+				++i;
+			}
+			Block b;
+			b.kind = Kind::Code;
+			b.text = code;
+			out.push_back(std::move(b));
+			continue;
+		}
+
+		if (isRule(line)) {
+			Block b;
+			b.kind = Kind::Rule;
+			out.push_back(std::move(b));
+			++i;
+			continue;
+		}
+
+		if (line[0] == L'#') {
+			size_t n = 0;
+			while (n < line.size() && n < 6 && line[n] == L'#') ++n;
+			if (n < line.size() && line[n] == L' ') {
+				Block b;
+				b.kind = Kind::Heading;
+				b.level = static_cast<int>(n);
+				b.inlines = parseInline(trim(line.substr(n + 1)));
+				out.push_back(std::move(b));
+				++i;
+				continue;
+			}
+		}
+
+		// 引用：连续的 ">" 行并成一段
+		if (line[0] == L'>') {
+			std::wstring text;
+			while (i < lines.size() && startsWith(trim(lines[i]), L">")) {
+				if (!text.empty()) text += L' ';
+				text += trim(trim(lines[i]).substr(1));
+				++i;
+			}
+			Block b;
+			b.kind = Kind::Quote;
+			b.inlines = parseInline(text);
+			out.push_back(std::move(b));
+			continue;
+		}
+
+		std::wstring marker;
+		if (listMarker(line, marker)) {
+			Block b;
+			b.kind = Kind::List;
+			b.ordered = !marker.empty();
+			b.marker = marker;
+			// 序号那一格的下标按"标记 + 一个空格"算，"1. " 是 3 个字符
+			const size_t skip = line.find(L' ');
+			b.inlines = parseInline(skip == std::wstring::npos ? L"" : line.substr(skip + 1));
+			out.push_back(std::move(b));
+			++i;
+			continue;
+		}
+
+		// 表格：本行有 | 且下一行是分隔行。整块原样按等宽显示
+		if (line.find(L'|') != std::wstring::npos && i + 1 < lines.size()
+			&& isTableSep(trim(lines[i + 1]))) {
+			std::wstring code;
+			while (i < lines.size() && trim(lines[i]).find(L'|') != std::wstring::npos) {
+				if (!code.empty()) code += L'\n';
+				code += trim(lines[i]);
+				++i;
+			}
+			Block b;
+			b.kind = Kind::Code;
+			b.table = true;
+			b.text = code;
+			out.push_back(std::move(b));
+			continue;
+		}
+
+		// 段落：连续的普通行并成一段（markdown 的软换行按空格接起来）。
+		// 第一行无条件吃下 —— 上面几个分支都没命中时总得往前走，不然就是死循环
+		{
+			std::wstring text;
+			while (i < lines.size()) {
+				const std::wstring t = trim(lines[i]);
+				if (t.empty()) break;
+				if (!text.empty() && (isBlockStart(t) || t.find(L'|') != std::wstring::npos)) break;
+				if (!text.empty()) text += L' ';
+				text += t;
+				++i;
+			}
+			Block b;
+			b.kind = Kind::Paragraph;
+			b.inlines = parseInline(text);
+			out.push_back(std::move(b));
+		}
+	}
+	return out;
+}
+
+void Markdown::render(const Block& block, Ling::Node* parent, const bool first)
+{
+	const float top = first ? 0.f : 6.f;
+	switch (block.kind) {
+	case Kind::Rule: {
+		auto hr = parent->makeChild<Ling::Node>();
+		hr->setWidthPercent(100.f);
+		hr->setHeight(1.f);
+		hr->setBg(0xDCDCE0FF);
+		hr->setMarginTop(10.f);
+		hr->setMarginBottom(10.f);
+		break;
+	}
+	case Kind::Code: {
+		auto lab = parent->makeChild<Ling::Label>();
+		setupText(lab);
+		lab->setFontFamily(monoFamily);
+		lab->setFontSize(codeFont);
+		lab->setColor(0x2F2F35FF);
+		lab->setMarginTop(top);
+		if (!block.table) {
+			lab->setBg(0xE6E6ECFF);
+			lab->setPadding(8.f, 6.f, 8.f, 6.f);
+			lab->setBorderRadius(6.f);
+		}
+		lab->setText(block.text);
+		break;
+	}
+	case Kind::Heading: {
+		static const float hs[7]{ 0.f, 18.f, 16.5f, 15.5f, 14.5f, 14.f, 14.f };
+		const auto f = flatten(block.inlines);
+		auto lab = parent->makeChild<Ling::Label>();
+		setupText(lab);
+		lab->setFontSize(hs[std::clamp(block.level, 1, 6)]);
+		lab->setColor(0x1F1F1FFF);
+		lab->setMarginTop(first ? 0.f : 8.f);
+		lab->setText(f.text);
+		// 标题整段加粗。标题里再套行内样式的概率很低，而叠起来要做区间合并，不值当
+		lab->setRuns({ Ling::TextRun{ 0, f.text.size(), true, false, false } });
+		break;
+	}
+	case Kind::Quote: {
+		auto row = parent->makeChild<Ling::Node>();
+		row->setWidthPercent(100.f);
+		row->setFlexDirection(Ling::FlexDirection::Row);
+		// 竖条靠 Stretch 撑到与正文同高，所以这里不能用默认的 FlexStart
+		row->setAlignItems(Ling::Align::Stretch);
+		row->setMarginTop(top);
+		auto bar = row->makeChild<Ling::Node>();
+		bar->setWidth(3.f);
+		bar->setBg(0xC8C8D0FF);
+		bar->setBorderRadius(2.f);
+		const auto f = flatten(block.inlines);
+		auto lab = row->makeChild<Ling::Label>();
+		setupText(lab);
+		lab->setFlexGrow(1.f);
+		lab->setColor(0x5F6368FF);
+		lab->setMarginLeft(8.f);
+		lab->setText(f.text);
+		lab->setRuns(f.runs);
+		break;
+	}
+	case Kind::List: {
+		auto row = parent->makeChild<Ling::Node>();
+		row->setWidthPercent(100.f);
+		row->setFlexDirection(Ling::FlexDirection::Row);
+		row->setAlignItems(Ling::Align::FlexStart);
+		row->setMarginTop(first ? 0.f : 3.f);
+		auto mk = row->makeChild<Ling::Label>();
+		// 序号那一格定宽并右对齐，正文才能与标记的右边对齐（悬挂缩进）
+		mk->setWidth(24.f);
+		mk->setAlignItems(Ling::Align::FlexEnd);
+		mk->setFontSize(baseFont);
+		mk->setColor(0x333333FF);
+		mk->setMarginRight(4.f);
+		mk->setText(block.ordered ? block.marker : L"\u2022");
+		const auto f = flatten(block.inlines);
+		auto lab = row->makeChild<Ling::Label>();
+		setupText(lab);
+		lab->setFlexGrow(1.f);
+		lab->setText(f.text);
+		lab->setRuns(f.runs);
+		break;
+	}
+	case Kind::Paragraph:
+	default: {
+		const auto f = flatten(block.inlines);
+		if (f.text.empty()) break;
+		auto lab = parent->makeChild<Ling::Label>();
+		setupText(lab);
+		lab->setMarginTop(top);
+		lab->setText(f.text);
+		lab->setRuns(f.runs);
+		break;
+	}
+	}
+}

@@ -187,6 +187,7 @@
     <ClCompile Include="GlobalMouse.cpp" />
     <ClCompile Include="Setting.cpp" />
     <ClCompile Include="AnimImage.cpp" />
+    <ClCompile Include="Markdown.cpp" />
     <ClCompile Include="Ocr.cpp" />
     <ClCompile Include="Table.cpp" />
     <ClCompile Include="SelectPopup.cpp" />
@@ -296,6 +297,7 @@
     <ClInclude Include="pch.h" />
     <ClInclude Include="Setting.h" />
     <ClInclude Include="AnimImage.h" />
+    <ClInclude Include="Markdown.h" />
     <ClInclude Include="Ocr.h" />
     <ClInclude Include="Table.h" />
     <ClInclude Include="SelectPopup.h" />
