@@ -2294,6 +2294,15 @@ void WinPin::onMove(POINT pos)
 		if (drawing->shapeHover) {
 			drawing->shapeHover = nullptr;
 		}
+		// 选中元素外接框之外那几枚动作图标（左上复制 / 右上 ×）不算"落在元素身上" ——
+		// 它们归 ShapeBase::hitActionBtn，元素自己的 mouseMove 够不着，上面那一圈因此
+		// 一律返回 hoverDraggerIndex = -1。光标压在这两枚图标上时点的是"复制 / 删除"，
+		// 同样没有"将要落下的号"可预览：不挡的话预览圈会正好扣在图标上把它糊掉
+		// （作者报的"重叠"）。判据与 onDown 里点这两枚图标用的是同一条
+		if (drawing->selected && drawing->selected->hitActionBtn((float)imgPos.x, (float)imgPos.y) >= 0) {
+			hideNumberPreview();
+			return;
+		}
 		updateNumberPreview(imgPos);
 	}
 }
