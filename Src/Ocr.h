@@ -23,6 +23,12 @@ struct OcrWord
 //
 // 前提：用户在"设置 - 时间和语言 - 语言"里装了某个语言的识别包。一个都没装时
 // isAvailable() 返回 false，调用方应当退回原来的插件路径，而不是弹一句"识别失败"。
+//
+// ⚠️ 引擎有个硬门槛：**图像总高度不到 40 像素就一个字都认不出来**（与字号无关，
+// 见 Ocr.cpp 里 kMinHeight 处的实测）。一行文字紧裁出来正好在门槛之下，所以
+// "截图高度小于一行 ⇒ 提示没有识别到文字"是这个门槛造成的，不是识别不出小字。
+// 本类内部会把过矮的图双线性放大到 48 高再送进引擎，**调用方什么都不用做**；
+// 词框坐标也已经换算回原图，调用方拿到的仍是入参图那套坐标系。
 class Ocr
 {
 public:
@@ -36,6 +42,7 @@ public:
 	static std::wstring recognize(const int w, const int h, BYTE* data,
 		const std::wstring& langTag = L"");
 	// 同上，但逐个词给出位置。词比行细，跨格的那些行也能拆开归位。
+	// 坐标是**原图**那套（内部放大过，已换算回来），可以直接拿去和形状/格子比对。
 	// 可能耗时几百毫秒到几秒，别在 UI 线程上直接调
 	static std::vector<OcrWord> recognizeWords(const int w, const int h, BYTE* data,
 		const std::wstring& langTag = L"");
