@@ -1698,9 +1698,9 @@ void WinPin::init(int x, int y, int w, int h, const std::wstring& toolId)
 	winPins.push_back(std::move(winPin));
 }
 
-void WinPin::initFromData(int x, int y, int w, int h, std::vector<BYTE>& data)
+void WinPin::initFromData(int x, int y, int w, int h, std::vector<BYTE>& data, const std::wstring& toolId)
 {
-	auto ptr = new WinPin(x, y, w, h, &data);
+	auto ptr = new WinPin(x, y, w, h, &data, toolId);
 	std::unique_ptr<WinPin> winPin{ ptr };
 	ptr->createNativeWindow(WS_EX_TOPMOST | WS_EX_TOOLWINDOW, WS_MAXIMIZEBOX | WS_MINIMIZEBOX | WS_POPUP);
 	winPins.push_back(std::move(winPin));

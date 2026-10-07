@@ -36,6 +36,10 @@ namespace {
     // 下一次滚轮，隔一会儿重新抓一帧等它停稳；最多连续等这么多次，避免一直卡住
     constexpr int settleRecheckMs = 250;
     constexpr int maxSettleRecheck = 2;
+    // 成图边长上限，到了就收工（D2D 那边 16384 才是硬限，这里留了余量）。
+    // capStep 拿它判"该停了"，makeStopText 拿它挑那句"太长了"，stopCap 拿它决定
+    // 还要不要把成图交给编辑界面 —— 超限的图交过去只是一扇建不出位图的空窗
+    constexpr int longLimit = 36000;
     // 底部条带兜底匹配的置信度门槛
     constexpr double bottomMatchMinRatio = 0.9;   // 最佳误差要低于 s=0 误差的这个比例才采信
     constexpr double bottomMatchMaxError = 40000; // 平均每像素灰度误差超过这个值视为根本没对上
@@ -548,7 +552,7 @@ void CapLong::capStep()
     settleRecheckCount = 0;
     stitch(data, shift);
     img1 = data;
-    if (resultW > 36000 || resultH > 36000) { stopCap(true); return; }
+    if (resultW > longLimit || resultH > longLimit) { stopCap(true); return; }
     makeImgPreview();
     win->refresh();
     armScroll(); //准备下次滚动
@@ -614,6 +618,21 @@ void CapLong::stopCap(bool reachedEnd)
     win->setMouseTransparent(false);
     makeStopText(reachedEnd);
     win->refresh();
+    // 自己滚到底停下的 = 这一轮图截完了：直接把成图交给编辑界面，用户不必再点一次「贴图」。
+    // 上面那句话只会闪一帧，但留着它有用 —— 交接没成（一帧都没抓到时 pin 自己会返回）
+    // 或者图超了限时窗口本来就得留着，那正是唯一能给用户的交代。
+    // 用户叫停那两条路（ESC / 工具条上的「贴图」）不经过这里：它们走 finish / pin，
+    // 最后汇到的是同一扇编辑窗。
+    // 超限的不交接：那张图 D2D 建不出位图（见 capStep 里同一道判断），交过去只是一扇空窗
+    if (reachedEnd && !imgData.empty() && resultW <= longLimit && resultH <= longLimit) {
+        pin();
+        // 长图窗不在这里就地关：本函数是从定时器回调里一路进来的，就地 DestroyWindow
+        // 会把正在跑的这段调用栈脚下的窗口抽掉。排一拍再关 —— 与 WinCap::onClosed 里
+        // "句柄立即销毁、对象推迟到下一轮消息循环"是同一个做法
+        Ling::App::get()->dq.TryEnqueue([]() {
+            if (auto cap = WinCap::get()) cap->close();
+        });
+    }
 }
 
 // 用户叫停的（ESC / 工具条按钮）不显示"已触底"—— 那句话只在真的滚到底时才成立
@@ -623,7 +642,7 @@ void CapLong::makeStopText(bool reachedEnd)
         layoutTextEnd = nullptr;
         return;
     }
-    if (resultW > 36000 || resultH > 36000) {
+    if (resultW > longLimit || resultH > longLimit) {
         layoutTextEnd = Ling::D2D::get()->makeTextLayout(
             Lang::get(horizontal ? L"long.tooWide" : L"long.tooLong"), 13 * win->dpi);
     }
@@ -782,6 +801,10 @@ void CapLong::confirmCrop()
     win->refresh();
 }
 
+// 收工，并把成图开到编辑界面上（工具条在、矩形预选）。这是滚动截图这一轮的终点 ——
+// 与"框选截图 → 框完直接进编辑界面"（见 WinCap::onUp）殊途同归，用户看到的是同一种窗。
+// 三条路都汇到这里：滚到底自动停（stopCap）、用户按 ESC 叫停（finish）、
+// 工具条上的「贴图」按钮（WinCap::longPin）
 void CapLong::pin()
 {
     if (imgData.empty()) return;
@@ -796,5 +819,5 @@ void CapLong::pin()
     int screenH = workArea.bottom - workArea.top;
     int posX = workArea.left + (screenW - std::min(resultW, screenW)) / 2;
     int posY = workArea.top + (screenH - std::min(resultH, screenH)) / 2;
-    WinPin::initFromData(posX, posY, resultW, resultH, imgData);
+    WinPin::initFromData(posX, posY, resultW, resultH, imgData, L"rect");
 }

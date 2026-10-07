@@ -24,6 +24,7 @@ public:
 	// saveToFile 返回是否真的存下来了：用户在另存为对话框里按了取消时不该收工
 	void copyToClipboard();
 	bool saveToFile();
+	// 把成图开到编辑界面上（预选矩形）。滚到底自动停 / ESC 叫停 / 「贴图」按钮都汇到这里
 	void pin();
 	// Ctrl+S / Ctrl+C 用：还没点"开始"的时候一张图都没有，此时快捷键不该生效
 	bool hasImage() const { return !imgData.empty(); }

@@ -24,8 +24,10 @@ public:
 	//（预选 rect —— 框完就能画），所以用户看到的顺序是"框选 → 已经是编辑态"
 	static void init(int x, int y, int w, int h, const std::wstring& toolId = L"");
 	// 底图不来自 WinCap 的截屏，而是外部给的一块 BGRA、top-down、行紧凑（步长 = w*4）像素。
-	// 滚动截图（WinLong）拼出来的长图走这条路进贴图窗口。
-	static void initFromData(int x, int y, int w, int h, std::vector<BYTE>& data);
+	// 滚动截图（CapLong）拼出来的长图走这条路进贴图窗口。
+	// toolId 与 init 上那一个是同一个意思：长图截完是直接进编辑界面的（预选 rect），
+	// 历史记录 / 剪贴板那几条路留空 —— 那几条要的就是"贴在那儿就行"
+	static void initFromData(int x, int y, int w, int h, std::vector<BYTE>& data, const std::wstring& toolId = L"");
 	// 动图贴图：底图是 frames[0]，随后由定时器逐帧换。src 是原始动图文件，
 	// 退出持久化时把它拷进数据目录，重启后还能接着播
 	static void initFromAnim(int x, int y, const std::wstring& src, std::vector<AnimFrame>& frames);
