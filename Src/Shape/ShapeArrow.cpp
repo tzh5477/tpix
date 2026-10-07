@@ -11,18 +11,42 @@ namespace {
 	// 细箭头（arrowStyle 2）那一档的箭杆是一条直画到箭尖的线，头部是开口 V。
 	// 开口 V 的顶点必须尖：拿两笔 DrawLine 拼的话，各自的平头端帽会在箭尖处糊出一个平口，
 	// 看着是钝的 —— 改成一条折线 + 斜接连接（miter），由 D2D 把顶点接成尖角
+	// 描斜接顶点用的样式。**缓存要连"是哪家工厂造的"一起记** ——
+	// 最后一个窗口关掉时 Ling 会把整套图形设备拆掉（WinBase 的析构里 D2D::dispose），
+	// 下次建窗口 D2D::get() 造出来的是**另一家** ID2D1Factory1。老样式挂在老工厂上，
+	// 再交给新设备的 DrawGeometry：几何照建、像素一个没有，而且**不报错**。
+	//
+	// 注意老工厂**并没有被销毁** —— 这个样式持有它的引用（COM AddRef），
+	// 所以关窗之后进程里同时挂着两家工厂：老的那家被这份缓存吊着，
+	// 新的那家才是当前 deviceContext 的东家。别看到"工厂还活着"就以为缓存是安全的。
+	//
+	// 症状正是作者报的"箭头第 3 档（开口 V）经常消失，画出来只剩一根横线"：
+	// 那一档的箭杆走的是 DrawLine（不传样式，所以照画），头走 strokeHead → 传的就是这个样式，
+	// 于是只剩杆、头没了。另外三档全是 FillGeometry，一点都不受影响 —— 所以坏的一直只有第 3 档。
+	// "关掉最后一个窗口 → 再开一个"就足够把缓存弄脏，所以看着是"经常"，重启进程又好。
+	//
+	// 三处会一起坏（都走 strokeHead）：画布上那支箭、工具条上"箭头样式"按钮上那枚样例
+	// （整个按钮空白）、下拉里第 3 行（只剩选中/悬停的底色，没有箭头）—— 作者给的截图三处全中。
+	//
+	// 实测复现（D:\tmp\tpix-toolseq\probe_reopen.py，同一进程里全关窗再热键开窗）：
+	// 修复前头部上下跨度 8px → **0px**（杆仍是 10px）；绑住工厂之后 8px → 8px。
+	// 注意"关窗重开"必须**不重启进程**才测得到：先 kill 再起，静态缓存跟着进程一起清零了。
+	//
+	// 旧的那一份故意不 Release（沿用原来的理由：释放点可能落在设备已经拆掉之后）。
+	// 代价是每次设备重建漏一个样式对象，一次会话最多几次，可以忽略
 	ID2D1StrokeStyle* miterStyle()
 	{
-		// 整进程只建一次并故意不释放：这一份到进程退出前一直要用，而释放点落在 D2D 设备
-		// 销毁之后是自找麻烦（设备没了，样式对象还挂着它的引用）
 		static ID2D1StrokeStyle* style{ nullptr };
-		if (!style) {
-			Ling::D2D::get()->d2dFactory->CreateStrokeStyle(
-				D2D1::StrokeStyleProperties(D2D1_CAP_STYLE_FLAT, D2D1_CAP_STYLE_FLAT,
-					D2D1_CAP_STYLE_FLAT, D2D1_LINE_JOIN_MITER, 10.f,
-					D2D1_DASH_STYLE_SOLID, 0.f),
-				nullptr, 0, &style);
-		}
+		static ID2D1Factory1* owner{ nullptr };
+		auto factory = Ling::D2D::get()->d2dFactory.Get();
+		if (style && owner == factory) return style;
+		owner = factory;
+		style = nullptr;
+		factory->CreateStrokeStyle(
+			D2D1::StrokeStyleProperties(D2D1_CAP_STYLE_FLAT, D2D1_CAP_STYLE_FLAT,
+				D2D1_CAP_STYLE_FLAT, D2D1_LINE_JOIN_MITER, 10.f,
+				D2D1_DASH_STYLE_SOLID, 0.f),
+			nullptr, 0, &style);
 		return style;
 	}
 

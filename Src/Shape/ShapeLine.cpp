@@ -105,15 +105,25 @@ namespace {
 		else pts[0] = p;
 	}
 
-	// 描边样式（实线 / 虚线族）。整进程只建一次并故意不释放，同 ShapeArrow 里的 miterStyle。
-	// 端帽与图上那条线同一套（圆头），所以画出来的点 / 划两头都是圆的
+	// 描边样式（实线 / 虚线族）。端帽与图上那条线同一套（圆头），
+	// 所以下拉里画出来的点 / 划两头都是圆的。
+	// **缓存要连"是哪家工厂造的"一起记**：最后一个窗口关掉时整套图形设备会被拆掉、
+	// 下次建窗口换一家新工厂，老样式交给新设备就是画不出任何像素（理由与症状见
+	// ShapeArrow 的 miterStyle）。工厂一换整张缓存作废重造。
+	// 旧的几份故意不 Release（同 miterStyle），最多漏 5 个样式对象
 	ID2D1StrokeStyle* dashStroke(const D2D1_DASH_STYLE dash)
 	{
 		static ID2D1StrokeStyle* cache[5]{};
+		static ID2D1Factory1* owner{ nullptr };
+		auto factory = Ling::D2D::get()->d2dFactory.Get();
+		if (owner != factory) {
+			for (auto& s : cache) s = nullptr;
+			owner = factory;
+		}
 		auto i{ (int)dash };
 		if (i < 0 || i > 4) i = 0;
 		if (!cache[i]) {
-			Ling::D2D::get()->d2dFactory->CreateStrokeStyle(
+			factory->CreateStrokeStyle(
 				D2D1::StrokeStyleProperties(D2D1_CAP_STYLE_ROUND, D2D1_CAP_STYLE_ROUND,
 					D2D1_CAP_STYLE_ROUND, D2D1_LINE_JOIN_ROUND, 8.f, dash, 0.f),
 				nullptr, 0, &cache[i]);
