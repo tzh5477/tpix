@@ -2271,16 +2271,6 @@ int WinPin::wordIndexAt(const POINT& imgPos) const
 	return -1;
 }
 
-namespace {
-	// 两端都是中日韩文字时不补空格，其余情况补一个 —— OCR 出来的词之间本来就没有空白，
-	// 全不补会把"中文OCR测试"连成一片，全补又会在"再见。他说"中间塞出空格来
-	bool isCjk(wchar_t ch)
-	{
-		return (ch >= 0x2E80 && ch <= 0x9FFF) || (ch >= 0x3000 && ch <= 0x303F)
-			|| (ch >= 0xFF00 && ch <= 0xFFEF);
-	}
-}
-
 std::wstring WinPin::selectedText() const
 {
 	if (!hasSelection() || ocrWords.empty()) return {};
@@ -2295,10 +2285,17 @@ std::wstring WinPin::selectedText() const
 			auto& line = ocrLines[n];
 			if (i >= line.first && i < line.first + line.count) { lineNo = n; break; }
 		}
-		if (!text.empty()) {
-			auto& word = ocrWords[i].text;
+		if (!text.empty() && !ocrWords[i].text.empty()) {
 			if (lineNo != lastLine) text += L'\n';
-			else if (!isCjk(text.back()) || word.empty() || !isCjk(word.front())) text += L' ';
+			else {
+				// 空格判据统一走 ocrNeedSpace（汉字之间不补、其余看图上有没有空白），
+				// 与 Ocr::recognize 拼整行文字时用的是同一条规则
+				const auto& prev = ocrWords[i - 1];
+				const auto& cur = ocrWords[i];
+				const float rel = (cur.x - (prev.x + prev.w)) / std::max(prev.h, cur.h);
+				if (!prev.text.empty() && ocrNeedSpace(prev.text.back(), cur.text.front(), rel))
+					text += L' ';
+			}
 		}
 		text += ocrWords[i].text;
 		lastLine = lineNo;

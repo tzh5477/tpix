@@ -275,13 +275,6 @@ namespace {
 		return out;
 	}
 
-	// 中文之间不加空格（加了就散了），英文之间不加就连成一团
-	bool needSpace(const wchar_t a, const wchar_t b)
-	{
-		auto isCjk = [](const wchar_t c) { return c >= 0x2E80 && c <= 0x9FFF; };
-		return !isCjk(a) && !isCjk(b);
-	}
-
 	// 整张图认一次，再把词按中心点落进各自的格子
 	void fillText(std::vector<Cell>& cells, const int w, const int h, BYTE* data,
 		const std::wstring& langTag)
@@ -308,15 +301,21 @@ namespace {
 				if (std::fabs(A.y - B.y) > std::min(A.h, B.h) * 0.5f) return A.y < B.y;
 				return A.x < B.x;
 			});
-			std::wstring text;
-			for (const auto i : hits[k]) {
-				if (!text.empty() && !words[i].text.empty()
-					&& needSpace(text.back(), words[i].text.front())) {
-					text += L' ';
+std::wstring text;
+		for (size_t i = 0; i < hits[k].size(); ++i) {
+			// 空格判据统一走 ocrNeedSpace（汉字之间不补、其余看图上有没有空白），
+			// 与 Ocr::recognize 拼整行文字时用的是同一条规则
+			if (i > 0 && !text.empty()) {
+				const auto& prev = words[hits[k][i - 1]];
+				const auto& cur = words[hits[k][i]];
+				if (!prev.text.empty() && !cur.text.empty()) {
+					const float rel = (cur.x - (prev.x + prev.w)) / std::max(prev.h, cur.h);
+					if (ocrNeedSpace(prev.text.back(), cur.text.front(), rel)) text += L' ';
 				}
-				text += words[i].text;
 			}
-			cells[k].text = text;
+			text += words[hits[k][i]].text;
+		}
+		cells[k].text = text;
 		}
 	}
 }

@@ -13,6 +13,29 @@ using namespace winrt::Windows::Globalization;
 namespace wmo = winrt::Windows::Media::Ocr;
 
 namespace {
+	// ---- 空格判定 ----
+	//
+	// 引擎把每个汉字当成独立的一个"词"（见 ocrNeedSpace 的说明），
+	// 所以拼行时必须自己决定词与词之间补不补空格，不能用 OcrLine::Text()
+	// 标点符号。引擎把标点单独切成一个词，而且**认错的码点比汉字还五花八门**：
+	// 实测同一个句号 U+3002 被认成 U+00B7（中点）、逗号 U+002C 被认成 U+FF0C（全角）。
+	// 标点两侧一律不补空格 —— 补了就是"落地 。"这种，比认错码点难看得多
+	bool isPunct(wchar_t c)
+	{
+		return (c >= 0x3000 && c <= 0x303F)		// 中文标点：。、《》【】
+			|| (c >= 0xFF00 && c <= 0xFFEF)		// 全角：，．？！（）等
+			|| (c >= 0x2010 && c <= 0x205E)		// 常用 Unicode 标点，含 U+2014 破折号
+			|| c == 0x00B7 || c == 0x2022 || c == 0x2026;	// 中点/项目符号/省略号
+	}
+
+	bool isCjkChar(wchar_t c)
+	{
+		// 中日韩表意文字与假名、谚文。
+		// 标点**不**算进来：标点自己走 isPunct 那条"两侧永不补空格"的规则，
+		// 而"落地。"这种句号被误识成中点时，靠的就是这条兜住
+		return (c >= 0x2E80 && c <= 0x9FFF) || (c >= 0xAC00 && c <= 0xD7AF);
+	}
+
 	// IMemoryBufferByteAccess 是纯 COM 接口，C++/WinRT 不为它生成投影，
 	// 按文档给的 IID 自己声明一份。拿到它才能往 SoftwareBitmap 的像素区里直接写
 	struct __declspec(uuid("5b0d3235-4dba-4d44-865e-8f1d0e4fd04d")) __declspec(novtable)
@@ -209,6 +232,31 @@ namespace {
 		r.Width = (float)(r.Width * inv);
 		r.Height = (float)(r.Height * inv);
 	}
+
+	// 两个词框之间的相对间隙：像素间隙 / 字高。-1 表示拿不到（字高为 0）。
+	// 用字高而不是绝对像素：截图会被放大（prepare 里最多 4 倍），
+	// 绝对间隙在不同字号下没有可比性
+	float relativeGap(const float x0, const float w0, const float x1, const float h0, const float h1)
+	{
+		const float unit = std::max(h0, h1);
+		if (unit <= 0.f) return -1.f;
+		return (x1 - (x0 + w0)) / unit;
+	}
+}
+
+bool ocrNeedSpace(wchar_t left, wchar_t right, float relGap)
+{
+	// 标点两侧永不补空格。"落地。"的句号被引擎认成中点 U+00B7 时，
+	// 这里就是唯一拦住"落地 。"那道门
+	if (isPunct(left) || isPunct(right)) return false;
+	// 汉字之间本来就没有空格 —— 这条是主判据，纯靠它就修掉了"退 出 tpix 后 重 跑"
+	if (isCjkChar(left) && isCjkChar(right)) return false;
+	// 拿不到间隙就只看字符类：两端都不是中日韩文字时补一个，
+	// 与旧的字符类判断一致（表格识别与选文复制一直就是这个行为）
+	if (relGap < 0.f) return true;
+	// 实测：真空格 ≥ 0.29，引擎无中生有的词间拆分只有 0.07~0.11。
+	// 阈值取 0.20 离两边都有余量
+	return relGap >= 0.20f;
 }
 
 bool Ocr::isAvailable()
@@ -243,13 +291,39 @@ std::vector<OcrLang> Ocr::languages()
 
 std::wstring Ocr::recognize(const int w, const int h, BYTE* data, const std::wstring& langTag)
 {
-	auto result = runEngine(w, h, data, langTag);
+	// prepared 只是为了拿放大系数把词框换算回原图 —— 拼字符串只需要原图坐标下的
+	// 相对间隙，而等比缩放不改变间隙与字高的比值，所以这里换算回原图算也一样对
+	Prepared prepared;
+	auto result = runEngine(w, h, data, langTag, &prepared);
 	if (!result) return {};
 	std::wstring text;
 	for (auto const& line : result.Lines())
 	{
 		if (!text.empty()) text += L"\n";
-		text += std::wstring_view{ line.Text() };
+		// 不能用 line.Text()：引擎把每个汉字当成一个独立的词，而 line.Text()
+		// 是拿空格把这些词拼起来的，中文会变成"退 出 tpix 后 重 跑 一 次 …"
+		OcrWord prev;
+		bool hasPrev{ false };
+		for (auto const& word : line.Words())
+		{
+			OcrWord cur;
+			cur.text = std::wstring{ std::wstring_view{ word.Text() } };
+			if (cur.text.empty()) continue;
+			auto rect = word.BoundingRect();
+			unmapRect(rect, prepared);
+			cur.x = rect.X;
+			cur.y = rect.Y;
+			cur.w = rect.Width;
+			cur.h = rect.Height;
+			if (hasPrev && !cur.text.empty() && !prev.text.empty()
+				&& ocrNeedSpace(prev.text.back(), cur.text.front(),
+					relativeGap(prev.x, prev.w, cur.x, prev.h, cur.h))) {
+				text += L' ';
+			}
+			text += cur.text;
+			prev = std::move(cur);
+			hasPrev = true;
+		}
 	}
 	return text;
 }
