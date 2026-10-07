@@ -219,6 +219,22 @@ private:
 	// 画框选的两层提示：正在拉的那个选框、以及多选那一批各自的外框。
 	// 调用方还在标注坐标系的变换里，所以两者都跟着缩放 / 剪裁走
 	void paintSelection(ID2D1DeviceContext* ctx);
+	// ---- 多选那一批的批量操作（块选的"加选 / 批量移动 / 批量改样式 / 批量增删转"）----
+	// 整组的外接框中心。批量旋转绕它转；一个都没有外接框时退回画布中心
+	D2D1_POINT_2F multiSelectCenter() const;
+	// 多选时画在画布右上角那三枚按钮的方框（**窗口坐标**，不跟底图缩放走）。
+	// i：0 删除、1 复制、2 旋转
+	D2D1_RECT_F batchBtnRect(const int i) const;
+	// 命中的是第几枚批量按钮，没命中返回 -1（pos 是窗口客户区坐标）
+	int batchBtnAt(const POINT pos) const;
+	void paintBatchButtons(ID2D1DeviceContext* ctx);
+	// 三枚按钮的动作：整批撤销（可 Ctrl+Y 找回）/ 整批复制一份（偏移错开）/ 进入拖拽旋转态
+	void batchDeleteShapes();
+	void batchCopyShapes();
+	void toggleBatchRotate();
+	// 把多选的拖动 / 旋转态收掉。退出选择态（换工具、ESC、右键收工具条）时调，
+	// 与 multiSelected 一起清 —— 留着的话下一次进选择模式还停在上次的旋转态里
+	void clearBatchState();
 	// 标号工具的 hover 预览。鼠标还停在图上时，先在光标处画一个"将要落下的编号"，
 	// 落笔之前就看得见号是多少（参考 pixpin）。预览实例不进 history、也不占号
 	void updateNumberPreview(const POINT& imgPos);
@@ -359,6 +375,24 @@ private:
 	// 抬手就清 —— 它只在一次拖拽期间有效
 	bool marqueeOn{ false };
 	POINT marqueeAnchor{ 0, 0 }, marqueeCur{ 0, 0 };
+	// ---- 多选那一批的批量移动 / 批量旋转（见 onDown / onMove / onUp）----
+	// 正拖着多选那一批：按在其中一个已选元素上（没按 Ctrl），整批跟着挪
+	bool batchMoving{ false };
+	// 这一下按的是画布右上角那三枚批量按钮（见 onDown）。它不 SetCapture、也不拖任何东西，
+	// 抬手那一下得靠这个标志截住 —— 否则 onUp 会照常走"选中光标底下那个元素"那条路，
+	// 刚点完「删除」就会反手选中一个（甚至把整批删掉之后又建立起一个单选）
+	bool batchBtnClicked{ false };
+	// 上一次拖动的落点（底图像素）。逐次求差就是这一帧要挪的量 ——
+	// 记绝对落点而不是"按下时的落点"，光标离窗口或坐标被夹回来时也不会累积误差
+	POINT batchMoveLast{ 0, 0 };
+	// 「旋转」按钮进入的拖拽旋转态。为真时在画布上按下并拖动 = 整批绕组中心转
+	bool batchRotateOn{ false };
+	// 旋转态里正按着。与 batchRotateOn 分开：模式可以一直开着，一次拖完还能接着拖
+	bool batchRotating{ false };
+	// 旋转中心（底图像素）与上一次的鼠标方向角（度）。中心在每次按下时重算一次、
+	// 拖动期间固定 —— 跟着走的话转起来会自己漂。逐帧比"新方向角 - 上次方向角"就是这一帧要转的量
+	D2D1_POINT_2F batchRotateCenter{ 0.f, 0.f };
+	float batchRotatePrevAngle{ 0.f };
 	// ---- 「选择画布」（选择器的第二个子模式）----
 	// 作用对象是底图 drawing->screenImg 的像素。刻意不走 swapImage：那条路是"整张图换掉了"，
 	// 会把标注一并清掉；这里只是把底图的某一块挪个位置，标注不该跟着没
