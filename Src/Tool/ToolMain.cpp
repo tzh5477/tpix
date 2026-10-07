@@ -82,6 +82,8 @@ void ToolMain::onCreated()
 	// 「选择对象」那支鼠标指针的墨色。同 ToolSub 的 brushBg：画刷与设备绑定，建一次复用
 	d2d->deviceContext->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::White), brushCursor.GetAddressOf());
 	d2d->deviceContext->CreateSolidColorBrush(D2D1::ColorF(0x404040), brushCursorEdge.GetAddressOf());
+	// 自绘图标用的是 0x333333，与 Button 的默认字色一致
+	d2d->deviceContext->CreateSolidColorBrush(D2D1::ColorF(0x333333), brushIconInk.GetAddressOf());
 	body->setBg(0xFFFFFFFF);
 	body->setBorder(1.f, 0xA8A8A8ff);
 	body->setAlignItems(Ling::Align::Center);
@@ -100,10 +102,10 @@ void ToolMain::onCreated()
 			btn->setHeightPercent(100.f);
 			btn->setFlexGrow(1.f);
 			btn->setHoverBg(0xF2F2F2ff);
-			// 「选择对象」那一枚不写字：垫一张铺满的画布，自己在上面画一个鼠标指针
-			//（图标字体里没有指针形状，41 个码位全都有主；见 layout / paintSelectIcon）。
-			// 其余各枚照旧走 icon 字体
-			if (id == L"selector") {
+			// 「选择对象」与「选文」这两枚不写字：垫一张铺满的画布，自己在上面画
+			//（图标字体里没有指针形状、也没有 I 形文本光标，41 个码位全都有主；
+			// 见 layout / paintSelectIcon / paintTextSelectIcon）。其余各枚照旧走 icon 字体
+			if (id == L"selector" || id == L"textSelect") {
 				// 宽度写死，不交给 flex 分：它不写字、里面那张画布又是按百分比铺的，
 				// 于是它的"基准尺寸（auto = 内容尺寸）"算出来是 0，而 flexGrow 是在各自
 				// 基准上平分剩余空间 —— 结果这一格比其它格窄一大截（实测 26px vs 41px），
@@ -114,7 +116,8 @@ void ToolMain::onCreated()
 				auto icon = btn->makeChild<Ling::Canvas>();
 				icon->setSizePercent(100.f, 100.f);
 				icon->setFlexShrink(0.f);
-				selectIcon = icon;
+				if (id == L"selector") selectIcon = icon;
+				else textSelectIcon = icon;
 			}
 			else {
 				btn->setText(btnCodes[i]);
@@ -141,14 +144,22 @@ void ToolMain::onCreated()
 void ToolMain::layout()
 {
 	Ling::WinBase::layout();
-	if (!selectIcon) return;
 	// 与 ToolSub 的样例格子同一套：startPaint / finishPaint 要成对用，
 	// 且这一层底子是透明的 —— 按钮的常态 / 悬停底色从它下面透上来
-	auto ctx = selectIcon->startPaint();
-	if (!ctx) return;
-	ctx->Clear(0);
-	paintSelectIcon(ctx, selectIcon->w, selectIcon->h);
-	selectIcon->finishPaint();
+	auto paint = [](Ling::Canvas* canvas, auto&& fn) {
+		if (!canvas) return;
+		auto ctx = canvas->startPaint();
+		if (!ctx) return;
+		ctx->Clear(0);
+		fn(ctx, canvas->w, canvas->h);
+		canvas->finishPaint();
+	};
+	paint(selectIcon, [this](ID2D1DeviceContext* ctx, float w, float h) {
+		paintSelectIcon(ctx, w, h);
+	});
+	paint(textSelectIcon, [this](ID2D1DeviceContext* ctx, float w, float h) {
+		paintTextSelectIcon(ctx, w, h);
+	});
 }
 
 void ToolMain::paintSelectIcon(ID2D1DeviceContext* ctx, const float w, const float h)
@@ -180,6 +191,40 @@ void ToolMain::paintSelectIcon(ID2D1DeviceContext* ctx, const float w, const flo
 	sink->Close();
 	ctx->FillGeometry(geo.Get(), brushCursor.Get());
 	ctx->DrawGeometry(geo.Get(), brushCursorEdge.Get(), 1.2f * dpi);
+}
+
+// I 形文本光标（「选文」那枚）。和上面那支鼠标指针同一套：归一化坐标写死，按画布大小等比缩放。
+// 三笔描出来 —— 上托横 / 竖杠 / 下托横，用描边而不是填充（笔画本身就细，填充要闭合多边形反而绕）
+//
+// 尺寸按固定逻辑像素给（12 高），不随格子宽窄变：图标字体那一排（13 号）的墨迹高度落在
+// 11~13 个逻辑像素之间，取这一档才和左右邻居一般大（同 paintSelectIcon 里那段说明）
+void ToolMain::paintTextSelectIcon(ID2D1DeviceContext* ctx, const float w, const float h)
+{
+	if (!brushIconInk) return;
+	const float s{ 12.f * dpi };                 // 光标墨迹高度
+	const float boxW{ s * 0.5f };                // 一支光标大约是 1:2 的瘦长条
+	const float ox{ (w - boxW) / 2.f }, oy{ (h - s) / 2.f };
+	const float x0{ ox }, x1{ ox + boxW }, xm{ ox + boxW * 0.5f };
+	const float y0{ oy }, y1{ oy + s };
+
+	Microsoft::WRL::ComPtr<ID2D1PathGeometry> geo;
+	if (FAILED(Ling::D2D::get()->d2dFactory->CreatePathGeometry(geo.GetAddressOf()))) return;
+	Microsoft::WRL::ComPtr<ID2D1GeometrySink> sink;
+	if (FAILED(geo->Open(sink.GetAddressOf()))) return;
+	// 上托横
+	sink->BeginFigure(D2D1::Point2F(x0, y0), D2D1_FIGURE_BEGIN_HOLLOW);
+	sink->AddLine(D2D1::Point2F(x1, y0));
+	sink->EndFigure(D2D1_FIGURE_END_OPEN);
+	// 竖杠（略短一点，两头留出半条线宽，免得和下托横叠成一个方块）
+	sink->BeginFigure(D2D1::Point2F(xm, y0), D2D1_FIGURE_BEGIN_HOLLOW);
+	sink->AddLine(D2D1::Point2F(xm, y1));
+	sink->EndFigure(D2D1_FIGURE_END_OPEN);
+	// 下托横
+	sink->BeginFigure(D2D1::Point2F(x0, y1), D2D1_FIGURE_BEGIN_HOLLOW);
+	sink->AddLine(D2D1::Point2F(x1, y1));
+	sink->EndFigure(D2D1_FIGURE_END_OPEN);
+	sink->Close();
+	ctx->DrawGeometry(geo.Get(), brushIconInk.Get(), 1.4f * dpi);
 }
 
 void ToolMain::applyNormalStyle(Ling::Button* btn)

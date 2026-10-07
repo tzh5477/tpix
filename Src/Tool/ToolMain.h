@@ -32,6 +32,8 @@ private:
 	void onMinMaxInfo(MINMAXINFO* mmi);
 	// 描一个鼠标指针的轮廓（各点坐标见实现）。w / h 是画布尺寸，物理像素
 	void paintSelectIcon(ID2D1DeviceContext* ctx, float w, float h);
+	// 描一支 I 形文本光标（「选文」那枚）。同样是归一化坐标 + 等比缩放，见实现
+	void paintTextSelectIcon(ID2D1DeviceContext* ctx, float w, float h);
 	// 未选中态配色，选中态在 onClick 里就地设置
 	void applyNormalStyle(Ling::Button* btn);
 	// 按当前 dpi 把窗口尺寸算出来并应用。构造时算一次，DPI 变了再算一次
@@ -48,18 +50,23 @@ private:
 	// 排在最前的 select 是「选择对象」：不用先判断"这是哪个组件"再回去切工具，
 	// 直接点它、点中哪个元素就切到哪个元素的工具上（见 WinPin::onUp）
 	std::vector<std::wstring> btnIds = { L"selector",L"rect",L"ellipse",L"arrow",L"number",L"line",L"text",L"mosaic", L"eraser",L"watermark",L"pin",L"|",L"undo",L"redo",L"|",L"pinHide",L"textSelect",L"close",L"save",L"clipboard" };
-	// textSelect 借的是「文字识别」那枚 \ue67b。图标字体只有 41 个码位，其余全都有主
-	//（见工作区笔记），好在两者语义就是一件事 —— 选的就是识别出来的那些字，
-	// 而且本工具条上没有第二个用它的按钮，不会在同一屏里撞脸。
-	// 第一项（「选择对象」）是空串：那枚按钮不写字，自己画一个鼠标指针上去
-	//（icon 字体里没有指针形状，41 个码位全部有主；见 layout / paintSelectIcon）
-	std::vector<std::wstring> btnCodes = { L"",L"\ue8e8",L"\ue6bc",L"\ue603",L"\ue776",L"\ue601",L"\ue6ec",L"\ue82e",L"\ue6be",L"\ue607",L"\ue6a2",L"|",L"\ued85",L"\ued8a",L"|",L"\ue907",L"\ue67b",L"\ue62d",L"\ue608",L"\ue6ad" };
+	// 「选文」（textSelect）与「选择对象」一样是空串：那两枚都不写字，自己画。
+	// textSelect 原来借的是「文字识别」那枚 \ue67b —— 编辑界面右边缘那条竖排
+	//（ToolPinSide）上正好也有一枚 \ue67b，同一个屏里撞脸。图标字体只有 41 个码位
+	// 且全部有主（见工作区笔记），没有现成的 I 形文本光标，于是照「选择对象」那套自绘：
+	// 一支文本光标最能说清"在这儿选字"（另两个空闲的 E909 右箭头 / E97F 调色板都不合适）
+	std::vector<std::wstring> btnCodes = { L"",L"\ue8e8",L"\ue6bc",L"\ue603",L"\ue776",L"\ue601",L"\ue6ec",L"\ue82e",L"\ue6be",L"\ue607",L"\ue6a2",L"|",L"\ued85",L"\ued8a",L"|",L"\ue907",L"",L"\ue62d",L"\ue608",L"\ue6ad" };
 	std::vector<Ling::Button*> btns;
 	// 「选择对象」那枚按钮里垫的自绘画布（Button 不能自绘，Canvas 收不到鼠标，叠起来才两样都有）
 	Ling::Canvas* selectIcon{ nullptr };
+	// 「选文」那枚里垫的自绘画布，同上（画的是一支 I 形文本光标）
+	Ling::Canvas* textSelectIcon{ nullptr };
 	// 指针的白底与深色描边。与 ToolSub 那几支一样绑在设备上，建一次够
 	Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brushCursor;
 	Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brushCursorEdge;
+	// 自绘图标（那支 I 形文本光标）的墨色。取值与 Button 默认字色同色，
+	// 免得同一排里有一枚比别的深一档
+	Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brushIconInk;
 	// 悬停提示。要 hwnd，所以在 onCreated 里才建得起来
 	std::unique_ptr<Tip> tip;
 };
