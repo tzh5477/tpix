@@ -1654,24 +1654,33 @@ bool WinPin::isToolsVisible() const
 	return toolMain && IsWindowVisible(toolMain->hwnd);
 }
 
-// 工具栏整组显隐（空格键）。与右键收起**不是**一回事：右键是"专注看图"，顺带把画笔也放掉；
-// 空格只是把面板收起来 / 请回来，手里选着的工具、ToolSub 上的设置一概保持原样。
-// 所以这里只动窗口，不碰 curId
+// 工具栏整组显隐（空格键）。这一下是"编辑"与"拖着图走"两个状态之间的硬切换：
+//   · 收起来 —— 连画笔一起放掉。放着画笔不动的话左键仍然落在画布上（见 onDown 里的
+//     hasDrawTool），那就不是用户要的"拖动截图"那个状态了
+//   · 请回来 —— 直接落到矩形工具上，抬手就能框东西，不必再点一次按钮。
+//     进编辑界面那条路（框完选区直接 startPin(L"rect")，见 WinCap::onUp）本来就把 rect
+//     预选好了；中途收放一次再回来也回到同一个起点，两个入口的手感才对得上
 void WinPin::setToolsVisible(bool on)
 {
 	if (!toolMain) return;
 	if (!on) {
+		// cancelSelect 自带配色复位、ToolSub 收起与整组重排；curId 本来就空时它会提前返回，
+		// 所以 ToolSub 这一下自己再收一次
+		toolMain->cancelSelect();
 		toolMain->hide();
 		toolSub->hideTools();
+		setSideBarVisible(false);
 		return;
 	}
 	// 缩略图 / 贴边细条这两种收法本来就没给工具条留位置，先还原再谈显示
 	if (isThumb) setThumbMode(false);
 	if (isMinimized) setMinimized(false);
-	// hideTools 把 ToolSub 的内容一起作废了，得按当前工具重建一遍才出得来
-	toolMain->refreshToolSub();
+	// 不先 refreshToolSub：下面那句 selectTool 会按 rect 把 ToolSub 整个重建一遍，
+	// 与 refreshToolSub 是同一套派发（见那里的说明），先建一次是白建
 	toolMain->show();
-	layoutTools();
+	setSideBarVisible(true);
+	// 由它带着跑 layoutTools，位置一并摆好
+	toolMain->selectTool(L"rect");
 }
 
 WinPin::~WinPin()
@@ -1977,7 +1986,8 @@ void WinPin::onDown(POINT pos, BOOL isRight)
 		// cancelSelect 里已经顺手隐藏了 ToolSub 并重排整组，但它在 curId 本来就空时会提前返回，
 		// 所以 ToolSub 这一下自己再收一次，右键的效果与当时选没选画笔无关。
 		// 左键点一下（抬手时，见 onUp）也能把 ToolMain 请回来。
-		// 空格键是另一套：它只收放面板，不动画笔（见 setToolsVisible）
+		// 空格键也收放这一组，区别只在于它两边各多一步：收的时候放掉画笔、
+		// 请回来的时候预选矩形工具（见 setToolsVisible）
 		toolMain->cancelSelect();
 		toolMain->hide();
 		toolSub->hideTools();
@@ -3008,13 +3018,14 @@ void WinPin::onKey(UINT key)
 	else if (ctrl && key == 'M') {  // Ctrl+M：收成贴边细条 / 展开。悬停细条也会展开
 		setMinimized(!isMinimized);
 	}
-	// 空格：显示 / 隐藏整组工具条。工具条被右键收掉、被缩略图收掉、或者在全屏贴图上被
-	// 底图盖住看不见的时候，它都是"把工具条找回来"的那一下。
-	// 只有"工具条正显示着"且"贴的是动图"时空格仍是老语义（播放 / 暂停）——
-	// 那种情况要收工具条用右键
+	// 空格：整组工具条显隐，也就是"编辑"与"拖着图走"之间的切换。工具条被右键收掉、
+	// 被缩略图收掉、或者在全屏贴图上被底图盖住看不见的时候，它都是把工具条找回来的那一下。
+	// 两个方向各自还要做什么（收起来放掉画笔 / 请回来预选矩形）都在 setToolsVisible 里
+	//
+	// 这里原来还有一条"贴的是动图且工具条正显示着就切播放 / 暂停"。空格现在专职收放工具条，
+	// 那个手势回到它本来也在的地方 —— ToolSub 上那枚「播放 / 暂停」按钮（tool.pinPlay）
 	else if (key == VK_SPACE) {
-		if (hasAnim() && isToolsVisible()) toggleAnim();
-		else setToolsVisible(!isToolsVisible());
+		setToolsVisible(!isToolsVisible());
 	}
 	// ESC 退一步：先把当前操作收掉（放掉画笔、收起 ToolSub，回到工具条的初始样子），
 	// 已经画在图上的一概不动；再按一次才关窗。
