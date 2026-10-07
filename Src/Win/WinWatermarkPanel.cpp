@@ -97,7 +97,10 @@ namespace {
 			label->setText(name);
 			label->setFontSize(12.f);
 			label->setColor(0x555555FF);
-			label->setJustifyContent(Ling::Justify::Start);
+			// 横向对齐归 AlignItems（交叉轴），JustifyContent 管的是纵向（主轴）——
+			// Label 是个 Column 容器，原来这里写 JustifyContent 是空操作，只是恰好被
+			// "文字拉到 56 宽 + 文字自己左对齐"这个默认行为蒙对了
+			label->setAlignItems(Ling::Align::FlexStart);
 			label->setWidth(nameW);
 			label->setFlexShrink(0.f);
 
@@ -105,9 +108,16 @@ namespace {
 			// 高 12：Slider 的滑块半径固定 3（直径 6），轨道只有 1 粗，
 			// 给 12 高正好是滑块居中、上下各留 3 —— 比贴着 6 高要透气
 			s->setHeight(12.f);
-			s->setFlexGrow(1.f);
-			s->setMarginLeft(10.f);
-			s->setMarginRight(10.f);
+			// Slider 的构造函数里写死了 setWidth(200)，那是一个确定宽度 —— 它的两个兄弟
+			// 也都有确定宽度（名称 56 / 数值 30），而 yoga 的 flexShrink 默认是 0，一个
+			// 像素都不肯让。三者相加 56 + 200 + 30，再加两侧各 10 的间距是 306，比这一行
+			// 的内容宽（winW 300 减两侧 pad 20 = 280）多出 26 ⇒ 最右边的数值那一格被顶到
+			// 面板右边界之外，只露出贴着边框的一小截（作者报的"数值超出边界"就是这个）。
+			// flexGrow 压不过确定宽度，所以宽度只能按行宽自己算出来给它
+			s->setFlexGrow(0.f);
+			s->setWidth(sliderW);
+			s->setMarginLeft(sliderGap);
+			s->setMarginRight(sliderGap);
 			// setValue 排在 onValueChanged 之前：填初值这一下不会反过来又写一次盘
 			s->setRange(min, max);
 			s->setValue(val);
@@ -122,7 +132,9 @@ namespace {
 			num->setFontSize(12.f);
 			num->setColor(0x555555FF);
 			num->setWidth(numW);
-			num->setJustifyContent(Ling::Justify::End);
+			// 同上：居右要写 AlignItems。JustifyContent 对 Label 是纵向的，写在这里等于
+			// 没设，数值会从左边缘起排，三位数时尾巴越过面板右边框
+			num->setAlignItems(Ling::Align::FlexEnd);
 			num->setFlexShrink(0.f);
 			syncNum(num, s->getValue());
 			s->onValueChanged.add([this, onVal, s, num](Ling::Slider*, float v) {
@@ -139,8 +151,13 @@ namespace {
 		static constexpr float rowH{ 32.f };
 		static constexpr float pad{ 10.f };
 		static constexpr float nameW{ 56.f };   // 「不透明度」四个字 + 一点余量
-		static constexpr float numW{ 30.f };
+		static constexpr float numW{ 30.f };    // 数值列：最宽是三位数（透明度到 100）
+		static constexpr float sliderGap{ 10.f };   // 滑块与左右两格之间的间距
 		static constexpr float winW{ 300.f };
+		// 滑块的宽度由行宽反推 —— 名称 + 间距 + 滑块 + 间距 + 数值 要正好填满行内容宽
+		//（winW 减两侧 pad）。给确定值而不是靠 flexGrow：Slider 构造函数里写死的那个宽度
+		// 是确定宽度，flexGrow 压不过它，见 addRow 里的说明
+		static constexpr float sliderW{ winW - pad * 2 - nameW - numW - sliderGap * 2 };
 		static constexpr float winH{ pad * 2 + rowH * 3 };
 	private:
 		ToolSub* sub{ nullptr };

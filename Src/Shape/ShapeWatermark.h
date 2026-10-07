@@ -23,6 +23,10 @@ public:
 	// 把 text 里的 {yyyy} / {MM} / {dd} / {HH} / {mm} / {ss} 换成 stamp 这一刻的值。
 	// 没有占位符就原样返回（也不会去碰花括号里的其它内容）
 	static std::wstring expandTime(const std::wstring& text, std::time_t stamp);
+	// 「编辑水印内容」弹窗里时间下拉的默认档：{yyyy}年{MM}月{dd}日，就是上面表里的第 4 档。
+	// 开一个名字给调用方，而不是让它按下标去取 —— 那张表的顺序是有讲究的（有前缀关系的
+	// 档必须长串在前，见上面的说明），按下标取会在别人调整顺序时静默错档
+	static const std::wstring& defaultTimeFormat();
 	ShapeWatermark(Canvas* win);
 	~ShapeWatermark();
 	void paint(ID2D1DeviceContext* ctx) override;

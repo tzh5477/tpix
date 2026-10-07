@@ -38,6 +38,12 @@ const std::vector<std::wstring>& ShapeWatermark::timeFormats()
 	return list;
 }
 
+const std::wstring& ShapeWatermark::defaultTimeFormat()
+{
+	// 表里那一份就是唯一那一份，不在这里另写一遍字面量 —— 两处迟早会对不上
+	return timeFormats()[3];
+}
+
 std::wstring ShapeWatermark::expandTime(const std::wstring& text, std::time_t stamp)
 {
 	// 连一个花括号都没有就没什么可换的，直接返回原串 —— 也省掉下面那一趟扫描

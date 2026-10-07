@@ -121,7 +121,7 @@ namespace {
 			timeBtn = bottom->makeChild<Ling::Button>();
 			timeBtn->setHeight(btnH);
 			timeBtn->setWidth(timeBtnW);
-			timeBtn->setMarginLeft(8.f);
+			timeBtn->setMarginLeft(6.f);
 			timeBtn->setFontSize(12.f);
 			timeBtn->setBorder(1.f, 0xE0E0E0FF);
 			timeBtn->setHoverBg(0xF2F2F2FF);
@@ -130,7 +130,7 @@ namespace {
 			fontBtn = bottom->makeChild<Ling::Button>();
 			fontBtn->setHeight(btnH);
 			fontBtn->setWidth(fontBtnW);
-			fontBtn->setMarginLeft(8.f);
+			fontBtn->setMarginLeft(6.f);
 			fontBtn->setFontSize(12.f);
 			fontBtn->setBorder(1.f, 0xE0E0E0FF);
 			fontBtn->setHoverBg(0xF2F2F2FF);
@@ -144,7 +144,7 @@ namespace {
 			auto applyBtn = bottom->makeChild<Ling::Button>();
 			applyBtn->setHeight(btnH);
 			applyBtn->setWidth(applyBtnW);
-			applyBtn->setMarginLeft(8.f);
+			applyBtn->setMarginLeft(6.f);
 			applyBtn->setText(Lang::get(L"wmText.apply"));
 			applyBtn->setColor(0xFFFFFFFF);
 			applyBtn->setBg(0x597EF7FF);
@@ -154,12 +154,14 @@ namespace {
 			auto cancelBtn = bottom->makeChild<Ling::Button>();
 			cancelBtn->setHeight(btnH);
 			cancelBtn->setWidth(cancelBtnW);
-			cancelBtn->setMarginLeft(8.f);
+			cancelBtn->setMarginLeft(6.f);
 			cancelBtn->setText(Lang::get(L"wmText.cancel"));
 			cancelBtn->setHoverBg(0xF2F2F2FF);
 			cancelBtn->onClick.add([this](Ling::Button*) { cancel(); });
 
 			syncFontBtn();
+			// 时间下拉同样要一行字，否则它就是个空框（作者报的"时间下拉框没有默认值"）
+			syncTimeBtnFromText();
 			// 打开就把光标放进输入框，并整段选中：改水印多半是整句重写，从头选比逐字删省事。
 			// 全选只做这一次 —— 「选时间 / 换字体」之后还要把焦点还给输入框（见 insertIntoBox），
 			// 那时若又全选一次，刚填进去的时间模板会被一起选中，接着敲一个字整段就没了
@@ -201,6 +203,10 @@ namespace {
 				const auto& all = ShapeWatermark::timeFormats();
 				if (picked < 0 || picked >= (int)all.size()) return;
 				insertIntoBox(all[picked]);
+				// 按钮跟着显示刚选的这一档。这里不能改成"按输入框内容重认一次"：
+				// insertIntoBox 是逐字 PostMessage(WM_CHAR) 投出去的，这一句执行时那些
+				// 字符还没被处理，text 里还是老内容，重认只会认到改之前的那一档
+				syncTimeBtn(all[picked]);
 				});
 		}
 		// 把串填到输入框的光标处。用法是逐字 PostMessage(WM_CHAR) —— 那就是用户手打的
@@ -239,9 +245,38 @@ namespace {
 		void syncFontBtn()
 		{
 			auto show = ToolSub::fontShowName(family);
-			// 按钮只有 96 宽，"Times New Roman" 这种要截一下；下拉里是全名
+			// 按钮只有 88 宽，"Times New Roman" 这种要截一下；下拉里是全名
 			if (show.size() > 8) show = show.substr(0, 7) + L"\u2026";
 			fontBtn->setText(show);
+		}
+		// 时间下拉按钮上写哪一串。两个调用点：打开弹窗时按文字里已有的档位认一次
+		//（syncTimeBtnFromText）、从列表里选了一档之后（pickTime）。
+		// 此后不跟着打字变 —— 半截模板会让按钮一会儿显示默认档一会儿显示别的，反而看不清
+		void syncTimeBtn(const std::wstring& fmt)
+		{
+			// 模板串长短差得多：最短的 {yyyy}-{MM} 只有 11 个字符，最长带秒的有 26 个，
+			// 而按钮只有 timeBtnW 宽 ⇒ 装不下就截一段加省略号，与字体按钮同一套做法。
+			// 列表里那一栏始终是完整的，展开后的日期也一眼能认，所以截掉尾巴不影响认档
+			std::wstring show = fmt;
+			if ((int)show.size() > maxTimeChars) show = show.substr(0, maxTimeChars - 1) + L"\u2026";
+			timeBtn->setText(show);
+		}
+		// 打开弹窗时定一次：文字里已经带了哪一档模板就显示哪一档，一档都没带就显示默认档
+		//（{yyyy}年{MM}月{dd}日）。按钮因此始终有字，也始终是"当前这一档"
+		void syncTimeBtnFromText()
+		{
+			auto& fmts = ShapeWatermark::timeFormats();
+			const std::wstring* found{ nullptr };
+			size_t bestLen{ 0 };
+			for (auto& f : fmts) {
+				// 与 pickTime 认"当前是哪一档"同一个规矩：取最长的那条。模板之间有前缀
+				// 关系（{yyyy}-{MM} 是 {yyyy}-{MM}-{dd} 的前缀），先撞上短的那条会认错档
+				if (f.size() > bestLen && text.find(f) != std::wstring::npos) {
+					bestLen = f.size();
+					found = &f;
+				}
+			}
+			syncTimeBtn(found ? *found : ShapeWatermark::defaultTimeFormat());
 		}
 		// 收尾：把输入框里的文字与当前字体交出去，落盘与重画由调用方做
 		void apply()
@@ -270,12 +305,20 @@ namespace {
 		static constexpr float bottomH{ 44.f };
 		static constexpr float pad{ 12.f };
 		static constexpr float btnH{ 30.f };
-		static constexpr float timeBtnW{ 104.f };    // 「时间」下拉
-		static constexpr float fontBtnW{ 96.f };
+		// 「时间」下拉。104 装不下它要显示的那串模板：默认档 {yyyy}年{MM}月{dd}日 在 12 号字
+		// 下约 124 个逻辑像素，放宽到 140 —— 底栏这一行的余量是跟着一起配平的，见 winW
+		static constexpr float timeBtnW{ 140.f };
+		// 按钮上最多写几个字符，超了就截断加省略号（模板串最长 26 个字符，见 syncTimeBtn）
+		static constexpr int maxTimeChars{ 18 };
+		// 字体按钮 88：syncFontBtn 本来就把超过 8 个字的截断，正常字体名都装得下
+		static constexpr float fontBtnW{ 88.f };
 		static constexpr float applyBtnW{ 72.f };
 		static constexpr float cancelBtnW{ 72.f };
 		static constexpr float fontPopupMinW{ 200.f };
-		static constexpr float winW{ 420.f };
+		// 底栏是「时间:」标签 + 时间下拉 + 字体下拉 + 垫片 + 应用 + 取消 六项：前三项加起来
+		// 30 + 6 + 140 + 6 + 88，再加右侧两个按钮与四处 6 像素间距，中文下要 432；
+		// 俄文的「Время:」比「时间:」宽出 17，要 449 —— 留出余量取 480
+		static constexpr float winW{ 480.f };
 		static constexpr float winH{ titleH + editH + bottomH + pad * 3 };
 	private:
 		Ling::TextBox* box{ nullptr };
