@@ -128,7 +128,14 @@ WinPin::WinPin(int x, int y, int w, int h, const std::vector<BYTE>* data, const 
 		toolMain->selectTool(initToolId);
 	}
 	layoutTools();
-	onMoved.add([this]() { layoutTools(); });
+	// 窗口一挪就重排工具条。但**拖窗口期间要跳过**：那时两条工具条都收着（onDown 里 hide 了），
+	// 重排纯属白做，而它内部要给两条工具条各来一次 SetWindowPos —— 实测单条 WM_MOUSEMOVE
+	// 的 16ms 里有 8ms 花在这次白排上，鼠标消息根本来不及，窗口就落在光标后面一抖一抖地追。
+	// 抬手时 onUp 会照常重排一次，所以跳过的不亏
+	onMoved.add([this]() {
+		if (winDragging) return;
+		layoutTools();
+	});
 	// DPI 变了（用户改了缩放比例，或者窗口被拖到缩放比例不同的显示器上）：系统会按新旧缩放比
 	// 把窗口整体放大一圈，但贴图窗口的尺寸是钉死在底图像素上的 —— 底图按原始像素画，
 	// shape 的坐标也都是相对底图的物理像素，跟着缩放只会让窗口比图大一圈：
@@ -1939,6 +1946,7 @@ void WinPin::onDown(POINT pos, BOOL isRight)
 	// 工具条已经被这次按下收掉了，事后再问 isToolsVisible 一律是关 —— 记下的是"拖动之前"
 	if (!hasDrawTool()) {
 		toolsWereVisible = isToolsVisible();
+		winDragging = true;
 		toolMain->hide();
 		return;
 	}
@@ -2025,6 +2033,13 @@ void WinPin::onDown(POINT pos, BOOL isRight)
 
 void WinPin::onMove(POINT pos)
 {
+	// (INT_MAX, INT_MAX) 是 Ling 在"鼠标离开窗口"时补的哨兵移动（见 WinBase::mouseLeave）。
+	// 它只对"没按着"的那半边有意义 —— 用来把 hover 高亮收掉。可要是**按着的时候**收到它，
+	// 下面每一条拖拽路径都会拿着这个天文数字去算坐标：拖窗口那条最惨，newX = x + INT_MAX -
+	// pressPos.x，系统再把坐标夹进 16 位（±32767），整张图直接飞到屏幕的另一头，接着在
+	// 两端来回翻 —— 看起来就是"拖到一半突然疯狂抖动"。拖其他东西（剪裁点 / 夹点 / 选框）
+	// 同样会算出垃圾坐标。所以按着的时候一律不认这条哨兵
+	if (isMouseDown && pos.x == INT_MAX && pos.y == INT_MAX) return;
 	// 正拉着剪裁采样点：换算成屏幕坐标再算新范围。窗口自己也在跟着挪 / 改尺寸，
 	// 客户区坐标一路在变，只有屏幕坐标是稳的
 	if (cropDragging()) {
@@ -2096,6 +2111,11 @@ void WinPin::onMove(POINT pos)
 			// 光标一步没挪也会来 WM_MOUSEMOVE。抬手时要靠它区分"拖过"和"只是点了一下"：
 			// 只有真拖过才轮得到"拖到屏幕边线上就藏起来"那一条
 			if (pos.x != pressPos.x || pos.y != pressPos.y) hasDragged = true;
+			// 位置没变就别再挪了。窗口自己挪完之后系统会补一条"光标没动"的 WM_MOUSEMOVE
+			// （客户端坐标是相对窗口算的，窗口一动它就变），按上面那条公式算出来的正好是原位。
+			// 实测每挪一步会多出三分之一次这种空挪，一次空挪照样要走一遍 WM_MOVE -> onMoved，
+			// 白花几毫秒，还会把工具条那一串 SetWindowPos 再叫醒一次
+			if (newX == x && newY == y) return;
 			setPosition(newX, newY);
 			// 成组的贴图跟着一起挪，整组的相对位置不变
 			syncGroupPos(this, dx, dy);
@@ -2149,6 +2169,9 @@ void WinPin::onMove(POINT pos)
 
 void WinPin::onUp(POINT pos, BOOL isRight)
 {
+	// 拖窗口这一下到此结束。下面无论走哪条早退，拖窗口期间被跳过的那次工具条重排
+	// 都不该再拖着了 —— 所以标志在最前面就放掉（见 winDragging / onMoved）
+	winDragging = false;
 	// 剪裁采样点：这一下只是把范围放稳，没有新建元素要收尾
 	if (cropDragging()) {
 		endCropDrag();
