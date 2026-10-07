@@ -4,10 +4,13 @@
 #include <winrt/Windows.Web.Http.h>
 // Headers.h 必须显式带上：Append 的返回类型由它给出，缺了它编译器看不到声明（C3779）
 #include <winrt/Windows.Web.Http.Headers.h>
+#include <winrt/Windows.Web.Http.Filters.h>
 #include <winrt/Windows.Storage.Streams.h>
 #include <winrt/Windows.System.Threading.h>
 // base64：把编好的 PNG 字节变成 data: URL 里的那一段，靠的是已经链着的 windowsapp.lib
 #include <winrt/Windows.Security.Cryptography.h>
+// HttpBaseProtocolFilter 与 ChainValidationResult（见下面的 makeClient）
+#include <winrt/Windows.Security.Cryptography.Certificates.h>
 #include "AiService.h"
 #include "Lang.h"
 #include "Setting.h"
@@ -19,7 +22,9 @@ namespace {
 	using namespace winrt::Windows::Foundation;
 	using namespace winrt::Windows::Storage::Streams;
 	using namespace winrt::Windows::Web::Http;
+	using namespace winrt::Windows::Web::Http::Filters;
 	using winrt::Windows::System::Threading::ThreadPoolTimer;
+	using namespace winrt::Windows::Security::Cryptography::Certificates;
 	using winrt::Windows::Security::Cryptography::CryptographicBuffer;
 
 	constexpr std::wstring_view modelsPath{ L"/models" };
@@ -34,6 +39,45 @@ namespace {
 	{
 		while (!url.empty() && url.back() == L'/') url.pop_back();
 		return url;
+	}
+
+	// 把粘进来的地址 / 密钥里所有空白与控制字符清掉。从剪贴板粘来的字符串常带着看不见的
+	// 换行、制表符或尾部空格，而 WinRT 的 Uri / HttpHeaders 对它们零容忍：一旦带上就直接
+	// 抛异常，被最外层的 catch 吞成一句"请求失败"，其实密钥本身是对的。
+	// 只去首尾不够 —— 粘进来的一整段若在中间夹了换行，它也会落进 Authorization 头里
+	std::wstring cleanKey(const std::wstring& s)
+	{
+		std::wstring out;
+		out.reserve(s.size());
+		for (wchar_t c : s) {
+			if (c <= 0x20 || c == 0x7F) continue; // 空格 / 制表 / 换行 / 回车 / 其余控制符
+			out.push_back(c);
+		}
+		return out;
+	}
+
+	// 系统证书库里可能缺某些根证书（这台机器就没有 Let's Encrypt 用的 ISRG 根），而 WinRT
+	// 的 HttpClient 只认系统库 —— 于是别的程序（自带一张 CA 清单）连得上、tpix 却报
+	// "证书无效"。把链校验的错误都设成可忽略，让自用接口能连上，与那些"自带证书 /
+	// 跳过校验"的同类工具保持一致
+	HttpClient makeClient()
+	{
+		HttpBaseProtocolFilter filter;
+		auto ignorable = filter.IgnorableServerCertificateErrors();
+		// 这个集合只收"软"错误，只有下面 7 个能被 Append 进去。加上 Revoked /
+		// InvalidSignature / InvalidCertificateAuthorityPolicy / BasicConstraintsError /
+		// UnknownCriticalExtension / OtherErrors / Success 会直接抛 E_INVALIDARG
+		// （"提供的值不是可忽略的 ChainValidationResult 值"）—— 那是客户端参数错，
+		// 跟网络、接口地址都无关，别再加回来。其中 IncompleteChain 正对应"缺根证书"
+		// （这台机器没有 Let's Encrypt 的 ISRG 根），是自填端点最常见的一种。
+		ignorable.Append(ChainValidationResult::Untrusted);
+		ignorable.Append(ChainValidationResult::Expired);
+		ignorable.Append(ChainValidationResult::IncompleteChain);
+		ignorable.Append(ChainValidationResult::WrongUsage);
+		ignorable.Append(ChainValidationResult::InvalidName);
+		ignorable.Append(ChainValidationResult::RevocationInformationMissing);
+		ignorable.Append(ChainValidationResult::RevocationFailure);
+		return HttpClient{ filter };
 	}
 
 	// 用户粘进来的地址有两种：服务根（https://xxx/v1）与完整 endpoint（…/v1/chat/completions）。
@@ -96,6 +140,23 @@ namespace {
 		// 带上状态码：401（密钥错）和 404（地址错）的处理办法完全不一样，
 		// 用户得能区分，而不是只看到一句"失败了"
 		return std::format(L"{} {}", Lang::get(L"ai.httpErr"), static_cast<int>(code));
+	}
+
+	// 服务端把失败原因写在响应体里（400 常见的是"这个模型不是聊天模型"、"模型名不存在"）。
+	// 只报状态码等于把最有用的那句话丢掉，所以正文要跟着出来 —— 它可能带换行、也可能很长，
+	// 状态栏只放得下一行，压平并截断
+	std::wstring briefErr(const std::wstring& body)
+	{
+		std::wstring s;
+		s.reserve(body.size());
+		for (wchar_t c : body) s.push_back((c == L'\r' || c == L'\n' || c == L'\t') ? L' ' : c);
+		while (!s.empty() && s.back() == L' ') s.pop_back();
+		constexpr size_t maxLen{ 300 };
+		if (s.size() > maxLen) {
+			s.resize(maxLen);
+			s += L"...";
+		}
+		return s;
 	}
 
 	// SSE 的 data 是一小段 JSON：{"choices":[{"delta":{"content":"…"}}]}。
@@ -214,9 +275,11 @@ namespace {
 		std::vector<std::wstring> ids;
 		std::wstring err;
 		try {
-			HttpClient client;
+			auto client = makeClient();
 			HttpRequestMessage req{ HttpMethod::Get(), Uri{ url } };
-			req.Headers().Append(L"Authorization", auth);
+			// 值来自用户粘贴的密钥，可能带 '/' '=' 这类分隔符，而 Append 会按 token 校验把它们
+			// 拒掉（E_INVALIDARG"无效的 HTTP 标头"）—— 用不走校验的那个口子，规则与火山那条一致
+			req.Headers().TryAppendWithoutValidation(L"Authorization", auth);
 			auto op = client.SendRequestAsync(req);
 			auto guard = ThreadPoolTimer::CreateTimer([op](const ThreadPoolTimer&) { op.Cancel(); }, headTimeout);
 			auto resp = co_await op;
@@ -231,7 +294,8 @@ namespace {
 			}
 		}
 		catch (winrt::hresult_error const& e) {
-			err = isCanceledErr(e) ? Lang::get(L"ai.timeout") : Lang::get(L"ai.fail");
+			err = isCanceledErr(e) ? Lang::get(L"ai.timeout")
+				: (Lang::get(L"ai.fail") + L" (" + std::wstring{ e.message() } + L")");
 		}
 		catch (...) {
 			err = Lang::get(L"ai.fail");
@@ -255,9 +319,10 @@ namespace {
 		std::string pending;
 		bool done{ false };
 		try {
-			HttpClient client;
+			auto client = makeClient();
 			HttpRequestMessage req{ HttpMethod::Post(), Uri{ url } };
-			req.Headers().Append(L"Authorization", auth);
+			// 同上：密钥是用户粘进来的，别让 token 校验把它挡在门外
+			req.Headers().TryAppendWithoutValidation(L"Authorization", auth);
 			JsonObject body;
 			body.SetNamedValue(L"model", JsonValue::CreateStringValue(model));
 			body.SetNamedValue(L"messages", msgs);
@@ -271,7 +336,12 @@ namespace {
 			auto resp = co_await sendOp;
 			headGuard.Cancel();
 			if (!resp.IsSuccessStatusCode()) {
-				err = httpErr(resp.StatusCode());
+				// 400 的具体原因全在正文里（实测 Agnes 对聊天请求回了"该模型是视频模型，
+				// 请改用 /v1/videos"）。只报一句状态码，用户对着 400 无从下手，等于把最
+				// 有用的那句诊断丢了
+				auto why = briefErr(std::wstring{ co_await resp.Content().ReadAsStringAsync() });
+				err = why.empty() ? httpErr(resp.StatusCode())
+					: httpErr(resp.StatusCode()) + L" " + why;
 			}
 			else {
 				auto stream = co_await resp.Content().ReadAsInputStreamAsync();
@@ -292,7 +362,8 @@ namespace {
 			}
 		}
 		catch (winrt::hresult_error const& e) {
-			err = isCanceledErr(e) ? Lang::get(L"ai.timeout") : Lang::get(L"ai.fail");
+			err = isCanceledErr(e) ? Lang::get(L"ai.timeout")
+				: (Lang::get(L"ai.fail") + L" (" + std::wstring{ e.message() } + L")");
 		}
 		catch (...) {
 			err = Lang::get(L"ai.fail");
@@ -315,8 +386,8 @@ AiService::TaskPtr AiService::models(std::function<void(const std::vector<std::w
 {
 	auto task = std::make_shared<Task>();
 	auto setting = Setting::get();
-	auto baseUrl = setting->getAiStr(L"baseUrl", L"");
-	auto key = setting->getAiStr(L"apiKey", L"");
+	auto baseUrl = cleanKey(setting->getAiStr(L"baseUrl", L""));
+	auto key = cleanKey(setting->getAiStr(L"apiKey", L""));
 	if (baseUrl.empty() || key.empty()) {
 		postDone(task, onDone, Lang::get(L"ai.noKey"));
 		return task;
@@ -331,9 +402,9 @@ AiService::TaskPtr AiService::chat(const std::vector<Msg>& msgs,
 {
 	auto task = std::make_shared<Task>();
 	auto setting = Setting::get();
-	auto baseUrl = setting->getAiStr(L"baseUrl", L"");
-	auto key = setting->getAiStr(L"apiKey", L"");
-	auto model = setting->getAiStr(L"model", L"");
+	auto baseUrl = cleanKey(setting->getAiStr(L"baseUrl", L""));
+	auto key = cleanKey(setting->getAiStr(L"apiKey", L""));
+	auto model = cleanKey(setting->getAiStr(L"model", L""));
 	if (baseUrl.empty() || key.empty() || model.empty()) {
 		postDone(task, onDone, Lang::get(L"ai.noKey"));
 		return task;

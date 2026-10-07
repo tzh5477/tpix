@@ -606,6 +606,28 @@ bool isPasteTarget(HWND hwnd)
 	if (name == L"Progman" || name == L"WorkerW") return false; //桌面
 	return true;
 }
+
+// 现在是否还按着任意一个修饰键。走 GetAsyncKeyState 看物理状态 ——
+// 全局热键触发时那条 WM_HOTKEY 是先到我们手里的，跟消息队列里的处理进度无关
+bool anyModifierDown()
+{
+	return (GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0
+		|| (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0
+		|| (GetAsyncKeyState(VK_MENU) & 0x8000) != 0
+		|| (GetAsyncKeyState(VK_LWIN) & 0x8000) != 0
+		|| (GetAsyncKeyState(VK_RWIN) & 0x8000) != 0;
+}
+
+// 等修饰键全部松开。松开了返回 true；超时（用户一直按着不放）返回 false
+bool waitModifiersReleased(const DWORD timeoutMs)
+{
+	const DWORD begin = GetTickCount();
+	while (anyModifierDown()) {
+		if (GetTickCount() - begin >= timeoutMs) return false;
+		Sleep(10);
+	}
+	return true;
+}
 }
 
 HWND Util::snapshotForeground()
@@ -646,6 +668,12 @@ std::wstring Util::copyFromForeground()
 	auto hwnd = GetForegroundWindow();
 	// 前台是 tpix 自己的窗口、桌面、任务栏时不做：Ctrl+C 会落到我们自己身上或什么也取不到
 	if (!isPasteTarget(hwnd)) return L"";
+	// 全局热键（AI 对话是 Alt+I）触发时，用户多半还按着那个组合里的修饰键 —— WM_HOTKEY
+	// 一到我们就开始注入，那一下 Ctrl+C 落到目标窗口那里其实是 Ctrl+Alt+C：既不是复制，
+	// 还会把选中的文字替换掉（用户看到的就是"选中的内容变成了一个 C"）。所以先等修饰键
+	// 松开；等不到（一直按着不放）这次就先不取 —— 宁可没内容，也不能把人家正在编辑的
+	// 文字改坏
+	if (!waitModifiersReleased(800)) return L"";
 	// Ctrl+C 会盖掉剪贴板，先把原来那份存下来 —— 用户很可能刚拷了东西正等着粘
 	int prevW{ 0 }, prevH{ 0 };
 	std::wstring prevText;

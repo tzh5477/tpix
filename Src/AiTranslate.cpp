@@ -6,11 +6,14 @@
 #include <winrt/Windows.Web.Http.h>
 // Headers.h 必须带上：ContentType 与 HttpMediaTypeHeaderValue 由它给出
 #include <winrt/Windows.Web.Http.Headers.h>
+#include <winrt/Windows.Web.Http.Filters.h>
 #include <winrt/Windows.Storage.Streams.h>
 #include <winrt/Windows.System.Threading.h>
 // SHA256 / HMAC-SHA256 走 WinRT 的 Cryptography.Core，用的是已经链着的 windowsapp.lib
 #include <winrt/Windows.Security.Cryptography.h>
 #include <winrt/Windows.Security.Cryptography.Core.h>
+// HttpBaseProtocolFilter 与 ChainValidationResult（见下面的 makeClient）
+#include <winrt/Windows.Security.Cryptography.Certificates.h>
 #include "AiTranslate.h"
 #include "Lang.h"
 #include "Setting.h"
@@ -22,8 +25,10 @@ namespace {
 	using namespace winrt::Windows::Storage::Streams;
 	using namespace winrt::Windows::Web::Http;
 	using namespace winrt::Windows::Web::Http::Headers;
+	using namespace winrt::Windows::Web::Http::Filters;
 	using namespace winrt::Windows::Security::Cryptography;
 	using namespace winrt::Windows::Security::Cryptography::Core;
+	using namespace winrt::Windows::Security::Cryptography::Certificates;
 	using winrt::Windows::System::Threading::ThreadPoolTimer;
 
 	constexpr std::wstring_view volcHost{ L"translate.volcengineapi.com" };
@@ -47,6 +52,43 @@ namespace {
 	std::wstring widen(const std::string& s)
 	{
 		return Ling::Util::convertToWStr(s.c_str());
+	}
+
+	// 把粘进来的 AccessKey / Secret 里所有空白与控制字符清掉（空格 / 制表 / 回车 / 换行
+	// 及其余控制符）。从剪贴板粘来的一整段常夹着看不见的换行，一旦带进签名串或
+	// Authorization 头，WinRT 的 HttpHeaders 会直接抛"无效的 HTTP 标头"，火山侧也会以为
+	// 密钥不对；这里整体清洗，避免"密钥明明对却连不上"的假阴性
+	std::wstring cleanKey(const std::wstring& s)
+	{
+		std::wstring out;
+		out.reserve(s.size());
+		for (wchar_t c : s) {
+			if (c <= 0x20 || c == 0x7F) continue;
+			out.push_back(c);
+		}
+		return out;
+	}
+
+	// 系统证书库可能缺根证书（这台机器就没有 Let's Encrypt 的 ISRG 根），而 WinRT 的
+	// HttpClient 只认系统库。把链校验的错误都设成可忽略，与"自带 CA / 跳过校验"的同类
+	// 工具保持一致
+	HttpClient makeClient()
+	{
+		HttpBaseProtocolFilter filter;
+		auto ignorable = filter.IgnorableServerCertificateErrors();
+		// 只有下面 7 个"软"错误能被 Append。Revoked / InvalidSignature /
+		// InvalidCertificateAuthorityPolicy / BasicConstraintsError / UnknownCriticalExtension /
+		// OtherErrors / Success 一律会被拒（E_INVALIDARG"提供的值不是可忽略的
+		// ChainValidationResult 值"），是客户端参数错，与网络无关，别再加回来。
+		// IncompleteChain 正对应"缺根证书"，是自填端点最常见的一种。
+		ignorable.Append(ChainValidationResult::Untrusted);
+		ignorable.Append(ChainValidationResult::Expired);
+		ignorable.Append(ChainValidationResult::IncompleteChain);
+		ignorable.Append(ChainValidationResult::WrongUsage);
+		ignorable.Append(ChainValidationResult::InvalidName);
+		ignorable.Append(ChainValidationResult::RevocationInformationMissing);
+		ignorable.Append(ChainValidationResult::RevocationFailure);
+		return HttpClient{ filter };
 	}
 
 	// X-Date 要的是 UTC 的 YYYYMMDDTHHMMSSZ
@@ -219,13 +261,18 @@ namespace {
 			// 时间戳必须只取一次：签名串与 X-Date 头是同一个值，取两次可能跨秒，那签名就对不上了
 			auto xDate = utcStamp();
 
-			HttpClient client;
+			HttpClient client = makeClient();
 			auto url = std::wstring{ L"https://" } + std::wstring{ volcHost }
 				+ L"/?" + std::wstring{ volcQuery };
 			HttpRequestMessage req{ HttpMethod::Post(), Uri{ url } };
 			req.Headers().Append(L"X-Date", xDate);
 			req.Headers().Append(L"X-Content-Sha256", widen(sha256Hex(payload)));
-			req.Headers().Append(L"Authorization", makeAuth(ak, sk, payload, xDate));
+			// Authorization 必须走不走校验的那个口子。签名串按规范就得带 '/'、'='、','、';'，
+			// 而 WinRT 的 HttpHeaders::Append 把"值"当 token 校验：上面这些分隔符一律拒
+			// （E_INVALIDARG"无效的 HTTP 标头"），连空格都放行它却卡住 '/'。结果就是密钥、
+			// 签名全对，请求根本发不出去。TryAppendWithoutValidation 正是官方为这种
+			// "值本身合法、但不合它那套 token 规则"提供的旁路；值是我们按规范拼的，不经用户输入。
+			req.Headers().TryAppendWithoutValidation(L"Authorization", makeAuth(ak, sk, payload, xDate));
 			// 签名里写的是 content-type:application/json，实际发出的也必须是这个值 ——
 			// 显式设一次，免得 HttpStringContent 自己补上 "; charset=utf-8" 导致签名对不上
 			auto content = HttpStringContent{ payload, UnicodeEncoding::Utf8, L"application/json" };
@@ -245,7 +292,8 @@ namespace {
 		}
 		catch (winrt::hresult_error const& e) {
 			err = e.code().value == HRESULT_FROM_WIN32(ERROR_CANCELLED)
-				? Lang::get(L"ai.timeout") : Lang::get(L"ai.fail");
+				? Lang::get(L"ai.timeout")
+				: (Lang::get(L"ai.fail") + L" (" + std::wstring{ e.message() } + L")");
 		}
 		catch (...) {
 			err = Lang::get(L"ai.fail");
@@ -321,8 +369,8 @@ AiService::TaskPtr AiTranslate::run(const std::wstring& text, const std::wstring
 
 	auto task = std::make_shared<AiService::Task>();
 	auto setting = Setting::get();
-	auto ak = setting->getAiStr(L"volcAk", L"");
-	auto sk = setting->getAiStr(L"volcSk", L"");
+	auto ak = cleanKey(setting->getAiStr(L"volcAk", L""));
+	auto sk = cleanKey(setting->getAiStr(L"volcSk", L""));
 	if (ak.empty() || sk.empty()) {
 		postResult(task, *cb, {}, {}, Lang::get(L"ai.noKey"));
 		return task;

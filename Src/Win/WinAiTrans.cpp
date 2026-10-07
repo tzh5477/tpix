@@ -8,6 +8,21 @@
 
 namespace {
 	std::unique_ptr<WinAiTrans> winAiTrans;
+
+	// 判断原文是不是中文。不能只扫"有没有汉字"——日文里本来就夹着汉字，那样会把日文
+	// 当成中文；有假名或谚文就一律判成非中文，剩下有汉字的才算中文
+	bool looksChinese(const std::wstring& text)
+	{
+		bool hasHan{ false };
+		for (const wchar_t c : text) {
+			if ((c >= 0x3040 && c <= 0x30FF) ||    // 平假名 / 片假名
+				(c >= 0xAC00 && c <= 0xD7AF) ||    // 谚文音节
+				(c >= 0x1100 && c <= 0x11FF))      // 谚文字母
+				return false;
+			if ((c >= 0x4E00 && c <= 0x9FFF) || (c >= 0x3400 && c <= 0x4DBF)) hasHan = true;
+		}
+		return hasHan;
+	}
 }
 
 WinAiTrans::WinAiTrans() : Ling::WinBase()
@@ -32,10 +47,7 @@ void WinAiTrans::init(const std::wstring& preset)
 {
 	if (winAiTrans) {
 		if (winAiTrans->hwnd && IsWindow(winAiTrans->hwnd)) {
-			if (!preset.empty()) {
-				winAiTrans->input->setText(preset);
-				winAiTrans->run();
-			}
+			winAiTrans->applyPreset(preset);
 			winAiTrans->show();
 			SetForegroundWindow(winAiTrans->hwnd);
 			return;
@@ -43,8 +55,18 @@ void WinAiTrans::init(const std::wstring& preset)
 		winAiTrans.reset();
 	}
 	winAiTrans.reset(new WinAiTrans());
-	winAiTrans->presetText = preset;
+	// 填预设必须排在构造之后：控件是在 onCreated 里建出来的，而在构造函数里就
+	// createNativeWindow 把 onCreated 跑完了 —— 构造前存一份成员变量的老写法，
+	// 读到它的时候永远是空的，"带原文进来"从来就没生效过
+	winAiTrans->applyPreset(preset);
 	if (winAiTrans->hwnd) SetForegroundWindow(winAiTrans->hwnd);
+}
+
+void WinAiTrans::applyPreset(const std::wstring& text)
+{
+	if (text.empty()) return;
+	input->setText(text);
+	run();
 }
 
 void WinAiTrans::dispose()
@@ -186,18 +208,16 @@ void WinAiTrans::onCreated()
 	statusLabel->setFontSize(12.f);
 	statusLabel->setColor(0x888888FF);
 
-	// 结果区。译文可能很长，套一层滚动容器；里面只是个 Label，没有可点控件，
-	// 不存在"命中坐标要减滚动量"那回事
-	auto scroller = body->makeChild<Ling::ScrollerBox>();
-	scroller->setFlexGrow(1.f);
-	scroller->setWidthPercent(100.f);
-	scroller->setMarginTop(8.f);
-	resultLabel = scroller->makeChild<Ling::Label>();
-	resultLabel->setWidthPercent(100.f);
-	resultLabel->setFontSize(14.f);
-	resultLabel->setPadding(10.f, 8.f, 10.f, 8.f);
-	resultLabel->setBg(0xF7F7F9FF);
-	resultLabel->setBorderRadius(6.f);
+	// 结果区。用 TextBox 而不是 Label：Label 既不会折行、也没法选中一段来复制，
+	// 而译文常常很长。滚动由 TextBox 自己带，不必再套 ScrollerBox
+	resultBox = body->makeChild<Ling::TextBox>();
+	resultBox->setFlexGrow(1.f);
+	resultBox->setWidthPercent(100.f);
+	resultBox->setMarginTop(8.f);
+	resultBox->setFontSize(14.f);
+	resultBox->setPadding(10.f, 8.f, 10.f, 8.f);
+	resultBox->setBg(0xF7F7F9FF);
+	resultBox->setBorderRadius(6.f);
 
 	auto setting = Setting::get();
 	auto& langs = AiTranslate::langs();
@@ -210,12 +230,6 @@ void WinAiTrans::onCreated()
 	// 目标语言被存成了 auto（手改过配置）时兜一下，否则会拿到一个不存在的选项
 	if (toIdx == 0 && langs.size() > 1) toIdx = 1;
 	applyLangBtns();
-
-	if (!presetText.empty()) {
-		input->setText(presetText);
-		presetText.clear();
-		run();
-	}
 }
 
 LRESULT WinAiTrans::onHitTest(const POINT pos)
@@ -249,9 +263,18 @@ std::wstring WinAiTrans::toCode() const
 	return (toIdx >= 0 && toIdx < static_cast<int>(langs.size())) ? langs[toIdx].code : L"zh";
 }
 
+void WinAiTrans::setToLang(const std::wstring& code)
+{
+	auto& langs = AiTranslate::langs();
+	for (int i = 0; i < static_cast<int>(langs.size()); ++i) {
+		if (langs[i].code == code) { toIdx = i; break; }
+	}
+	applyLangBtns();
+}
+
 void WinAiTrans::refreshResult(const std::wstring& text)
 {
-	resultLabel->setText(text);
+	resultBox->setText(text);
 }
 
 void WinAiTrans::setBusy(const bool on)
@@ -269,6 +292,13 @@ void WinAiTrans::run()
 	if (text.empty()) {
 		statusLabel->setText(Lang::get(L"ai.transEmpty"));
 		return;
+	}
+	// 源语言是"自动检测"时，目标语言由原文定：中文→英语，非中文→中文。
+	// 只在"目标正好是原文语言"时才换一下（那样译出来等于原文，没有意义），
+	// 用户自己选的目标（比如英→日）不动它
+	if (fromCode() == L"auto") {
+		const std::wstring src{ looksChinese(text) ? L"zh" : L"en" };
+		if (toCode() == src) setToLang(src == L"zh" ? L"en" : L"zh");
 	}
 	if (!AiTranslate::ready()) {
 		statusLabel->setText(Lang::get(L"ai.noKey"));

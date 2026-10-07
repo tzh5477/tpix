@@ -19,7 +19,12 @@ private:
 	WinAiTrans();
 	void onCreated() override;
 	LRESULT onHitTest(const POINT pos) override;
+	// 带进来的原文（截屏取词 / 选中文本的快捷键）。必须在构造之后调 ——
+	// 控件是在 onCreated 里建出来的，而 onCreated 在构造函数里就跑完了
+	void applyPreset(const std::wstring& text);
 	void applyLangBtns();
+	// 把目标语言切到 code 并同步按钮显示（"自动检测"推出的目标语言走这里）
+	void setToLang(const std::wstring& code);
 	void refreshResult(const std::wstring& text);
 	void run();
 	void setBusy(bool on);
@@ -31,7 +36,9 @@ private:
 	int fromIdx{ 0 };
 	int toIdx{ 0 };
 	Ling::TextBox* input{ nullptr };
-	Ling::Label* resultLabel{ nullptr };
+	// 译文区也是个 TextBox 而不是 Label：Label 不折行、也没法选中，
+	// 而译文经常很长、用户还想抠其中一段
+	Ling::TextBox* resultBox{ nullptr };
 	Ling::Label* statusLabel{ nullptr };
 	Ling::Button* fromBtn{ nullptr };
 	Ling::Button* toBtn{ nullptr };
@@ -39,8 +46,6 @@ private:
 	AiService::TaskPtr task{ nullptr };
 	bool busy{ false };
 	std::wstring result;
-	// 窗口构造之后才能填进输入框（控件在 onCreated 里才建出来），所以先存在这里
-	std::wstring presetText;
 	// 窗口关掉之后迟到的回调不能再碰这些节点（收尾回调是"取消也照送"的）
 	std::shared_ptr<bool> alive{ std::make_shared<bool>(true) };
 };

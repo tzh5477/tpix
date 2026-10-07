@@ -66,6 +66,11 @@ AiHistory* AiHistory::get()
 	return aiHistory.get();
 }
 
+long long AiHistory::now()
+{
+	return nowMs();
+}
+
 AiHistory::AiHistory()
 {
 	dir = Setting::get()->getDataPath() / L"ai";
@@ -98,9 +103,37 @@ void AiHistory::append(const long long id, const Msg& msg)
 	auto it = std::ranges::find(sessions, id, &Session::id);
 	if (it == sessions.end()) return;
 	if (it->title.empty() && msg.role == AiService::Role::User) it->title = makeTitle(msg.content);
-	// 只存 role + content：图不落盘也不留在内存里（一张满屏截图的 base64 有几 MB）
-	it->msgs.push_back(Msg{ msg.role, msg.content });
+	// 只存 role + content（外加显示用的时间戳）：图不落盘也不留在内存里
+	// （一张满屏截图的 base64 有几 MB）
+	Msg stored{ msg.role, msg.content };
+	stored.time = msg.time > 0 ? msg.time : nowMs();
+	it->msgs.push_back(std::move(stored));
 	it->time = nowMs();
+	save();
+}
+
+void AiHistory::setMsgs(const long long id, const std::vector<Msg>& msgs)
+{
+	auto it = std::ranges::find(sessions, id, &Session::id);
+	if (it == sessions.end()) return;
+	it->msgs = msgs;
+	// 标题跟着第一条用户消息重算：把开着的那条问题删掉之后，列表里不该还挂着它的标题
+	it->title.clear();
+	for (auto& msg : it->msgs) {
+		if (msg.role == AiService::Role::User) {
+			it->title = makeTitle(msg.content);
+			break;
+		}
+	}
+	save();
+}
+
+void AiHistory::rename(const long long id, const std::wstring& title)
+{
+	auto it = std::ranges::find(sessions, id, &Session::id);
+	if (it == sessions.end()) return;
+	if (it->title == title) return;
+	it->title = title;
 	save();
 }
 
@@ -160,6 +193,8 @@ void AiHistory::load()
 				msg.role = roleFromNum(mo.GetNamedNumber(L"role", 1.0));
 				msg.content = std::wstring{ mo.GetNamedString(L"content", L"") };
 				if (msg.content.empty()) continue;
+				// 老文件里没有 t（那时还没记时间），读出来是 0 —— 界面上按"时间未知"处理
+				msg.time = static_cast<long long>(mo.GetNamedNumber(L"t", 0.0));
 				s.msgs.push_back(std::move(msg));
 			}
 		}
@@ -193,6 +228,7 @@ void AiHistory::save()
 			JsonObject mo;
 			mo.SetNamedValue(L"role", JsonValue::CreateNumberValue((double)roleNum(msg.role)));
 			mo.SetNamedValue(L"content", JsonValue::CreateStringValue(msg.content));
+			mo.SetNamedValue(L"t", JsonValue::CreateNumberValue(static_cast<double>(msg.time)));
 			msgs.Append(mo);
 		}
 		one.SetNamedValue(L"msgs", msgs);

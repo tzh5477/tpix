@@ -22,6 +22,9 @@ public:
 		//    全部塞进 history.json 会把那个文件撑到看不懂的大小
 		std::vector<BYTE> image;
 		int imgW{ 0 }, imgH{ 0 };
+		// 这条消息产生的时刻（毫秒时间戳，0 = 未知）。只给界面显示用，不发出去 ——
+		// 请求体里每条消息只有 role + content
+		long long time{ 0 };
 	};
 	// 一次请求的控制柄。cancel 之后不再回调片段，但收尾回调照来（取消也是一次收尾）——
 	// UI 靠它解锁输入框，不必自己判断到底成没成。

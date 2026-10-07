@@ -10,7 +10,10 @@ namespace
 	// 自绘项（线条那几个样例图）另有更窄的一条下限：样例画的就一条线，用不着 120 那么宽，
 	// 而那条列表比它上面那块 42 宽的按钮宽出快两倍，摆在一起很突兀
 	constexpr float itemH{ 30.f };
-	constexpr float listMaxH{ 320.f };
+	// 列表最高多少（再高就滚动）。原来 320 只装得下 10.7 项，而模型列表一屏就有 12 个：
+	// 最后一项被裁在可视区外，点不到它、往下指也只会选中倒数第二项。放到 460（≈15 项），
+	// 再把高度夹在显示器工作区之内，就不会有"屏幕外那一截"
+	constexpr float listMaxH{ 460.f };
 	constexpr float listMinW{ 120.f };
 	constexpr float sampleListMinW{ 60.f };
 
@@ -192,6 +195,8 @@ void SelectPopup::show(Ling::WinBase* owner, Ling::Node* anchor,
 	POINT anchorPt{ (int)(ox + anchor->x + anchor->w / 2.f), (int)(oy + anchor->y + anchor->h / 2.f) };
 	MONITORINFO mi{ sizeof(mi) };
 	GetMonitorInfo(MonitorFromPoint(anchorPt, MONITOR_DEFAULTTONEAREST), &mi);
+	// 高度还得夹在工作区内：超出去的那一截落在屏幕外，鼠标够不到，等于那一项不存在
+	listH = std::min(listH, (float)(mi.rcWork.bottom - mi.rcWork.top) / dpi);
 	auto top = (int)(oy + anchor->y + anchor->h);
 	if (top + (int)(listH * dpi) > mi.rcWork.bottom) top = (int)(oy + anchor->y - listH * dpi);
 	auto left = (int)(ox + anchor->x);

@@ -28,10 +28,17 @@ public:
 	static void init();
 	static void dispose();
 	static AiHistory* get();
+	// 现在（毫秒时间戳）。消息上的时间戳由调用方打好再交进来（界面要立刻拿到它显示，
+	// 不能等 append 内部自己填）
+	static long long now();
 	// 开一个空会话，返回 id。标题要等第一条用户消息进来才有，列表里先显示占位
 	long long create();
 	// 追加一条消息。会话不存在、或内容为空则什么都不做（空回答不该在历史里留一个空气泡）
 	void append(long long id, const Msg& msg);
+	// 整体覆盖一个会话的消息。删掉某一轮对话（问题 + 对应的回答）之后用它写回
+	void setMsgs(long long id, const std::vector<Msg>& msgs);
+	// 改名。传空串表示清掉标题，列表里会退回占位文案
+	void rename(long long id, const std::wstring& title);
 	void remove(long long id);
 	// 全清，磁盘文件一起删掉
 	void clear();
