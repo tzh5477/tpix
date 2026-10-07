@@ -435,6 +435,16 @@ void ShapeRectBase::applyStyle()
 	isFill = toolSub->getCurrentFill();
 }
 
+// 批量旋转：绕外部中心刚体转。位置那一步走 translate（马赛克 / 擦除那几个覆写的会顺手
+// 把位图重算一遍），角度这一步只改 angle —— 马赛克的取样区域与角度无关，paint 时统一叠旋转
+void ShapeRectBase::rotateBy(const float deg, const D2D1_POINT_2F& center)
+{
+	auto rc = rectCenter();
+	auto nr = rotatePoint(rc, center, deg);
+	translate(nr.x - rc.x, nr.y - rc.y);
+	angle += deg;
+}
+
 void ShapeRectBase::paintActionIcon(ID2D1DeviceContext* ctx, const int i, const D2D1_POINT_2F& c,
 	const float rad, ID2D1Brush* brush, const float strokeW)
 {

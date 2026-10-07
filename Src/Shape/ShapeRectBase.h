@@ -32,6 +32,8 @@ public:
 	bool getShapeBounds(D2D1_RECT_F& out) const override;
 	// 工具条上的颜色 / 线宽 / 填充改了，重新取一遍
 	void applyStyle() override;
+	// 批量旋转（见 ShapeBase::rotateBy）：位置绕 center 转 + 自身角度加 deg
+	void rotateBy(const float deg, const D2D1_POINT_2F& center) override;
 	// 矩形/圆之间互转的那一枚图标。马赛克与擦除同样从这个基类派生，
 	// 它们没有"换个形状"这回事，所以由 allowShapeToggle 分开
 	int actionCount() const override { return allowShapeToggle ? 1 : 0; }

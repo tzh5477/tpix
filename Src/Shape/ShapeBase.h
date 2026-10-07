@@ -62,6 +62,12 @@ public:
 	// 马赛克那几支的善后（以及 translate 里的重算）要按宿主回读画面，
 	// 宿主还指着已经关掉的那个窗口就是访问违例
 	virtual std::unique_ptr<ShapeBase> clone(const float dx, const float dy, Canvas* target = nullptr) const { return nullptr; }
+	// 批量移动：整块挪 (dx, dy)。translate 是 protected，而 WinPin 的"批量拖动多选那一批"
+	// 是从外面逐个调的，得有一个口子
+	void moveBy(const float dx, const float dy) { translate(dx, dy); }
+	// 批量旋转：绕世界坐标 center 刚体转 deg 度（顺时针为正）。有"角度"这个概念的元素覆写
+	//（矩形族 / 文本）；线条、箭头、序号没有这一项，留空 —— 批量旋转直接跳过它们
+	virtual void rotateBy(const float deg, const D2D1_POINT_2F& center) {}
 	// 整排图标的枚数（含末尾那枚 × 与左上角那枚复制）
 	int actionBtnTotal() const { return actionCount() + (copyable() ? 2 : 1); }
 	// 第 i 枚图标的方框（底图坐标）。末尾那枚是右上角的 ×，actionCount() 那枚是左上角的

@@ -64,6 +64,16 @@ D2D1_POINT_2F ShapeText::center() const
 	return { (rect.left + rect.right) / 2.f, (rect.top + rect.bottom) / 2.f };
 }
 
+// 批量旋转：位置绕 center 转 + 自身角度加 deg。刻意不先 finishEdit —— 空文本收尾会把
+// 自己从 history 里删掉，而调用方正拿着 multiSelected 里的裸指针在遍历
+void ShapeText::rotateBy(const float deg, const D2D1_POINT_2F& c)
+{
+	auto rc = center();
+	auto nr = rotatePoint(rc, c, deg);
+	translate(nr.x - rc.x, nr.y - rc.y);
+	angle += deg;
+}
+
 void ShapeText::fitRectToText()
 {
 	if (!textLayout) return;

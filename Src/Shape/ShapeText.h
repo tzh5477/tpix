@@ -38,6 +38,8 @@ public:
 	void finishEditing() override { finishEdit(); }
 	// ToolSub 上的颜色/字号/粗斜体变了，编辑中的话立即生效
 	void applyStyle() override;
+	// 批量旋转（见 ShapeBase::rotateBy）：位置绕 center 转 + 自身角度加 deg
+	void rotateBy(const float deg, const D2D1_POINT_2F& center) override;
 	// 右上角关闭按钮要用：文本的外接矩形就是那圈虚线框
 	bool getShapeBounds(D2D1_RECT_F& out) const override;
 	// 复制（见 ShapeBase::clone）
