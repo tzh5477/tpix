@@ -7,6 +7,7 @@
 
 class ToolMain;
 class ToolSub;
+class ToolPinSide;
 class ShapeBase;
 class ShapeText;
 class ShapeNumber;
@@ -19,7 +20,8 @@ public:
 	// 藏到屏幕的哪一条边上，对应 PinHiddenBar 的两扇窗。点「隐藏」按钮藏的一律走 Left
 	//（作者最早要的形态就是左上角那几条竖线）；拖到屏幕左边 / 顶边释放时按拖到的那条边记下来
 	enum class BarEdge { Left, Top };
-	// toolId 非空时，贴图窗口一打开就预选该标注工具（由 ToolCap 上的标注按钮直达进来）
+	// toolId 非空时，贴图窗口一打开就预选该标注工具。截图那条路框完选区就直接这么进来
+	//（预选 rect —— 框完就能画），所以用户看到的顺序是"框选 → 已经是编辑态"
 	static void init(int x, int y, int w, int h, const std::wstring& toolId = L"");
 	// 底图不来自 WinCap 的截屏，而是外部给的一块 BGRA、top-down、行紧凑（步长 = w*4）像素。
 	// 滚动截图（WinLong）拼出来的长图走这条路进贴图窗口。
@@ -54,6 +56,18 @@ public:
 	void copyToClipboard();
 	// 弹另存为对话框，把合成结果存成 PNG，成功即关窗；用户取消或失败则保持窗口
 	void saveToFile();
+	// ---- 右边缘那条竖排（ToolPinSide）上的四个动作 ----
+	// 长截图 / 录屏：**另起一次截图流程**去处理，当前这张不参与。
+	// "不参与"是字面意思 —— 先把自己收进屏幕边上的书签条（窗口、底图、标注一概不动，
+	// 见 setHidden），再起新任务。否则这张图会挡住新任务要截的那片屏幕、还会被录进去
+	void startLongTask();
+	void startVideoTask();
+	// 文本识别：对**当前这张图**跑一次 OCR，结果开在识别窗里（可复制 / 换语言 / 表格模式）。
+	// 与「选文」不是一回事：选文是在图上直接选字，这里是把文字整篇抽出来。
+	// 用的是底图像素而不是合成结果 —— 标注压在字上只会给识别添乱
+	void ocrToWindow();
+	// 二维码识别：同样在当前这张图上解，解出来弹窗问要不要复制（与截图界面那一枚一致）
+	void decodeQr();
 	// 所有 ShapeText 共用的文本输入框，第一次用到时才建。
 	// 共用而不是一个 shape 一个：TextBox 构造时会往窗口的十来个事件上挂回调，
 	// N 个实例意味着每次鼠标移动都要跑 N 遍，而同一时刻只可能有一个 ShapeText 在编辑。
@@ -114,6 +128,10 @@ public:
 	float scale{ 1.f };
 	std::unique_ptr<ToolMain> toolMain;
 	std::unique_ptr<ToolSub> toolSub;
+	// 编辑区右边缘外那条竖排（长截图 / 录屏 / 文本识别 / 二维码识别）。
+	// 与上面两条一样是独立顶层窗口，凡是 show / hide / close / 重排都得跟着处理 ——
+	// 那几处的入口都收在 setSideBarVisible 上
+	std::unique_ptr<ToolPinSide> sideBar;
 	// 本次按下之后光标有没有真的移动过。判"按下马上弹起"只认这个，
 	// 不去看各 shape 的几何 —— 那些成员的初值状态不一，不可靠
 	bool hasDragged{ false };
@@ -170,9 +188,13 @@ private:
 	// ESC 的"退一步"：先退出当前操作（收起画笔 / 放掉选中），返回是否已经消费掉这一次 ESC。
 	// 返回 false 表示已经没什么可退的了，调用方接着才关窗。已画下的标注一概不动
 	bool stepBack();
-	// 把两条工具条重新提到 topmost 组的最前面。工具条比 WinPin 先建窗口，
+	// 把三条工具条一起提到 topmost 组的最前面。工具条比 WinPin 先建窗口，
 	// 而 topmost 组内后建者在上 —— 两者重叠时（全屏贴图的 overlay 模式）工具条会被底图整条盖住
 	void raiseTools();
+	// 右边缘那条竖排的收 / 放。它与下面两条工具条同生共死（都是独立顶层窗口），
+	// 而"收放工具条"在窗口拖拽、右键、空格、缩略图、贴边细条、藏进书签条这些路上有十来处 ——
+	// 散着写必漏一处，统一收在这一个口子上
+	void setSideBarVisible(bool on);
 	// 自己认双击（窗口类没带 CS_DBLCLKS）。比的是屏幕坐标，见实现里的说明。
 	// 认一次就把 lastDownTime / lastDownPos 更新掉，所以同一次点击只能问一次
 	bool takeDoubleClick();
@@ -296,6 +318,9 @@ private:
 	// 上一次 layoutTools 算出来的是不是"工具条落在 WinPin 内部"（overlay）模式。
 	// 重叠状态一变就得把工具条重新提到最前面，见 raiseTools
 	bool toolsOverlay{ false };
+	// 右边缘那条竖排压在窗口上（窗口大到两边都摆不下，被夹回窗口内才会发生）时置位。
+	// 与 toolsOverlay 同一套：状态一变才提一次，不然每挪一次窗口就白调一次 SetWindowPos
+	bool sideBarOverlapping{ false };
 	int savedX{ 0 }, savedY{ 0 }, savedW{ 0 }, savedH{ 0 };
 	// 缩略图模式下画底图用的倍数。0 表示不在缩略图模式，此时用 scale
 	float thumbScale{ 0.f };

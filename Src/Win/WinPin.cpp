@@ -5,6 +5,7 @@
 #include "../Canvas.h"
 #include "../Tool/ToolMain.h"
 #include "../Tool/ToolSub.h"
+#include "../Tool/ToolPinSide.h"
 #include "../Shape/ShapeBase.h"
 #include "../Shape/ShapeText.h"
 #include "../Shape/ShapeImage.h"
@@ -24,6 +25,7 @@
 #include "../ShotHistory.h"
 #include "WinWatermarkPanel.h"
 #include "WinWatermarkText.h"
+#include "WinOcr.h"
 
 using namespace Microsoft::WRL;
 using namespace winrt::Windows::Data::Json;
@@ -123,6 +125,10 @@ WinPin::WinPin(int x, int y, int w, int h, const std::vector<BYTE>* data, const 
 	}
 	toolMain = std::make_unique<ToolMain>(this);
     toolSub = std::make_unique<ToolSub>(this);
+	// 右边缘那条竖排（长截图 / 录屏 / 文本识别 / 二维码识别）。也在本窗口之前建 ——
+	// 它落在窗口外面，不受"topmost 组内后建者在上"这条影响；真被夹进窗口里那一下由
+	// layoutTools 单独提层级（见那里 sideBarOverlapping 的说明）
+	sideBar = std::make_unique<ToolPinSide>(this);
 	// 预选工具排在两条工具条都建好之后：selectTool 会按工具配出 ToolSub 的内容再重排整组
 	if (!initToolId.empty()) {
 		toolMain->selectTool(initToolId);
@@ -211,6 +217,7 @@ void WinPin::onClosed()
 	// 而 history 现在归 drawing 所有（与 WinPin 同生共死），留着悬空指针没意义
 	if (toolSub) toolSub->close();
 	if (toolMain) toolMain->close();
+	if (sideBar) sideBar->close();
 	drawing->shapeHover = nullptr;
 	drawing->selected = nullptr;
 	editingShape = nullptr;
@@ -475,6 +482,8 @@ void WinPin::setThumbMode(bool on)
 			toolsHiddenByThumb = true;
 			toolMain->hide();
 			toolSub->hideTools();
+			// 右侧那条竖排比缩略图还高，一并收掉（理由同上一行）
+			setSideBarVisible(false);
 		}
 	}
 	else {
@@ -489,6 +498,7 @@ void WinPin::setThumbMode(bool on)
 			// 子工具条就再也回不来了 —— 正是"工具栏自己藏起来不见了"的一种
 			toolMain->refreshToolSub();
 			toolMain->show();
+			setSideBarVisible(true);
 		}
 		layoutTools();
 	}
@@ -1371,6 +1381,7 @@ void WinPin::setHidden(bool on, BarEdge edge)
 		toolsWereVisible = isToolsVisible();
 		toolMain->hide();
 		toolSub->hideTools();
+		setSideBarVisible(false);
 		hide();
 	}
 	else {
@@ -1382,6 +1393,7 @@ void WinPin::setHidden(bool on, BarEdge edge)
 			// hideTools 把 ToolSub 的内容一并作废了，按当前工具重建一遍才出得来。
 			// curId 为空时它自己就返回（那时候本来也没有子面板）
 			toolMain->refreshToolSub();
+			setSideBarVisible(true);
 		}
 		layoutTools();
 		refresh();
@@ -1399,6 +1411,7 @@ void WinPin::peek(bool on)
 		if (toolsWereVisible) {
 			toolMain->show();
 			toolMain->refreshToolSub();
+			setSideBarVisible(true);
 		}
 		layoutTools();
 		// 工具条要压在贴图上（全屏贴图那种重叠摆法），而 show() 把本窗口提到了 topmost
@@ -1409,6 +1422,7 @@ void WinPin::peek(bool on)
 	else {
 		toolMain->hide();
 		toolSub->hideTools();
+		setSideBarVisible(false);
 		hide();
 	}
 }
@@ -1553,6 +1567,31 @@ void WinPin::layoutTools()
 	else {
 		toolSub->hideTools();
 	}
+	// 右边缘外那条竖排（长截图 / 录屏 / 文本识别 / 二维码识别）：顶边与窗口对齐，
+	// 右侧摆不下（窗口贴着屏幕右边缘时必然如此）就换到左边，上下左右都夹进工作区 ——
+	// 与下面那两条同一套规矩（原先挂在截图界面时就是"右边放不下换左边"）
+	if (sideBar) {
+		const float barW = sideBar->w, barH = sideBar->h;
+		float barX = (float)winRect.right + gap;
+		if ((float)wa.right - winRect.right < gap + barW) {
+			barX = (float)winRect.left - gap - barW;
+		}
+		const auto posX = clampPos(barX, barW, wa.left, wa.right);
+		const auto posY = clampPos((float)winRect.top, barH, wa.top, wa.bottom);
+		sideBar->setPosition(posX, posY);
+		// 两边都摆不下时会被夹回窗口里面，那一段得压在最上面 —— 否则被底图整条盖住。
+		// 与下面 toolsOverlay 同一套：状态一变才提一次，本函数在拖窗口 / 调尺寸时
+		// 每个鼠标事件都要跑一遍，白调一次 SetWindowPos 就是白等一次
+		const bool overlapping = posX < winRect.right && posX + (int)barW > winRect.left
+			&& posY < winRect.bottom && posY + (int)barH > winRect.top;
+		if (overlapping != sideBarOverlapping) {
+			sideBarOverlapping = overlapping;
+			if (overlapping && sideBar->hwnd) {
+				SetWindowPos(sideBar->hwnd, HWND_TOPMOST, 0, 0, 0, 0,
+					SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+			}
+		}
+	}
 	// 重叠模式下工具条压在底图里头。而本窗口的 hwnd 是在两条工具条之后才建的
 	//（ToolMain / ToolSub 在 WinPin 构造函数里就 createNativeWindow 了），
 	// topmost 组内后建者在上 —— 不提一次的话整条工具条被底图盖得干干净净，
@@ -1588,6 +1627,26 @@ void WinPin::raiseTools()
 		SetWindowPos(toolSub->hwnd, HWND_TOPMOST, 0, 0, 0, 0,
 			SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
 	}
+	if (sideBar && IsWindow(sideBar->hwnd) && IsWindowVisible(sideBar->hwnd)) {
+		SetWindowPos(sideBar->hwnd, HWND_TOPMOST, 0, 0, 0, 0,
+			SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+	}
+}
+
+// 右边缘那条竖排的收 / 放。它和下面两条工具条一样是独立顶层窗口，
+// "收放工具条"在这份文件里有十来处（拖窗口、右键、空格、缩略图、贴边细条、藏进书签条……），
+// 所以统一走这个口子，免得哪一处漏了 —— 漏了就是一排按钮孤零零浮在屏幕上
+void WinPin::setSideBarVisible(bool on)
+{
+	if (!sideBar) return;
+	if (!on) {
+		sideBar->hide();
+		return;
+	}
+	// 露出之前先按当前窗口位置摆一遍：收着的这段时间里窗口可能被拖走 / 缩放过，
+	// 而 layoutTools 里那段"位置没变就不惊动窗口管理器"的判断挡不住它早已偏掉的旧坐标
+	layoutTools();
+	sideBar->show();
 }
 
 bool WinPin::isToolsVisible() const
@@ -1911,6 +1970,7 @@ void WinPin::onDown(POINT pos, BOOL isRight)
 			layoutTools();
 			toolMain->refreshToolSub();
 			toolMain->show();
+			setSideBarVisible(true);
 			return;
 		}
 		// 显示着：清掉画笔选中态，把两条工具条一起收起来，只剩图本身。
@@ -1921,6 +1981,7 @@ void WinPin::onDown(POINT pos, BOOL isRight)
 		toolMain->cancelSelect();
 		toolMain->hide();
 		toolSub->hideTools();
+		setSideBarVisible(false);
 		return;
 	}
 	// 双击判定得自己做（Ling 的窗口类没带 CS_DBLCLKS，收不到 WM_LBUTTONDBLCLK）。
@@ -1975,6 +2036,7 @@ void WinPin::onDown(POINT pos, BOOL isRight)
 		toolsWereVisible = isToolsVisible();
 		winDragging = true;
 		toolMain->hide();
+		setSideBarVisible(false);
 		return;
 	}
 	// 以下都是交给 shape 的坐标，一律换算成底图像素（拖窗口那条路仍用窗口坐标）
@@ -2281,6 +2343,7 @@ void WinPin::onUp(POINT pos, BOOL isRight)
 		// layoutTools 里已经管了
 		layoutTools();
 		toolMain->show();
+		setSideBarVisible(true);
 	}
 	else if (drawing->shapeHover) {
 		// 新建的这一笔按下马上弹起，什么也没画出来：直接丢掉，
@@ -2489,6 +2552,73 @@ void WinPin::setTextSelect(bool on)
 	// 开关状态住在这一层（ESC、拿起标注工具、关窗都要复位它），按钮的外观得回报过去
 	toolMain->setToggle(L"textSelect", on);
 	refresh();
+}
+
+// ---- 右边缘那条竖排（ToolPinSide）上的四个动作 ----
+// 长截图 / 录屏：**另起一次截图流程**去处理，当前这张不参与。
+// 为什么要先把当前这张收起来：新任务是铺满整个桌面的截图窗口，这张图要是不让位，
+// 就会挡住用户要截的那片屏幕；录屏更直接 —— 它会连这张图一起录进去。
+// 收进屏幕边上的书签条而不是关掉：作者要的是"保留当前编辑的截图" ——
+// 位置、底图、标注一个都不动，长图 / 录屏做完鼠标移回那条书签上它就原样回来
+void WinPin::startLongTask()
+{
+	if (isClosed) return;
+	setHidden(true);
+	WinCap::init(L"long");
+}
+
+void WinPin::startVideoTask()
+{
+	if (isClosed) return;
+	setHidden(true);
+	WinCap::init(L"video");
+}
+
+// 文字识别：对当前这张图跑一次 OCR，结果开在识别窗里（可复制 / 换语言 / 表格模式）。
+// 与「选文」是两件事：选文是在图上直接选字、就地复制，这一枚是把整篇文字抽出来。
+// 取的是底图像素而不是合成结果 —— 标注压在字上只会给识别添乱
+void WinPin::ocrToWindow()
+{
+	if (isClosed) return;
+	std::vector<BYTE> pixels;
+	int w{ 0 }, h{ 0 };
+	if (!readBasePixels(pixels, w, h)) return;
+	// 系统装了 OCR 语言包就走内置引擎（与截图界面那一枚同一条判据）。
+	// 一个包都没装时内置引擎用不了，退回外部插件 —— 插件缺失时它会自己打开下载页，
+	// 所以不看返回值（见 Ocr.h 上那条约定）
+	if (!Ocr::isAvailable()) {
+		Util::openWithImageReader(w, h, pixels.data());
+		return;
+	}
+	WinOcr::init(std::move(pixels), w, h);
+}
+
+// 二维码识别：同样在当前这张图上解。解出来弹窗问要不要复制，解不出就提示一句 ——
+// 与截图界面那一枚的表现一致
+void WinPin::decodeQr()
+{
+	if (isClosed) return;
+	std::vector<BYTE> pixels;
+	int w{ 0 }, h{ 0 };
+	if (!readBasePixels(pixels, w, h)) return;
+	auto text = Util::decodeQrCode(w, h, pixels.data());
+	// 消息框是无主的普通层窗口，而本窗口与三条工具条都是 topmost。
+	// 截图界面那边是靠"先把窗口全藏起来"绕开的，这边不能藏（用户还要对着这张图看），
+	// 所以带 MB_TOPMOST 直接把框提到最上层；关掉之后再把本窗口这一组压回去
+	auto foregroundBeforeDialog = GetForegroundWindow();
+	auto title = Lang::get(L"about.sysTip");
+	if (text.empty()) {
+		MessageBox(nullptr, Lang::get(L"cap.qrcodeEmpty").data(), title.data(),
+			MB_OK | MB_ICONINFORMATION | MB_TOPMOST);
+	}
+	else {
+		auto tip = text + L"\n\n" + Lang::get(L"cap.qrcodeCopy");
+		if (MessageBox(nullptr, tip.data(), title.data(),
+			MB_OKCANCEL | MB_ICONINFORMATION | MB_TOPMOST) == IDOK) {
+			Ling::Util::setTextToClipboard(text);
+		}
+	}
+	restoreWindowState(foregroundBeforeDialog);
 }
 
 void WinPin::startOcr()
@@ -3409,8 +3539,8 @@ void WinPin::saveToFile()
 	}
 }
 
-// 另存为对话框关掉后会把 owner(hwnd) 变成活动窗口，WinPin 一被激活就会盖住 ToolMain。
-// 这里把三个窗口重新压到 topmost，并把前台还给开对话框之前的那个窗口。
+// 另存为对话框关掉后会把 owner(hwnd) 变成活动窗口，WinPin 一被激活就会盖住工具条。
+// 这里把几个窗口重新压到 topmost，并把前台还给开对话框之前的那个窗口。
 void WinPin::restoreWindowState(HWND foregroundBeforeDialog)
 {
 	SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
@@ -3419,6 +3549,9 @@ void WinPin::restoreWindowState(HWND foregroundBeforeDialog)
 	}
 	if (toolSub && toolSub->hwnd && IsWindowVisible(toolSub->hwnd)) {
 		SetWindowPos(toolSub->hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+	}
+	if (sideBar && sideBar->hwnd && IsWindowVisible(sideBar->hwnd)) {
+		SetWindowPos(sideBar->hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
 	}
 	if (foregroundBeforeDialog && foregroundBeforeDialog != hwnd && IsWindowVisible(foregroundBeforeDialog)) {
 		SetForegroundWindow(foregroundBeforeDialog);

@@ -111,6 +111,9 @@
     <ClCompile Include="Tool\ToolSub.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
+    <ClCompile Include="Tool\ToolPinSide.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
     <ClCompile Include="Shape\ShapeBase.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
@@ -307,6 +310,9 @@
       <Filter>头文件</Filter>
     </ClInclude>
     <ClInclude Include="Tool\ToolSub.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Tool\ToolPinSide.h">
       <Filter>头文件</Filter>
     </ClInclude>
     <ClInclude Include="Shape\ShapeBase.h">

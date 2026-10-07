@@ -2,12 +2,12 @@
 #include <include/Ling.h>
 
 class CutMask;
-class ToolCap;
-class ToolCapStage;
 class CapLong;
 class CapVideo;
-// 截图主窗口。铺满整个虚拟桌面，拖框结束后并不马上让位，而是留下来当宿主：
-// 选区可以继续调整，选区右下方摆一个 ToolCap，长图和录屏都挂在它身上。
+// 截图主窗口。铺满整个虚拟桌面，拖框结束就走人 —— 框完的那块图交给贴图（编辑）窗口，
+// 后面的标注、长图、录屏、文字识别、二维码都在那边接着做。
+// 留下的只有三种"另起一次流程"的入口：悬浮球的一键图标、命令行 --enter、
+// 以及编辑界面右侧那条竖排上的长图 / 录屏（它们用的是同一套）。
 class WinCap:public Ling::WinBase
 {
 public:
@@ -27,20 +27,17 @@ public:
 	// 一旦裁掉就补不回来，采样点往外拖时得从这张原图里把框外的画面取回来
 	Microsoft::WRL::ComPtr<ID2D1Bitmap1> getScreenImg() { return screenImg; }
 	// 工具条统一定位规则：右边与选区右边对齐，下方空间够就摆在选区右下方，
-	// 不够就摆右上方，上下都不够就盖在选区右下角内部（留一点边距）
+	// 不够就摆右上方，上下都不够就盖在选区右下角内部（留一点边距）。
+	// 现在只有长图 / 录屏那两条工具条（ToolLong / ToolVideo）还在用它
 	void layoutTool(Ling::WinBase* tool);
-	// 选区右边缘外那条竖排工具条的定位：与选区顶部对齐，右侧摆不下换左边，
-	// 上下都要夹在工作区内。CapLong 的工具条就是"右边放不下换左边"这套判断
-	void layoutToolSide(Ling::WinBase* tool);
 	// 整窗让出鼠标：录制中用户要能直接操作被录的应用
 	void setMouseTransparent(bool transparent);
 	// CapLong 开始滚动之前把选区抠成一个洞，滚轮消息才落得到底下的目标窗口上
 	void hollowWin();
 	void restoreWin();
 	// 下面都是给工具条用的门面 ————————————————
-	// ToolCap
-	// toolId 非空时，进贴图窗口的同时预选该标注工具（ToolCap 上一个标注工具点到直达，
-	// 省掉"先进标注再选工具"这一步）。空串表示不预选
+	// toolId 非空时，进贴图窗口的同时预选该标注工具。框选那条路传的就是 rect ——
+	// 框完直接是编辑态、矩形已经拿在手里，省掉"先点贴图、再点工具"两步
 	void startPin(const std::wstring& toolId = L"");
 	void startLong();
 	void startVideo();
@@ -104,46 +101,31 @@ private:
 	void captureMouse();
 	void releaseMouse();
 	void onClosed();
-	void makeToolCap();
-	// 两个工具条（下方横排 + 右侧竖排）一起按当前选区重新定位。
-	// 选区一动它们就得跟着走，三处调用点共用这一份，免得哪处漏摆一个
-	void relayoutToolCap();
-	// 选区定下来之后工具条是常显的（作者定的）：单击截图区域不再让它消失，
-	// 只有回车才收放 —— 收起来之后回车能请回来。
-	// 两个工具条是一对，show / hide / 重新压回最上层都成对处理
-	void setToolCapShown(bool on);
-	// 把两个工具条重新压回 topmost 组的最前面。本窗口也是 topmost 且没有 NOACTIVATE，
-	// 点它一下系统就会把它提到同组最前，底图随即把工具条整条盖住 ——
-	// 那就是"单击截图区域工具栏会消失"的成因（见 WinCap::onDown 里的调用）
-	void raiseToolCap();
-	// 命令行给了 --enter=xxx（long / video / ocr / qr / pin）时，框完选区不出 ToolCap，
-	// 直接走对应的那条路 —— 等于替用户点了工具条上的那个按钮。
-	// 返回是否已经接手；值不认识（拼错了）就返回 false，照常出工具条
+	// 命令行给了 --enter=xxx（long / video / ocr / qr / pin）时，框完选区不照常进编辑界面，
+	// 直接走对应的那条路 —— 悬浮球上那几个一键图标走的是同一条路。
+	// 返回是否已经接手；值不认识（拼错了）就返回 false，照常进编辑界面
 	bool enterByArg();
 	// DPI 变了之后重走一遍工具条的摆放规则（哪个阶段就重排哪个工具条）
 	void relayoutTool();
-	// 进长图 / 录屏阶段的公共动作：收掉底图与工具条，并提到最上层
+	// 进长图 / 录屏阶段的公共动作：收掉底图，并提到最上层
 	void enterLiveStage();
 	// 选区内的像素。BGRA、top-down、行紧凑，可以直接喂 Util 的存盘与剪切板
 	bool getCutPixels(std::vector<BYTE>& pixels, int& cw, int& ch);
 	std::tuple<int, int, int, int> getCMYK(const BYTE& r, const BYTE& g, const BYTE& b);
 private:
-	// Select 拖框取色 -> Adjust 调整选区并显示 ToolCap -> Long / Video 交给对应的对象
+	// 拖框取色 -> 直接进编辑界面（预选矩形工具）；Long / Video 是另外两条独立流程
+	//（悬浮球一键图标、命令行 --enter，以及编辑界面右侧竖排上的长图 / 录屏）。
+	// Adjust 只是那几条路上的一个中转值：startLong / startVideo 拿它当"选区已经定下来"的凭据，
+	// 所以 enterByArg 会先把它置上，紧接着就被换成 Long / Video。它不常驻 ——
+	// 用户手上没有"停在 Adjust 阶段"的时候（框完就走，选区要调是在编辑界面上拖裁剪手柄）
 	enum class CapStage { Select, Adjust, Long, Video };
 	CapStage stage{ CapStage::Select };
-	std::unique_ptr<ToolCap> toolCap;
-	// 工具条这会儿该不该露着（回车收放的那一档）。false 时不摆位也不请回来 ——
-	// 藏着的时候拖选区又让它冒出来一半，就没法"回车藏着看整张图"了
-	bool toolCapShown{ true };
-	// 选区右边缘外的竖排工具条（长截图 / 录屏 / OCR / 二维码）。
-	// 与 toolCap 是两个窗口，凡是 show / hide / close / 重排都得成对处理
-	std::unique_ptr<ToolCapStage> toolCapStage;
 	std::unique_ptr<CapLong> capLong;
 	std::unique_ptr<CapVideo> capVideo;
 	Microsoft::WRL::ComPtr<ID2D1Bitmap1> screenImg,pixImg;
 	D2D1_RECT_F pixSrcRect{};
 	// 本次进截图要直接走的阶段（悬浮球的一键图标 / 命令行 --enter）。
-	// 空串表示照常拖框然后出工具条。框选在 onUp 里才结束，所以得先存下来
+	// 空串表示照常拖框、然后进编辑界面。框选在 onUp 里才结束，所以得先存下来
 	std::wstring enterArg;
 	// 铺满窗口的画布，走 swap chain 双缓冲：底图、蒙版、放大镜每帧都重画，
 	// 单缓冲会让合成器采到"擦干净还没画完"的中间态
@@ -155,10 +137,6 @@ private:
 	bool isPolyDrag{ false };
 	// onDpiChanged 与 onSizeChanged 之间的接力标记，见构造函数里的注释
 	bool dpiChanged{ false };
-	// 自己认双击用的上一次按下时间与位置。Ling 的窗口类没带 CS_DBLCLKS，
-	// 收不到 WM_LBUTTONDBLCLK，只能按系统的双击间隔和双击判定框自己算
-	ULONGLONG lastDownTime{ 0 };
-	POINT lastDownPos{ 0, 0 };
 	// 进长图 / 录屏后不再画底图：底图是拖框那一刻的静态截图，
 	// 留着的话录屏和滚动截图拿到的都是这张死图
 	bool hideScreenImg{ false };

@@ -221,6 +221,7 @@
     <ClCompile Include="Tool\ToolCap.cpp" />
     <ClCompile Include="Tool\ToolCapStage.cpp" />
     <ClCompile Include="Tool\ToolLong.cpp" />
+    <ClCompile Include="Tool\ToolPinSide.cpp" />
     <ClCompile Include="Tool\ToolSub.cpp" />
     <ClCompile Include="Tool\ToolMain.cpp" />
     <ClCompile Include="Tool\ToolVideo.cpp" />
@@ -331,6 +332,7 @@
     <ClInclude Include="Tool\ToolCap.h" />
     <ClInclude Include="Tool\ToolCapStage.h" />
     <ClInclude Include="Tool\ToolLong.h" />
+    <ClInclude Include="Tool\ToolPinSide.h" />
     <ClInclude Include="Tool\ToolSub.h" />
     <ClInclude Include="Tool\ToolMain.h" />
     <ClInclude Include="Tool\ToolVideo.h" />
