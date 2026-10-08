@@ -73,7 +73,10 @@ WinOcr::WinOcr(std::vector<BYTE>&& data, const int w, const int h)
 	setTitle(Lang::get(L"ocr.title"));
 	setSize(560.f, 420.f);
 	setCenter();
-	createNativeWindow();
+	// 必须置顶：这个窗是"截图之后"弹出来的，此刻编辑页（WinPin）正占着最上层，
+	// 不置顶就会被它整块盖住 —— 用户只能看见编辑页，以为识别结果没出来。
+	// 与编辑页同一族（TOPMOST + TOOLWINDOW），谁后 show 谁在上面
+	createNativeWindow(WS_EX_TOPMOST | WS_EX_TOOLWINDOW, WS_POPUP);
 }
 
 WinOcr::~WinOcr()
@@ -87,10 +90,21 @@ WinOcr::~WinOcr()
 void WinOcr::init(std::vector<BYTE>&& data, const int w, const int h)
 {
 	if (winOcr) {
-		SetForegroundWindow(winOcr->hwnd);
-		return;
+		// 句柄还在才谈"拉到前台"。对象活着、窗口却已经没了（销毁的收尾没跑到），
+		// SetForegroundWindow 会落在失效句柄上，表现就是"点了没反应" —— 那就丢掉重建
+		if (winOcr->hwnd && IsWindow(winOcr->hwnd)) {
+			winOcr->show();
+			SetForegroundWindow(winOcr->hwnd);
+			return;
+		}
+		winOcr.reset();
 	}
 	winOcr.reset(new WinOcr(std::move(data), w, h));
+	// 刚建出来的这一枚可能落在编辑页后面（两者都是 TOPMOST），明确再拉到最前一次
+	if (winOcr->hwnd) {
+		winOcr->show();
+		SetForegroundWindow(winOcr->hwnd);
+	}
 }
 
 void WinOcr::dispose()
