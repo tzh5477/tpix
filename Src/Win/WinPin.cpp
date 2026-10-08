@@ -1529,6 +1529,53 @@ bool WinPin::canHitActionBtn(const POINT& imgPos) const
 	return true;
 }
 
+void WinPin::nudgeBy(const UINT key)
+{
+	float dx{ 0.f }, dy{ 0.f };
+	switch (key) {
+	case VK_LEFT:  dx = -1.f; break;
+	case VK_RIGHT: dx = 1.f; break;
+	case VK_UP:    dy = -1.f; break;
+	case VK_DOWN:  dy = 1.f; break;
+	default: return;
+	}
+	// Shift = 粗调十格。步长按底图像素算，与图缩到多小无关（画面上那一格就是一格）
+	//
+	// ⚠️ 两个 API 取或，因为两边各有盲区：
+	// · GetKeyState 读的是**本线程消息队列**里的键状态，只有"这条键的消息被取出过"才更新。
+	//   中文输入法默认拿 Shift 切换中英文，Shift 的按下会被输入法吃掉、根本不进本窗口队列，
+	//   于是恒为 0（实测：粗调一直是 1 格）。
+	// · GetAsyncKeyState 读物理键状态（输入法吃不掉），但在**本进程自己注入按键**的场合会抖
+	//   （每注入一次键都会把状态快照清零：注入 → 的 keydown 后 SHIFT 由 8001 变 0000，
+	//   keyup 后又回 8001）。真人用物理键盘不存在这个抖法，取或正好把两边都覆盖上
+	bool shiftDown{ ((GetKeyState(VK_SHIFT) & 0x8000) != 0)
+		|| ((GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0) };
+	auto step{ shiftDown ? 10.f : 1.f };
+	dx *= step;
+	dy *= step;
+	// 「选择画布」：方向键挪的是底图选区。与拖动那条路一样不夹边界 ——
+	// 作者定的语义是"允许把选区拖出画布，超出的部分裁掉"，夹住了就再也挪不出去。
+	// selBaseLT 要跟着一起挪：它是下一次拖动的锚点，不挪的话刚按完方向键一拖就弹回原位
+	if (canvasSelecting()) {
+		if (!hasSel()) return;
+		selRect = D2D1::RectF(selRect.left + dx, selRect.top + dy,
+			selRect.right + dx, selRect.bottom + dy);
+		selBaseLT.x += dx;
+		selBaseLT.y += dy;
+		refresh();
+		return;
+	}
+	// 标注：框选那一批优先，其次单选，最后才是光标底下那一个 —— 与 Delete 的取舍一致
+	//（手要去按方向键，鼠标多半已经不在选中那个上了；而"正指着它"也是个明摆着的目标）
+	std::vector<ShapeBase*> targets;
+	if (!drawing->multiSelected.empty()) targets = drawing->multiSelected;
+	else if (drawing->selected) targets.push_back(drawing->selected);
+	else if (drawing->shapeHover) targets.push_back(drawing->shapeHover);
+	else return;
+	for (auto* s : targets) s->moveBy(dx, dy);
+	refresh();
+}
+
 void WinPin::setPinTitle(const std::wstring& t)
 {
 	pinTitle = t;
@@ -3054,6 +3101,12 @@ void WinPin::onKey(UINT key)
 	}
 	else if (alt && (key == VK_LEFT || key == VK_RIGHT || key == VK_UP || key == VK_DOWN)) {
 		alignToEdge(key);
+	}
+	else if (key == VK_LEFT || key == VK_RIGHT || key == VK_UP || key == VK_DOWN) {
+		// 光秃秃的方向键 = 微调位置：把选中的那一批标注 / 底图选区挪一格。
+		// 排在 Alt+方向（贴显示器边）与 Ctrl+Alt+左右（搬显示器）之后 —— 那两个组合
+		// 带走方向键的优先级更高。拖能到位但容易过头，像素级对齐差一两格时按一下更省事
+		nudgeBy(key);
 	}
 	else if (ctrl && key == 'T') {      // Ctrl+T：缩略图模式 / 还原
 		setThumbMode(!isThumb);
