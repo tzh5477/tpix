@@ -178,6 +178,17 @@ namespace {
 		lab->setColor(0x333333FF);
 		lab->setLineSpacing(Markdown::lineSpacing);
 	}
+
+	// 只在文字真的变了才动控件：Text::setText 会把 DWrite layout 整个重建，
+	// 流式输出每 80ms 走一遍，没变还硬塞一次纯属白干（表面也跟着重画一遍）
+	void setTextIfChanged(Ling::Label* lab, const std::wstring& text,
+		const std::vector<Ling::TextRun>& runs)
+	{
+		if (!lab) return;
+		if (lab->getText() == text) return;
+		lab->setText(text);
+		lab->setRuns(runs);
+	}
 }
 
 std::vector<Block> Markdown::parse(const std::wstring& src)
@@ -306,9 +317,75 @@ std::vector<Block> Markdown::parse(const std::wstring& src)
 	return out;
 }
 
+std::wstring Markdown::tag(const Block& block)
+{
+	std::wstring t{ L"md:" };
+	t += std::to_wstring(static_cast<int>(block.kind));
+	t += L':';
+	t += std::to_wstring(block.level);
+	t += block.ordered ? L":o" : L":u";
+	if (block.table) t += L":t";
+	return t;
+}
+
+// 就地刷新。前提是 node 的 id 与这个块的身份对得上（render 盖的章）。
+// 只改文字 / 行内样式 / 列表序号 —— 字体、颜色、边距这些"块级样式"只由块的种类决定，
+// 同类块之间不会变，不必也不该在这里动
+bool Markdown::refresh(const Block& block, Ling::Node* node)
+{
+	if (!node || node->id != tag(block)) return false;
+	switch (block.kind) {
+	case Kind::Rule:
+		// 一条横线，什么状态都没有
+		return true;
+	case Kind::Code:
+	case Kind::Heading:
+	case Kind::Paragraph: {
+		auto lab = dynamic_cast<Ling::Label*>(node);
+		if (!lab) return false;
+		if (block.kind == Kind::Code) {
+			setTextIfChanged(lab, block.text, {});
+		}
+		else {
+			const auto f = flatten(block.inlines);
+			// 标题整段加粗（与 render 里一致：标题里再套行内样式不做区间合并）
+			const std::vector<Ling::TextRun> runs = block.kind == Kind::Heading
+				? std::vector<Ling::TextRun>{ Ling::TextRun{ 0, f.text.size(), true, false, false } }
+				: f.runs;
+			setTextIfChanged(lab, f.text, runs);
+		}
+		return true;
+	}
+	case Kind::Quote: {
+		// Row[竖条, 文字]
+		if (node->children.size() != 2) return false;
+		auto lab = dynamic_cast<Ling::Label*>(node->children[1].get());
+		if (!lab) return false;
+		const auto f = flatten(block.inlines);
+		setTextIfChanged(lab, f.text, f.runs);
+		return true;
+	}
+	case Kind::List: {
+		// Row[序号格, 文字]。序号格那一枚的字（"1." / 圆点）也要跟着更
+		if (node->children.size() != 2) return false;
+		auto mk = dynamic_cast<Ling::Label*>(node->children[0].get());
+		auto lab = dynamic_cast<Ling::Label*>(node->children[1].get());
+		if (!mk || !lab) return false;
+		setTextIfChanged(mk, block.ordered ? block.marker : L"\u2022", {});
+		const auto f = flatten(block.inlines);
+		setTextIfChanged(lab, f.text, f.runs);
+		return true;
+	}
+	}
+	return false;
+}
+
 void Markdown::render(const Block& block, Ling::Node* parent, const bool first)
 {
 	const float top = first ? 0.f : 6.f;
+	// 这一块渲染出来的是哪个顶层控件：switch 里每个分支最后一句都是 makeChild，
+	// 所以"多出来的那一个"就是它。段落文案为空时可能一个都不建
+	const size_t before = parent->children.size();
 	switch (block.kind) {
 	case Kind::Rule: {
 		auto hr = parent->makeChild<Ling::Node>();
@@ -402,4 +479,7 @@ void Markdown::render(const Block& block, Ling::Node* parent, const bool first)
 		break;
 	}
 	}
+	// 给这一块渲染出来的顶层控件盖个"身份章"：流式输出下一遍重画时，
+	// 同类的块就是靠它认出来的（见 refresh）
+	if (parent->children.size() > before) parent->children.back()->setId(tag(block));
 }

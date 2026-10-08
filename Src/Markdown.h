@@ -42,4 +42,13 @@ public:
 	// 把一个块渲染成 parent 的子节点。first 表示它是整条消息的第一块（不加上边距，
 	// 让气泡自己的 padding 去管那点留白）
 	static void render(const Block& block, Ling::Node* parent, bool first);
+	// 块的"身份"：同类 / 同级 / 同有序性 / 同表格的块，渲染出来的顶层控件骨架是同一副，
+	// 可以复用。render 会把它盖在节点的 id 上
+	static std::wstring tag(const Block& block);
+	// 就地刷新一个已经渲染好的块：只改文字与行内样式，不碰节点本身。
+	// node 不是 tag(block) 对应的那个顶层控件时返回 false，调用方应当把它整段重建。
+	//
+	// 存在的唯一理由是**流式输出**：每来一小段就 removeAllChildren + 重建的话，
+	// 每遍都要新开一批 composition 绘制表面，正文就会一直闪。同类块就地改字即可
+	static bool refresh(const Block& block, Ling::Node* node);
 };

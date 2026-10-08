@@ -30,6 +30,9 @@ namespace {
 	// 用户问题那一条的宽度上限（父容器宽度的百分比）。气泡随内容自适应，只封顶 ——
 	// 短问题气泡是短的，长问题才铺到这个宽度。回答条不吃这一项：它顶左、铺满整宽
 	constexpr float bubbleMaxPct{ 78.f };
+	// 消息区四周的留白（逻辑像素）。右侧还要再让开滚动条那一条竖带（见 applyMsgPadding）——
+	// 只让开滚动条、本身留白太小的话，正文看着就像被右边那条线切掉了一块
+	constexpr float msgPad{ 16.f };
 	// 一个月按 30 天算，只用来说明"多久算最近"，不必精确到日历月
 	constexpr long long recentMs{ 30LL * 24 * 60 * 60 * 1000 };
 	// 附件缩略图落盘用的固定文件名（每次覆盖）。放数据目录里，不进截图目录
@@ -251,13 +254,20 @@ void WinAiChat::onCreated()
 	closeBtn->setFontFamily(L"icon");
 	closeBtn->onClick.add([](Ling::Button* btn) { btn->win->close(); });
 
+	// 标题行下面这条分隔线：没有它的时候，消息区的内容会一路滚到标题底下，
+	// 上下两块挤在一起分不出"哪是标题、哪是正文"
+	auto titleSep = right->makeChild<Ling::Node>();
+	titleSep->setWidthPercent(100.f);
+	titleSep->setHeight(1.f);
+	titleSep->setBg(0xE8E8ECFF);
+
 	msgScroller = right->makeChild<Ling::ScrollerBox>();
 	msgScroller->setFlexGrow(1.f);
 	msgScroller->setWidthPercent(100.f);
 	msgBox = msgScroller->makeChild<Ling::Node>();
 	msgBox->setWidthPercent(100.f);
 	msgBox->setFlexDirection(Ling::FlexDirection::Column);
-	msgBox->setPadding(12.f, 12.f, 12.f, 12.f);
+	msgBox->setPadding(msgPad, msgPad, msgPad, msgPad);
 	// 右侧还要多让出滚动条那一条竖带：ScrollerBox 的滑块浮在最右边、不占布局宽度，
 	// 不让的话正文右边界离滑块只剩几个像素，看着就是"内容顶到边上了"。宽度要等布局
 	// 之后才知道（滚动条露不露取决于内容高不高），所以真正的设置放在 applyMsgPadding
@@ -705,8 +715,8 @@ void WinAiChat::applyMsgPadding()
 {
 	if (!msgScroller || !msgBox) return;
 	// 滚动条那一条竖带浮在最右侧、不占布局宽度，所以内容右边界要自己让开它
-	// （getScrollBarWidth 返回物理像素，没露滚动条时为 0）
-	const float pad = 12.f + msgScroller->getScrollBarWidth() / dpi;
+	//（getScrollBarWidth 返回物理像素，没露滚动条时为 0）
+	const float pad = msgPad + msgScroller->getScrollBarWidth() / dpi;
 	if (pad == msgRightPad) return;
 	msgRightPad = pad;
 	msgBox->setPaddingRight(pad);
@@ -1036,7 +1046,6 @@ void WinAiChat::fillBubble(Ling::Node* bubble, const bool isUser, const std::wst
 	// 流式输出每 80 ms 就重画一次，走的就是这条路
 	selBlocks.erase(std::remove_if(selBlocks.begin(), selBlocks.end(),
 		[bubble](Ling::Label* lab) { return underNode(lab, bubble); }), selBlocks.end());
-	bubble->removeAllChildren();
 
 	// 用户问题原样显示：那是用户自己写的原文，把 `**` 之类吃掉反而看不懂他问的是什么
 	const auto plain = [bubble, &text]() {
@@ -1050,14 +1059,27 @@ void WinAiChat::fillBubble(Ling::Node* bubble, const bool isUser, const std::wst
 	};
 
 	if (isUser) {
+		bubble->removeAllChildren();
 		plain();
 	}
 	else {
 		// 回答条按 markdown 分块渲染。切不出块（空回答、或者流式刚开始只有几个字）时
 		// 退回纯文本，别让气泡空着
 		const auto blocks = Markdown::parse(text);
+		// ⚠️ 流式输出期间**不能整条重建**：每 80 ms 把气泡里的控件全销毁再新建，
+		// 每一遍都要新开一批 composition 绘制表面，正文就会一直闪（"一会消失一会闪现"）。
+		// 所以先让前面的块就地改字，只有结构对不上的那几个才重建 ——
+		// 从第一个对不上的块开始整段重来，顺序因此不会乱
+		size_t keep = 0;
+		while (keep < blocks.size() && keep < bubble->children.size()
+			&& Markdown::refresh(blocks[keep], bubble->children[keep].get())) {
+			++keep;
+		}
+		while (bubble->children.size() > keep) {
+			bubble->removeChild(bubble->children[keep].get());
+		}
 		if (blocks.empty()) plain();
-		else for (size_t i = 0; i < blocks.size(); ++i) Markdown::render(blocks[i], bubble, i == 0);
+		else for (size_t i = keep; i < blocks.size(); ++i) Markdown::render(blocks[i], bubble, i == 0);
 	}
 
 	// 填完再按视觉顺序收进可选范围。框选只认这些块 —— 用户条与回答条一视同仁
@@ -1318,6 +1340,13 @@ void WinAiChat::send()
 			if (now - lastStreamPaint < streamPaintMs) return;
 			lastStreamPaint = now;
 			fillBubble(streamingBubble, false, streaming);
+			// 先把这一帧的布局算出来再滚：getMaxScrollY() 读的是 content->h，
+			// 不先布局拿到的是上一轮的旧高度，贴在底部的那一行会来回弹（看着也是"闪"）
+			Ling::WinBase::layout();
+			// 内容长到刚把滚动条撑出来的那一下，右内边距要跟着让开，否则最新那几行会压到滑块底下
+			const float padBefore = msgRightPad;
+			applyMsgPadding();
+			if (msgRightPad != padBefore) Ling::WinBase::layout();
 			msgScroller->scrollTo(msgScroller->getMaxScrollY());
 		},
 		[this, aliveFlag, gen](const std::wstring& err) {
