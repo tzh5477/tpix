@@ -14,6 +14,8 @@
 #include "WinHistory.h"
 #include "WinOverlay.h"
 #include "WinSetting.h"
+#include "WinAiChat.h"
+#include "WinAiTrans.h"
 #include <ObjIdl.h>
 #include <shlobj.h>
 #include "Win/WinTextPin.h"
@@ -514,6 +516,10 @@ void WinBall::runAction(const std::wstring& id)
 	else if (id == L"ruler") WinOverlay::toggle(OverlayMode::Ruler);
 	else if (id == L"crosshair") WinOverlay::toggle(OverlayMode::Crosshair);
 	else if (id == L"focus") WinOverlay::toggle(OverlayMode::Focus);
+	// 翻译 / AI 对话：不带预设文本 —— 球上是"进这个功能"，取词是截屏取词与全局快捷键
+	// 那两条路的事（它们会去模拟 Ctrl+C 抓前台选区，从球上点不该动前台）
+	else if (id == L"aiTrans") Ling::App::get()->dq.TryEnqueue([]() { WinAiTrans::init(); });
+	else if (id == L"aiChat") Ling::App::get()->dq.TryEnqueue([]() { WinAiChat::init(); });
 	else if (id == L"setting") Ling::App::get()->dq.TryEnqueue([]() { WinSetting::init(); });
 	else if (id == L"hide") hideSelf();
 }

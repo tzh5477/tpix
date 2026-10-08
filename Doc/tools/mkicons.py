@@ -212,6 +212,87 @@ def icon_copy(pen):
     seg(pen, 672, 848, 672, 656, w)             # 后页右边一小段，末端悬空（离前页上沿留个缺口）
 
 
+# ——— 悬浮球上换掉 / 新增的那几个 ———————————————————————————————
+# 换过的原因都写在 BallAction.cpp 的表旁边：要的是"一眼分得清谁是谁"，
+# 17 像素下轮廓比细节重要，所以每个都只留一两块大形状。
+
+def icon_image(pen):
+    """相框 + 山 + 日头 = 一张图片。
+    原来的「从图片文件贴图」用的是"箭头落进托盘"，那画的是**保存**，意思正好反了。"""
+    w = 62
+    rrect_ring(pen, 96, 168, 928, 700, w, 64)
+    # 山：三角峰，底边正好压在内框的下沿上
+    pen.moveTo((470, 480))
+    pen.lineTo((750, 230))
+    pen.lineTo((210, 230))
+    pen.closePath()
+    disc(pen, 296, 570, 60)
+
+
+def icon_image_older(pen):
+    """相框（图）+ 右下角下箭头 = 依次往下贴更早的截图。
+    与上面那枚只差一个箭头 —— 单张 vs 一叠，靠箭头分。"""
+    w = 56
+    rrect_ring(pen, 96, 400, 600, 880, w, 60)
+    pen.moveTo((355, 700))
+    pen.lineTo((500, 456))
+    pen.lineTo((190, 456))
+    pen.closePath()
+    disc(pen, 238, 756, 44)
+    _stack_arrow(pen)
+
+
+def icon_clip_older(pen):
+    """剪贴板（夹子加宽、上移一点，小尺寸下也认得出）+ 右下角同一个下箭头。
+    原来这一枚与 icon_pin_older 都是"一张空心卡片 + 同一根箭头"，缩到 17 像素分不出来。"""
+    w = 56
+    rrect_ring(pen, 96, 344, 600, 800, w, 60)
+    rrect(pen, 256, 760, 440, 888, 36, True)
+    _stack_arrow(pen)
+
+
+def icon_history_arrow(pen):
+    """左向箭头 + 表盘 = 往前翻记录。
+    原来的版本是两张错位卡片，和"复制"（icon_copy）几乎一模一样。"""
+    w = 58
+    # 左向箭头（箭杆 + 三角头，两者都是顺时针，重叠处取并集）
+    seg(pen, 140, 760, 620, 760, 56)
+    pen.moveTo((130, 760))
+    pen.lineTo((300, 865))
+    pen.lineTo((300, 655))
+    pen.closePath()
+    # 表盘：一圈 + 两根指针
+    ring(pen, 600, 300, 230, w)
+    seg(pen, 600, 300, 600, 430, 50)
+    seg(pen, 600, 300, 500, 300, 50)
+
+
+def icon_translate(pen):
+    """地球（一圈 + 赤道 + 竖直的经线梭）= 翻译。整个字形里就它有"圈里带经纬"的样子。"""
+    w = 62
+    r = 370
+    ring(pen, CX, CY, r, w)
+    seg(pen, CX - r, CY, CX + r, CY, 58)            # 赤道
+    # 经线：上下收尖的梭形，尖端落在环的中线上（看着就是长在环上）
+    pen.moveTo((CX, CY + r))
+    pen.qCurveTo((CX + 250, CY), (CX, CY - r))
+    pen.qCurveTo((CX - 250, CY), (CX, CY + r))
+    pen.closePath()
+
+
+def icon_chat(pen):
+    """对话气泡（圆角框 + 左下角的尾巴）+ 两行字 = AI 对话"""
+    w = 58
+    rrect_ring(pen, 96, 232, 928, 800, w, 96)
+    # 尾巴：三角，上沿压在气泡下边框里，下半截探出去
+    pen.moveTo((240, 240))
+    pen.lineTo((430, 240))
+    pen.lineTo((240, 40))
+    pen.closePath()
+    for y in (600, 420):
+        seg(pen, 240, y, 784, y, 60)
+
+
 ICONS = [
     (0xE909, 'arrowPlain', icon_arrow_plain),
     (0xE90A, 'arrowTaper', icon_arrow_taper),
@@ -225,6 +306,14 @@ ICONS = [
     (0xE904, 'crosshair', icon_crosshair),
     (0xE905, 'focus', icon_focus),
     (0xE906, 'settings', icon_settings),
+    # 上面 0xE907 / 0xE908 / 0xE902 三个旧字形留在字体里不动（脚本跳过已存在的码位），
+    # 悬浮球改用了下面这几枚新形状
+    (0xE90C, 'image', icon_image),
+    (0xE90D, 'historyArrow', icon_history_arrow),
+    (0xE90E, 'imageOlder', icon_image_older),
+    (0xE90F, 'clipOlder', icon_clip_older),
+    (0xE910, 'translate', icon_translate),
+    (0xE911, 'chat', icon_chat),
 ]
 
 

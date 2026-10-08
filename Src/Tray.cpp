@@ -11,6 +11,7 @@
 #include "Win/WinOverlay.h"
 #include "PinSource.h"
 #include "Setting.h"
+#include "BallAction.h"
 
 namespace {
 	static std::unique_ptr<Tray> trayIns;
@@ -33,6 +34,10 @@ Tray::Tray()
 	// 托盘悬停时显示的名字 = 产品名（改名之后这里漏了，一直是旧的 Screen Capture）
 	lingApp->initTray(100, L"tpix");
 	Setting::get()->initShortcutKeys();
+	// 后加的操作项（翻译 / AI 对话）要替老配置补到球上，老配置不会自己冒出来。
+	// 放在这里是因为它跟 Setting 一样是"启动就该就位"的东西，且与悬浮球开没开无关 ——
+	// 挂到 WinBall::init() 上的话，球被关掉期间打开设置页会看到未勾选，状态两边不一致
+	ballEnsureNewActions();
 	// 左键单击 / 双击 都进入截图
 	lingApp->onTrayMouseEvent.add([this](bool isDown, bool isRight) {
 		if (isDown && !isRight) {
