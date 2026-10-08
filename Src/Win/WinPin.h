@@ -25,7 +25,7 @@ public:
 	static void init(int x, int y, int w, int h, const std::wstring& toolId = L"");
 	// 底图不来自 WinCap 的截屏，而是外部给的一块 BGRA、top-down、行紧凑（步长 = w*4）像素。
 	// 滚动截图（CapLong）拼出来的长图走这条路进贴图窗口。
-	// toolId 与 init 上那一个是同一个意思：长图截完是直接进编辑界面的（预选 rect），
+	// toolId 与 init 上那一个是同一个意思：长图截完是直接进编辑界面的（预选 geom），
 	// 历史记录 / 剪贴板那几条路留空 —— 那几条要的就是"贴在那儿就行"
 	static void initFromData(int x, int y, int w, int h, std::vector<BYTE>& data, const std::wstring& toolId = L"");
 	// 动图贴图：底图是 frames[0]，随后由定时器逐帧换。src 是原始动图文件，
@@ -51,7 +51,7 @@ public:
 	void layoutTools();
 	// 工具栏整组显示 / 隐藏（ToolMain + ToolSub）。空格键走它。
 	// 它不只是"开关窗口"，两边各带一步：收起来时连画笔一起放掉（cancelSelect），
-	// 请回来时预选矩形工具（selectTool(L"rect")）—— 于是空格就是"编辑"与"拖着图走"
+	// 请回来时预选几何图形工具（selectTool(L"geom")）—— 于是空格就是"编辑"与"拖着图走"
 	// 两个状态之间的硬切换，来回都落在同一个起点上（框选完直接进编辑界面那条路也是
 	// 预选 rect，见 WinCap::onUp，两个入口手感才对得上）。
 	//（右键收起是另一套语义，那边只动窗口，见 onDown 里那段）

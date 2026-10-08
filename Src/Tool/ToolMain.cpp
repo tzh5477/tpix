@@ -2,6 +2,7 @@
 #include "../Win/WinPin.h"
 #include "../History.h"
 #include "../Lang.h"
+#include "../Setting.h"
 #include "../Tip.h"
 #include "ToolMain.h"
 #include "ToolSub.h"
@@ -135,10 +136,25 @@ void ToolMain::onCreated()
 			}
 			btn->onClick.add([this](Ling::Button* btn) {onClick(btn);});
 			tip->bind(btn, Lang::get(std::format(L"tool.{}", id)));
+			if (id == L"geom") geomBtn = btn;
 			btns.push_back(btn);
 		}
 	}
+	// 图标按上次退出前的类别画（类别存在 config.json 里）。建按钮时用的是矩形那一档的初值
+	syncGeomIcon();
 	show();
+}
+
+// 「几何图形」那枚按钮上的图标跟着类别走（理由见头文件里的说明）。
+// 类别读 config.json 的 geom/kind 而不是去问 ToolSub：本窗口的 onCreated 排在 ToolSub 建好之前
+//（WinPin 的构造函数里它排在后面），那一刻还没有 ToolSub 可问；而 ToolSub 换类别时是
+// 先把新值落盘、再来调这里，两边读的是同一份数，不会差一步
+void ToolMain::syncGeomIcon()
+{
+	if (!geomBtn) return;
+	auto kind = (int)Setting::get()->getToolNum(L"geom", L"kind", 0.f);
+	// \ue8e8 方框（矩形那一档）、\ue6bc 圆（圆形那一档）—— 就是原来主工具条上那两枚的码位
+	geomBtn->setText(kind == 1 ? L"\ue6bc" : L"\ue8e8");
 }
 
 void ToolMain::layout()
@@ -372,11 +388,11 @@ void ToolMain::selectTool(const std::wstring& id)
 		}
 	}
 	curId = id;
-	if (curId == L"rect") {
-		win->toolSub->showRectTools();
-	}
-	else if (curId == L"ellipse") {
-		win->toolSub->showEllipseTools();
+	// 「几何图形」：矩形与圆形在这里是同一枚工具，画哪一类由子面板上那两枚类别小图标定。
+	// 两类共用一套样式（颜色 / 线宽 / 填充）—— 并成一个工具之后，切类别还各带一份颜色
+	// 的话，色板会跟着类别跳，看着就像"切个形状把颜色也弄丢了"
+	if (curId == L"geom") {
+		win->toolSub->showGeomTools();
 	}
 	else if (curId == L"arrow") {
 		win->toolSub->showArrowTools();

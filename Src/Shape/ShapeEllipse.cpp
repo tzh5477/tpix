@@ -7,13 +7,13 @@
 ShapeEllipse::ShapeEllipse(Canvas* win) :ShapeRectBase(win)
 {
 	kind = Kind::Ellipse;
-	// 允许"矩形↔圆"互转
-	allowShapeToggle = true;
+	// 同上：照工具条那套来画，也跟着工具条换类别翻成矩形
+	useToolStyle = true;
 	auto toolSub = win->getToolSub();
 	auto d2d = Ling::D2D::get();
 	d2d->deviceContext->CreateSolidColorBrush(toolSub->getSelectedColor(), brush.GetAddressOf());
 	strokeWidth = toolSub->getSliderVal();
-	isFill = toolSub->isEllipseFill;
+	isFill = toolSub->isGeomFill;
 }
 
 ShapeEllipse::~ShapeEllipse()

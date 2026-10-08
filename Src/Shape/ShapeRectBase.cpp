@@ -57,11 +57,6 @@ D2D1_MATRIX_3X2_F ShapeRectBase::setRotateTransform(ID2D1DeviceContext* ctx) con
 	return prev;
 }
 
-const wchar_t* ShapeRectBase::styleGroup() const
-{
-	return kind == Kind::Ellipse ? L"ellipse" : L"rect";
-}
-
 float ShapeRectBase::norm360(const float deg)
 {
 	auto v = fmodf(deg, 360.f);
@@ -407,12 +402,12 @@ void ShapeRectBase::setCursor()
 // 马赛克与擦除不参与：它们的滑块调的是笔刷块大小，与线宽不是一回事
 void ShapeRectBase::mouseWheel(const float x, const float y, const short delta)
 {
-	if (!allowShapeToggle || isFill) return;
+	if (!useToolStyle || isFill) return;
 	// 一格一个逻辑像素。上下限交给 ToolSub 那张滑块值域表夹，用它夹完的返回值 ——
 	// 线宽与工具栏滑块因此永远是同一个数，也滚不出滑块能表达的范围。
-	// 组名按 kind 取而不是按 toolId：矩形与圆互转之后要改的是它现在那一组
+	// 组名用 toolId（矩形与圆并成「几何图形」之后是同一组 geom）
 	auto next = strokeWidth + (delta < 0 ? -win->getDpi() : win->getDpi());
-	auto applied = win->getToolSub()->setShapeSliderVal(styleGroup(), next);
+	auto applied = win->getToolSub()->setShapeSliderVal(toolId, next);
 	if (applied == strokeWidth) return;   //已经顶到值域的头了，不用重画
 	strokeWidth = applied;
 	win->refresh();
@@ -424,18 +419,28 @@ void ShapeRectBase::applyStyle()
 {
 	// 马赛克与擦除的画刷是按画面算出来的（马赛克位图 / 底图），套上工具条的颜色
 	// 就把它们涂掉了 —— 它们原本就没有 applyStyle，这里同样得跳过去
-	if (!allowShapeToggle) return;
+	if (!useToolStyle) return;
 	auto toolSub = win->getToolSub();
 	// 颜色、线宽、填充三样都取"面板此刻显示的那个工具"的那一份，口径一致（见 ToolSub::getCurrentFill）。
-	// 填充原来按 kind 取（椭圆读 isEllipseFill、矩形读 isRectFill），而 kind 会被元素上那枚动作图标
-	// 翻转（见 onAction：那里刻意不动 toolId，所以面板不会跟着换）。于是矩形工具画出的矩形转成圆
-	// 之后，面板仍是矩形面板、显示的是 isRectFill，按 kind 却去读一份没人动过的 isEllipseFill ——
-	// 那枚开关就按不动它。
-	// 实测（A/B：只把下面这一行换回旧写法，其余不动）——矩形工具画矩形→点元素左下角那枚图标转成圆
-	// →点面板「填充」：旧版图形纹丝不动（仍实心，覆盖 0.772），新版按面板的值变空心（0.024）
+	// 早先矩形与圆各存一份填充（isRectFill / isEllipseFill），而 kind 可以被元素上那枚动作图标
+	// 翻转、面板却不跟着换，于是"矩形转成圆之后按填充按不动它"。两类并成一支工具、
+	// 共用一个 isGeomFill 之后那半截麻烦没有了 —— 面板上是什么就套什么
 	brush->SetColor(toolSub->getSelectedColor());
 	strokeWidth = toolSub->getSliderVal();
 	isFill = toolSub->getCurrentFill();
+}
+
+// 工具条上「几何图形」换类别（矩形 / 圆形）：把这一笔翻成那一类。
+// 元素左下角原来那枚互转图标撤掉之后，这是唯一的入口 —— 选中一个矩形、点工具条上那枚圆，
+// 它就变成圆。翻的是 kind 而不是换掉对象：几何、颜色、线宽、圆角、扇区全部留着，
+// 换的只是"怎么画、怎么命中"，正在编辑的那一笔也不会因此丢掉
+void ShapeRectBase::applyToolStyle()
+{
+	if (!useToolStyle) return;
+	auto next = win->getToolSub()->getGeomKind() == 1 ? Kind::Ellipse : Kind::Rect;
+	if (next == kind) return;
+	kind = next;
+	syncFromRect();
 }
 
 // 批量旋转：绕外部中心刚体转。位置那一步走 translate（马赛克 / 擦除那几个覆写的会顺手
@@ -449,34 +454,6 @@ void ShapeRectBase::rotateBy(const float deg, const D2D1_POINT_2F& center)
 	// 位移恒为 0，这一步纯属白跑 —— 马赛克 / 擦除的 translate 还会顺手把位图重建一遍
 	if (dx != 0.f || dy != 0.f) translate(dx, dy);
 	angle += deg;
-}
-
-void ShapeRectBase::paintActionIcon(ID2D1DeviceContext* ctx, const int i, const D2D1_POINT_2F& c,
-	const float rad, ID2D1Brush* brush, const float strokeW)
-{
-	if (i != 0) return;
-	// 画的是"点一下会变成的形状"：现在是矩形就画个圆，反之画个方框。
-	// 用线画而不是字形 —— 图标字体里有没有现成的码位靠猜，短文本又得跟着语言包走。
-	// 笔与笔宽由基类传进来（它要拿同一份几何先描一遍白边，见 paintIconHaloed）
-	auto k{ rad * 0.55f };
-	if (kind == Kind::Rect) {
-		ctx->DrawEllipse(D2D1::Ellipse(c, k, k), brush, strokeW);
-	}
-	else {
-		ctx->DrawRectangle(D2D1::RectF(c.x - k, c.y - k, c.x + k, c.y + k), brush, strokeW);
-	}
-}
-
-void ShapeRectBase::onAction(const int i)
-{
-	if (i != 0) return;
-	kind = kind == Kind::Rect ? Kind::Ellipse : Kind::Rect;
-	// 几何、颜色、线宽、圆角、扇区全部留着 —— 换的只是"怎么画、怎么命中"。
-	// toolId 故意不动：它是"这一笔当初是哪个工具画的"，工具条改样式、WinPin 换工具
-	// 时清选中态都按它筛。翻成"ellipse"的话，正选着它的这一刻调颜色反而落不到它身上。
-	// 互转之后要跟着换的是线宽那一组，由 styleGroup() 按 kind 现取
-	syncFromRect();
-	win->refresh();
 }
 
 // ---- 复制（见 ShapeBase::cloneSelf）----

@@ -29,13 +29,12 @@ ShapeBase* History::createShape(const std::wstring& state, const int& x, const i
     removeUndoShape();
     ShapeBase* result{nullptr};
     auto curId = canvas->getCurToolId();
-    if (curId == L"rect") {
-        auto shape = std::make_unique<ShapeRect>(canvas);
-        result = shape.get();
-        shapes.push_back(std::move(shape));
-    }
-    else if (curId == L"ellipse") {
-        auto shape = std::make_unique<ShapeEllipse>(canvas);
+    // 「几何图形」：矩形与圆形是同一支工具下的两个类别，画哪一类看工具条上当前选的那一档
+    // （ToolSub::geomKind）。两类的几何、手柄、命中全是同一套，翻的只是 kind
+    if (curId == L"geom") {
+        std::unique_ptr<ShapeBase> shape;
+        if (canvas->getToolSub()->getGeomKind() == 1) shape = std::make_unique<ShapeEllipse>(canvas);
+        else shape = std::make_unique<ShapeRect>(canvas);
         result = shape.get();
         shapes.push_back(std::move(shape));
     }

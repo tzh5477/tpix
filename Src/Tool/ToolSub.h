@@ -26,8 +26,10 @@ public:
 	static std::wstring fontShowName(const std::wstring& family);
 	ToolSub(WinPin* win);
 	~ToolSub();
-	void showRectTools();
-	void showEllipseTools();
+	// 「几何图形」：矩形与圆形是同一支工具下的两个类别（对齐 pixpin 的「形状」）。
+	// 面板上头两枚就是类别小图标，点哪一类就画哪一类；已选中的图形也跟着翻 ——
+	// 元素左下角原来那枚"矩形↔圆"的互转图标因此撤掉了（见 ShapeRectBase）
+	void showGeomTools();
 	void showArrowTools();
 	void showNumberTools();
 	void showLineTools();
@@ -88,6 +90,10 @@ public:
 	// 按工具取选中色（RGBA 原值）。与 getSelectedColorValue 的区别同上：那个读的是
 	// "当前工具"共享的那一份下标（selectColorIndex），切一次工具就换了人
 	UINT32 getToolColorValue(const std::wstring& tool) const;
+	// 「几何图形」当前是哪一个类别：0 矩形 / 1 圆形。值落盘在 config.json 的 geom/kind，
+	// 与 ShapeRectBase::Kind 的枚举顺序一致。新建图形（History::createShape）与
+	// 已选中图形的互转（ShapeRectBase::applyToolStyle）都按它取
+	int getGeomKind() const { return geomKind; }
 	// 内置预设色的个数。色板行只画这些格子，末尾另有一块「当前色」是取色器的入口
 	// （对齐 pixpin：预设色供快选，任意色点最大的那块进去调）
 	int presetCount() const;
@@ -112,7 +118,7 @@ public:
 	// ToolMain 与 ToolSub 之间的间距，WinPin::layoutTools() 计算整组高度时要用
 	static constexpr float mainGap{ 2.f };
 public:
-	bool isRectFill{ false }, isEllipseFill{ false }, isArrowFill{ true }, isNumberFill{ true }, isLineTransparent{ false }, isTextBold{ false }, isTextItalic{ false }, isEraserRect{ false };
+	bool isGeomFill{ false }, isArrowFill{ true }, isNumberFill{ true }, isLineTransparent{ false }, isTextBold{ false }, isTextItalic{ false }, isEraserRect{ false };
 	// 马赛克模式 0 = 矩形马赛克，1 = 涂抹马赛克，2 = 智能擦除。
 	// 三者互斥，所以用一个整数而不是三个布尔 —— 布尔组合里会出现"既涂抹又擦除"这种不存在的状态
 	int mosaicMode{ 0 };
@@ -175,6 +181,11 @@ private:
 	void refreshColors();
 	// 按当前 selectColorIndex 刷新色板行：预设格子上该打勾的打勾，末尾那块当前色块换底色
 	void syncColorBtns();
+	// 「几何图形」那两枚类别小图标（矩形 / 圆形）。互斥的单选：选中的那一枚上底色，
+	// 单击换类别并落盘，已选中的图形跟着翻（走 WinPin::onToolStyleChanged 的"档位"那条路）
+	void makeGeomKindBtns();
+	// 按 geomKind 重刷那两枚类别图标的选中底色
+	void syncGeomKindBtns();
 	void initSlider();
 	// 建一个横向滑块。值域 / 当前值都由调用方给（水印的不透明度、间距、大小都要用，
 	// 而每工具一份的那套字段只有"大小"这一项），建好之后登记进 sliders 好让悬停提示找到它。
@@ -236,6 +247,11 @@ private:
 	// 再把这个工具存在 config.json 里的滑块值和颜色读回来（读不到就用默认值 / 第一个颜色）。
 	// 滑块的键名与值域查 .cpp 里那张表，id 必须是表里有的（就是 ToolMain 的按钮 id）。
 	void beginTool(const std::wstring& id);
+	// 老配置迁移：矩形与圆形并成「几何图形」之前，样式是各存一份的（toolPin.rect /
+	// toolPin.ellipse），并完之后只剩 toolPin.geom 这一组。老用户升级上来不该丢掉
+	// 他那套线宽 / 颜色 / 填充，所以第一次跑的时候把 rect 那一份搬过来。
+	// 只在 geom 组**真缺**这几项时才搬、搬了才写盘 —— 否则每次启动都覆盖用户后来的选择
+	void migrateGeomCfg();
 	// 按内容算出窗口尺寸并应用。btnCount 只数工具按钮，不含颜色按钮。
 	// centerOnBtn 为 true 时窗口居中对齐到 ToolMain 上选中的那个按钮，否则与 ToolMain 左对齐。
 	// extraW 给文字输入框这类"宽度不是一格按钮"的控件预留。
@@ -253,6 +269,9 @@ private:
 	// 末尾那块「当前色」不进来：这个数组是按下标取格子的（见 onColorSelect），
 	// 混进一块不对应的，下标就整体串位
 	std::vector<Ling::Button*> colorBtns;
+	// 「几何图形」那两枚类别小图标，下标即类别（0 矩形 / 1 圆形）。切换工具时随
+	// contentNode 一起销毁，beginTool 里必须清空，否则 syncGeomKindBtns 会往已删的按钮上写
+	std::vector<Ling::Button*> geomKindBtns;
 	// 当前的滑块。切换工具时会被销毁重建，重建后由 initSlider 重新赋值。
 	// 存下来是为了在窗口的 onMouseMove 里判断鼠标是否在它上面，好显示数值提示。
 	Ling::Slider* slider{ nullptr };
@@ -345,6 +364,9 @@ private:
 	// 单独一份的理由见上面 getWatermarkSize 的注释：它与其它工具共用的 sliderVal 不是一回事
 	float watermarkFontSize{ 24.f };
 	UINT selectColorIndex{ 0 };
+	// 「几何图形」当前类别：0 矩形 / 1 圆形（与 ShapeRectBase::Kind 同序）。
+	// 由构造时的 migrateGeomCfg 之后从 config.json 的 geom/kind 读回来
+	int geomKind{ 0 };
 	// 内置预设色（对齐 pixpin 那排常见颜色）。用户自定义色接在它们后面拼成 colors，
 	// 于是 colorIndex 一套下标语义同时管住两者，取色那几处一行都不用改
 	static const std::vector<UINT32>& presetColors();

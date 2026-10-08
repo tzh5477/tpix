@@ -568,12 +568,12 @@ void WinCap::onUp(POINT pos, bool isRight)
             startPin();
             return;
         }
-        // 正常这一条路：框完直接进编辑界面，并把矩形工具预选好 —— 抬手就能画。
+        // 正常这一条路：框完直接进编辑界面，并把几何图形工具预选好 —— 抬手就能画。
         // 原先这里是"停在选区上、出下方工具条"，用户得再点一下工具或"贴图"才进得去；
         // 选区要调整也不吃亏：编辑界面边框上那 8 个裁剪采样点就是干这个的（还能从整屏原图往外扩）
         stage = CapStage::Adjust;
         refresh();  // 收掉放大镜：马上换窗口了，屏幕上不能留着它
-        startPin(L"rect");
+        startPin(L"geom");
     }
     else if (stage == CapStage::Long && capLong) {
         capLong->onUp(pos);

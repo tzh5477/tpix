@@ -697,5 +697,5 @@ void CapLong::pin()
     int screenH = workArea.bottom - workArea.top;
     int posX = workArea.left + (screenW - std::min(resultW, screenW)) / 2;
     int posY = workArea.top + (screenH - std::min(resultH, screenH)) / 2;
-    WinPin::initFromData(posX, posY, resultW, resultH, imgData, L"rect");
+    WinPin::initFromData(posX, posY, resultW, resultH, imgData, L"geom");
 }

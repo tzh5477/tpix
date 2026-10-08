@@ -34,12 +34,11 @@ public:
 	void applyStyle() override;
 	// 批量旋转（见 ShapeBase::rotateBy）：位置绕 center 转 + 自身角度加 deg
 	void rotateBy(const float deg, const D2D1_POINT_2F& center) override;
-	// 矩形/圆之间互转的那一枚图标。马赛克与擦除同样从这个基类派生，
-	// 它们没有"换个形状"这回事，所以由 allowShapeToggle 分开
-	int actionCount() const override { return allowShapeToggle ? 1 : 0; }
-	void paintActionIcon(ID2D1DeviceContext* ctx, const int i, const D2D1_POINT_2F& c,
-		const float rad, ID2D1Brush* brush, const float strokeW) override;
-	void onAction(const int i) override;
+	// 工具条上「几何图形」选了哪一类（矩形 / 圆形），把这一笔翻成那一类。
+	// 元素左下角原来有一枚互转图标干这件事，撤掉之后换类别只在工具条上做得到
+	// （见 ToolSub::makeGeomKindBtns），所以选中态跟着工具条走 —— 与箭头样式同一条路。
+	// 马赛克与擦除没有"换个形状"这回事，由 useToolStyle 分开
+	void applyToolStyle() override;
 protected:
 	// 复制（见 ShapeBase::clone）。这一族只多两件事：rect 挪开、自己那支画刷重建一份，
 	// 具体是"哪个类"由派生类各写一行 cloneSelf
@@ -87,9 +86,6 @@ protected:
 	// 画完要 SetTransform 回去。派生类自己接管 paint 时（马赛克、擦除）同样得走它 ——
 	// 否则转过的角度只体现在手柄上，图形本身纹丝不动
 	D2D1_MATRIX_3X2_F setRotateTransform(ID2D1DeviceContext* ctx) const;
-	// 线宽 / 填充记在 config.json 的哪一组。只有矩形与圆这两个"取工具条当前样式"的
-	// 会用到：马赛克与擦除的画刷是按画面自己算出来的，跟着工具条走就被涂掉了
-	const wchar_t* styleGroup() const;
 	// 椭圆参数方程上的点：deg 按屏幕习惯（0 度朝右、正角度顺时针），scale 是半径的倍数
 	D2D1_POINT_2F ellipsePoint(const float deg, const float scale) const;
 	// 圆角手柄"初始位置"离角点的距离。它随图形尺寸走（小图形不该被手柄压满），
@@ -126,8 +122,10 @@ protected:
 	D2D1_POINT_2F anchorWorld{ 0.f, 0.f };
 	// 按下时 rect 的宽高。拖上下 / 左右手柄时，另一维要保持这个尺寸
 	float pressW{ 0.f }, pressH{ 0.f };
-	// 矩形与椭圆共用这一套，但只有它们才允许"互转"。马赛克 / 擦除派生出去时保持 false
-	bool allowShapeToggle{ false };
+	// 这一族取不取工具条上"当前那一套样式"（颜色 / 线宽 / 填充 / 类别）。
+	// 只有矩形与圆这两个"照工具条画"的会用到：马赛克与擦除的画刷是按画面自己算出来的，
+	// 跟着工具条走就被涂掉了，它们也不参与"换个形状"
+	bool useToolStyle{ false };
 	Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brush;
 	float strokeWidth{ 1.f }, pressX{ 0.f }, pressY{ 0.f };
 	bool isFill{ false };

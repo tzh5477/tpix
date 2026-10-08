@@ -6,7 +6,7 @@ using Microsoft::WRL::ComPtr;
 ShapeImage::ShapeImage(Canvas* win) :ShapeRectBase(win)
 {
 	// 这是一整块实心内容，没有可摸的边框 —— 命中带按"填充图形"那条路算（见基类 hitBody）。
-	// 顺带让滚轮调线宽那条路提前退出（它本来就只认 allowShapeToggle，这里再声明一次意图）
+	// 顺带让滚轮调线宽那条路提前退出（它本来就只认 useToolStyle，这里再声明一次意图）
 	isFill = true;
 }
 

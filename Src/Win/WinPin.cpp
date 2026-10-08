@@ -1660,8 +1660,8 @@ bool WinPin::isToolsVisible() const
 // 工具栏整组显隐（空格键）。这一下是"编辑"与"拖着图走"两个状态之间的硬切换：
 //   · 收起来 —— 连画笔一起放掉。放着画笔不动的话左键仍然落在画布上（见 onDown 里的
 //     hasDrawTool），那就不是用户要的"拖动截图"那个状态了
-//   · 请回来 —— 直接落到矩形工具上，抬手就能框东西，不必再点一次按钮。
-//     进编辑界面那条路（框完选区直接 startPin(L"rect")，见 WinCap::onUp）本来就把 rect
+//   · 请回来 —— 直接落到几何图形工具上，抬手就能框东西，不必再点一次按钮。
+//     进编辑界面那条路（框完选区直接 startPin(L"geom")，见 WinCap::onUp）本来就把几何图形
 //     预选好了；中途收放一次再回来也回到同一个起点，两个入口的手感才对得上
 void WinPin::setToolsVisible(bool on)
 {
@@ -1700,12 +1700,12 @@ void WinPin::setToolsVisible(bool on)
 	// 缩略图 / 贴边细条这两种收法本来就没给工具条留位置，先还原再谈显示
 	if (isThumb) setThumbMode(false);
 	if (isMinimized) setMinimized(false);
-	// 不先 refreshToolSub：下面那句 selectTool 会按 rect 把 ToolSub 整个重建一遍，
+	// 不先 refreshToolSub：下面那句 selectTool 会按 geom 把 ToolSub 整个重建一遍，
 	// 与 refreshToolSub 是同一套派发（见那里的说明），先建一次是白建
 	toolMain->show();
 	setSideBarVisible(true);
 	// 由它带着跑 layoutTools，位置一并摆好
-	toolMain->selectTool(L"rect");
+	toolMain->selectTool(L"geom");
 }
 
 WinPin::~WinPin()

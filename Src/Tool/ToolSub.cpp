@@ -32,8 +32,9 @@ namespace {
 		float min, max, def;
 	};
 	const std::pair<const wchar_t*, SliderCfg> sliderCfgs[]{
-		{ L"rect",    { L"width",     1.f, 26.f,  2.f } },
-		{ L"ellipse", { L"width",     1.f, 26.f,  2.f } },
+		// 矩形与圆形并成「几何图形」之后共用这一组：两类只是画法不同，线宽 / 颜色 / 填充
+		// 本就该是"这一支笔"的一套（并之前它们各占一格按钮、各存一份，切类别时色板会跳）
+		{ L"geom",    { L"width",     1.f, 26.f,  2.f } },
 		{ L"arrow",   { L"width",     1.f, 16.f,  3.f } },
 		{ L"number",  { L"radius",    6.f, 86.f, 16.f } },
 		{ L"line",    { L"width",     1.f, 60.f, 12.f } },
@@ -264,6 +265,10 @@ ToolSub::ToolSub(WinPin* win) :Ling::WinBase(), win(win)
 	// 色板表先就位。后面任何一个 getSelectedColor* 都直接按下标取 colors[]，
 	// 表空着的话第一次取色就是越界读 —— 而那可能发生在做任何 UI 之前（图上的水印每帧取色）
 	refreshColors();
+	// 老配置迁移 + 当前类别。类别要赶在第一次建面板之前读回来：ToolMain 那枚按钮的图标
+	// 也按它画，而它读的是同一份落盘值
+	migrateGeomCfg();
+	geomKind = std::clamp((int)Setting::get()->getToolNum(L"geom", L"kind", 0.f), 0, 1);
 	// DPI 变了（工具条被挪到缩放比例不同的显示器上，或者用户改了系统缩放）：
 	// Ling 只会把窗口按系统给的建议矩形整体缩放一遍，我们自己定的那套摆放规则不会重跑，
 	// 工具条就歪在别处了。位置也不能在 onDpiChanged 里直接改 —— 那个事件在 Ling 应用建议矩形
@@ -369,6 +374,9 @@ void ToolSub::beginTool(const std::wstring& id)
 	// 同上：色板行末尾那块「当前色」也随 contentNode 一起销毁
 	colorMoreBtn = nullptr;
 	colorMoreLabel = nullptr;
+	// 同上：类别小图标。切到别的工具时它们随 contentNode 一起没了，
+	// 留着就是悬垂指针（syncGeomKindBtns 会往已删的按钮上写）
+	geomKindBtns.clear();
 	WinWatermarkPanel::close();
 	// 同上：取色器的锚点（色板行末尾那块）马上要被销毁重建，留着它就是悬空的
 	WinColorPicker::close();
@@ -390,21 +398,13 @@ void ToolSub::beginTool(const std::wstring& id)
 	selectColorIndex = idx < colors.size() ? idx : 0;
 }
 
-void ToolSub::showRectTools()
+void ToolSub::showGeomTools()
 {
-	beginTool(L"rect");
-	initSize(1, true);
-	makeToggleBtn(L"\ue602", &isRectFill, L"tool.rectFill", L"fill");
-	initSlider();
-	initColorBtns();
-	makeApplyAllBtn();
-}
-
-void ToolSub::showEllipseTools()
-{
-	beginTool(L"ellipse");
-	initSize(1, true);
-	makeToggleBtn(L"\ue600", &isEllipseFill, L"tool.ellipseFill", L"fill");
+	beginTool(L"geom");
+	// 类别两枚 + 填充一枚
+	initSize(3, true);
+	makeGeomKindBtns();
+	makeToggleBtn(L"\ue602", &isGeomFill, L"tool.geomFill", L"fill");
 	initSlider();
 	initColorBtns();
 	makeApplyAllBtn();
@@ -803,8 +803,8 @@ UINT32 ToolSub::getToolColorValue(const std::wstring& tool) const
 
 bool ToolSub::getCurrentFill() const
 {
-	if (curToolId == L"rect") return isRectFill;
-	if (curToolId == L"ellipse") return isEllipseFill;
+	// 矩形与圆形并成一支工具之后共用这一份开关（两类只是画法不同，填不填充是"这一支笔"的事）
+	if (curToolId == L"geom") return isGeomFill;
 	if (curToolId == L"arrow") return isArrowFill;
 	if (curToolId == L"number") return isNumberFill;
 	// 其余工具的面板上没有「填充」这一项（线条那枚是"半透明"，语义不同，不算）
@@ -1078,6 +1078,76 @@ Ling::Button* ToolSub::makeToggleBtn(const std::wstring& text, bool* flag, const
 		win->onToolStyleChanged();
 	});
 	return btn;
+}
+
+// 「几何图形」的两个类别：矩形 / 圆形。互斥单选 —— 选中的那一枚上底色，单击换类别并落盘。
+// 元素左下角原来那枚"矩形↔圆"互转图标干的就是这件事，撤掉它之后这里是唯一的入口：
+// 想把一个已经画好的矩形改成圆，选中它、再点这里那枚圆就行
+//（走 WinPin::onToolStyleChanged 的"档位"那条路，见 ShapeRectBase::applyToolStyle）
+void ToolSub::makeGeomKindBtns()
+{
+	// 码位与 ToolMain 那枚按钮上用的是同一对，形状一眼认得出，不必跟着语言包走
+	static const wchar_t* kindIcons[]{ L"\ue8e8", L"\ue6bc" };
+	// 提示沿用原来两枚工具按钮的文案（tool.rect / tool.ellipse）
+	static const wchar_t* kindTips[]{ L"tool.rect", L"tool.ellipse" };
+	geomKindBtns.clear();
+	for (int i = 0; i < 2; ++i) {
+		auto btn = contentNode->makeChild<Ling::Button>();
+		btn->setText(kindIcons[i]);
+		btn->setHeight(btnSize - 2.5);
+		btn->setFlexGrow(1.f);
+		btn->setFontFamily(L"icon");
+		btn->setFontSize(13.f);
+		applyToggleStyle(btn, i == geomKind);
+		tip->bind(btn, Lang::get(kindTips[i]));
+		// 捕获的是下标 i（值拷贝），按钮随 contentNode 销毁，this 与 WinPin 同生命周期
+		btn->onClick.add([this, i](Ling::Button*) {
+			// 已经是这一类了就什么都不做：不必把图上选中的那一笔再翻一遍
+			if (geomKind == i) return;
+			geomKind = i;
+			Setting::get()->setToolNum(L"geom", L"kind", (float)i);
+			syncGeomKindBtns();
+			// 主工具条那枚按钮的图标跟着类别走（它读的是同一份落盘值）
+			win->toolMain->syncGeomIcon();
+			// 传 true = 换的是"这一笔画成什么样"，与颜色 / 填充那些"外观"分流。
+			// 图上正选着的那一笔（或多选那一批）因此立刻跟着变
+			win->onToolStyleChanged(true);
+		});
+		geomKindBtns.push_back(btn);
+	}
+}
+
+void ToolSub::syncGeomKindBtns()
+{
+	for (size_t i = 0; i < geomKindBtns.size(); ++i) {
+		applyToggleStyle(geomKindBtns[i], (int)i == geomKind);
+	}
+}
+
+void ToolSub::migrateGeomCfg()
+{
+	auto setting = Setting::get();
+	// -1 是"这一项不存在"的哨兵：线宽的值域是 1~26、色板下标从 0 起，真正的配置都不会是它。
+	// getToolObj / save 在 Setting 里是私有的，所以只能靠"读不到"来判断要不要迁
+	if (setting->getToolNum(L"geom", L"width", -1.f) >= 0.f) return;   //新配置或已经迁过
+	auto w = setting->getToolNum(L"rect", L"width", -1.f);
+	auto c = setting->getToolNum(L"rect", L"colorIndex", -1.f);
+	// 搬哪一组：默认 rect，rect 那组是空的就看看 ellipse —— 用户可能只调过圆没调过矩形
+	auto src = L"rect";
+	if (w < 0.f && c < 0.f) {
+		src = L"ellipse";
+		w = setting->getToolNum(src, L"width", -1.f);
+		c = setting->getToolNum(src, L"colorIndex", -1.f);
+	}
+	// 两项都没有说明这一份配置里两组都是空的（用户从没调过它们）——
+	// 那就没什么可搬的，geom 走默认值正好与原来一致
+	if (w < 0.f && c < 0.f) return;
+	// 搬过来的是"用户调过的那套笔"，只写这一次 —— 之后再改就写 geom 那一组了
+	if (w >= 0.f) setting->setToolNum(L"geom", L"width", w);
+	else setting->setToolNum(L"geom", L"width", 2.f);      //老配置里没改过线宽，写默认值把"已迁"记下来
+	if (c >= 0.f) setting->setToolNum(L"geom", L"colorIndex", c);
+	// 「填充」是个布尔，读不出来"到底存没存过"，而它的默认就是关 —— 照读到的写回去不会改坏
+	setting->setToolFlag(L"geom", L"fill", setting->getToolFlag(src, L"fill", false));
 }
 
 Ling::Button* ToolSub::makeSelectBtn(const std::wstring& tipKey, const std::wstring& cfgKey,
