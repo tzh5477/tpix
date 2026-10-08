@@ -100,8 +100,8 @@ void WinSetting::makeContent(int index)
 	// 不复用容器逐个换 child：ScrollerBox::setChild 把子节点挂到自己的 content 下，
 	// ownership 却记在容器的 children 里，跨层 removeChild 要同时拆 yoga 与 visual 两棵树，
 	// 容易留残影；重建容器则两条路都干净
-	if (scroller) body->removeChild(scroller);
-	scroller = body->makeChild<Ling::ScrollerBox>();
+	if (scroller && contentCol) contentCol->removeChild(scroller);
+	scroller = contentCol->makeChild<Ling::ScrollerBox>();
 	scroller->setFlexGrow(1.f);
 	scroller->setWidthPercent(100.f);
 	// 内容保持自然高度（超出容器才滚动），所以不再给它设 flexGrow / 百分比
@@ -127,8 +127,8 @@ void WinSetting::makeContent(int index)
 	else {
 		content = scroller->makeChild<WinSettingAbout>();
 	}
-	content->setPaddingTop(40.f);
-	content->setPadding(20.f, 40.f, 20.f, 40.f);
+	// 顶部留白由上面那条头带负责，这里不再重复留一份（原先的 40 就是为了躲开关闭按钮）
+	content->setPadding(20.f, 0.f, 20.f, 40.f);
 	content->setFlexDirection(Ling::FlexDirection::Column);
 }
 
@@ -155,9 +155,23 @@ void WinSetting::onCreated()
 	menuBox->setPaddingTop(40.f);
 	initMenuItems(menuBox);
 
+	// 内容区自己再套一列，顶上先留一条 40 逻辑像素的头带。头带不能省：滚动容器要是
+	// 直接铺满窗口高度，往下滚时内容会一路顶到 y=0，从右上角那个「没有底色」的 ✕ 底下
+	// 穿过去 —— 看着就成了"内容压住了关闭按钮"。留一条不透明的头带、让滚动容器从它下面
+	// 开始，ScrollerBox 自带 clip，内容再也到不了那一块
+	contentCol = body->makeChild<Ling::Node>();
+	contentCol->setFlexGrow(1.f);
+	contentCol->setHeightPercent(100.f);
+	contentCol->setFlexDirection(Ling::FlexDirection::Column);
+	auto header = contentCol->makeChild<Ling::Node>();
+	header->setWidthPercent(100.f);
+	header->setHeight(40.f);
+	// 与 body 同色（必须不透明，否则滚上来的内容会透出来）
+	header->setBg(0xFAFAFAFF);
+
 	makeContent(0);
 
-	auto closeBtn = body->makeChild<Ling::Button>();
+	auto closeBtn = header->makeChild<Ling::Button>();
 	closeBtn->setSize(42.f, 32.f);
 	closeBtn->setPositionType(Ling::Position::Absolute);
 	closeBtn->setPosition(Ling::Edge::Right, 0);

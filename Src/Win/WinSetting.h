@@ -21,6 +21,8 @@ private:
 private:
 	std::vector<Ling::Button*> menus;
 	int menuIndex{ 0 };
+	// 内容区那一列的容器：头带 + 滚动容器都在它里面。makeContent 换页时挂到它下面
+	Ling::Node* contentCol{ nullptr };
 	// 内容区外面那层滚动容器。窗口高度被夹进工作区后放不下的行靠它滚出来
 	Ling::ScrollerBox* scroller{ nullptr };
 	Ling::Node* content{nullptr};
