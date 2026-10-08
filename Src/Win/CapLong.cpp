@@ -30,6 +30,10 @@ namespace {
     // 两次滚轮之间的间隔。加上滚动动画的沉降等待，一整轮落在 500~800ms 这个区间里：
     // 再快会抓到动画没走完的中间帧，拼图错行；再慢长页面要滚半天
     constexpr int scrollIntervalMs = 350;
+    // "这一帧没滚得动"之后，下一次重试之间的间隔。不必再等一整轮 —— 刚判过没动，
+    // 再等 350ms 也不会动。重试变密之后，"触底"与"这一页根本不滚"两条判定都早点落地
+    //（反馈里"只有一屏、误点了长截图，干等半天才进编辑界面"等的就是这一串重试）
+    constexpr int dismissRetryMs = 120;
     // 手动模式的抓屏间隔。不发滚轮，所以没有沉降等待要留，可以比自动那一路密一些
     constexpr int manualPollMs = 300;
     // 抓到"帧在变但匹配不出滚动量"的帧时，多半是滚动动画还没停。此时先不急着发
@@ -58,6 +62,13 @@ namespace {
         return gray;
     }
 
+    // 比较时的采样步长（行列都隔一个取一个）。这一段是长截图里最烫的地方：外层把条带
+    // 沿滚动轴滑一遍，内层是 strip × width 个像素 —— 一个 1080p 的选区，内层就是
+    // 100 × 1920 × 近千个候选 ≈ 两亿次乘加，而且全跑在 UI 线程上（反馈里的"卡住 /
+    // 按 esc 没反应"就是它把消息循环堵住了）。隔行隔列取四分之一，MSE 是平均值、
+    // 少采一半像素几乎不改判定；阈值那边按 sampleStep 还原成原来的量纲，所以还成立
+    constexpr int sampleStep = 2;
+
     // 在 gray1 中搜索与 gray2 最相似的偏移 y（MSE 匹配）
     // 用平均误差而非累积误差，避免比较行数不同时 y=0 占便宜：
     // 累积 SSD 在 y=0 比较 100 行、y=15 比较 85 行，前者"容错空间"大，
@@ -66,19 +77,28 @@ namespace {
     {
         int searchH = gray1H - gray2H + 1;
         if (searchH <= 0) return 0;
+        int rowsCompared = 0;
+        for (int row = 0; row < gray2H; row += sampleStep) ++rowsCompared;
+        if (rowsCompared <= 0) return 0;
         double minAvgError = DBL_MAX;
         int bestY = 0;
         for (int y = 0; y < searchH; y++) {
             double error = 0.0;
-            for (int row = 0; row < gray2H; row++) {
+            // 已经超过当前最优的候选不必再比（后面的平方和只会更大）—— 绝大多数候选
+            // 都在头几行就出局，这一条比采样本身省得还多
+            const double limit = minAvgError * rowsCompared / sampleStep;
+            bool worse = false;
+            for (int row = 0; row < gray2H && !worse; row += sampleStep) {
                 const BYTE* row1 = gray1 + (y + row) * width;
                 const BYTE* row2 = gray2 + row * width;
-                for (int x = 0; x < width; x++) {
-                    int diff = (int)row1[x] - (int)row2[x];
+                for (int x = 0; x < width; x += sampleStep) {
+                    const int diff = (int)row1[x] - (int)row2[x];
                     error += diff * diff;
+                    if (error > limit) { worse = true; break; }
                 }
             }
-            double avgError = error / gray2H;
+            if (worse) continue;
+            double avgError = error * sampleStep / rowsCompared;
             if (avgError < minAvgError) {
                 minAvgError = avgError;
                 bestY = y;
@@ -120,16 +140,25 @@ namespace {
         int bestS = 0;
         for (int s = 0; s < stripH; s++) {
             int rows = stripH - s; // 条带里还能和旧帧对上的行数
+            int rowsCompared = 0;
+            for (int r = 0; r < rows; r += sampleStep) ++rowsCompared;
+            if (rowsCompared <= 0) continue;
             double error = 0.0;
-            for (int r = 0; r < rows; r++) {
+            // 同 findMostSimilarY：超过当前最优的候选直接放弃（见那里的说明）。
+            // s == 0 时 limit 是 DBL_MAX，所以 avgAtZero 一定算得出来
+            const double limit = minAvgError * rowsCompared / sampleStep;
+            bool worse = false;
+            for (int r = 0; r < rows && !worse; r += sampleStep) {
                 const BYTE* row1 = grayOld + (size_t)(s + r) * width;
                 const BYTE* row2 = grayNew + (size_t)r * width;
-                for (int x = 0; x < width; x++) {
+                for (int x = 0; x < width; x += sampleStep) {
                     int diff = (int)row1[x] - (int)row2[x];
                     error += diff * diff;
+                    if (error > limit) { worse = true; break; }
                 }
             }
-            double avgError = error / rows;
+            if (worse) continue;
+            double avgError = error * sampleStep / rowsCompared;
             if (s == 0) avgAtZero = avgError;
             if (avgError < minAvgError) {
                 minAvgError = avgError;
@@ -177,10 +206,6 @@ void CapLong::dispose()
 
 void CapLong::paint(ID2D1DeviceContext* ctx)
 {
-    if (isCrop) {
-        paintCrop(ctx);
-        return;
-    }
     paintImgPreview(ctx);
     if (isFinish) {
         auto borderRadius{ 4.f * win->dpi };
@@ -196,37 +221,6 @@ void CapLong::paint(ID2D1DeviceContext* ctx)
 
 void CapLong::setCursor()
 {
-    if (isCrop) {
-        // 光标落在剪裁框的哪一块：边 / 角给对应的双向箭头，内部给四向，其余给十字
-        POINT pos{};
-        GetCursorPos(&pos);
-        ScreenToClient(win->hwnd, &pos);
-        switch (cropMask->hitTest(pos))
-        {
-        case MaskHit::TopLeft:
-        case MaskHit::BottomRight:
-            SetCursor(LoadCursor(nullptr, IDC_SIZENWSE));
-            return;
-        case MaskHit::TopRight:
-        case MaskHit::BottomLeft:
-            SetCursor(LoadCursor(nullptr, IDC_SIZENESW));
-            return;
-        case MaskHit::Top:
-        case MaskHit::Bottom:
-            SetCursor(LoadCursor(nullptr, IDC_SIZENS));
-            return;
-        case MaskHit::Left:
-        case MaskHit::Right:
-            SetCursor(LoadCursor(nullptr, IDC_SIZEWE));
-            return;
-        case MaskHit::Inside:
-            SetCursor(LoadCursor(nullptr, IDC_SIZEALL));
-            return;
-        default:
-            SetCursor(LoadCursor(nullptr, IDC_CROSS));
-            return;
-        }
-    }
     if (!isFinish && isShowStartBtn) {
         // 开始按钮跟着光标走，藏掉系统光标免得两个东西叠在一起
         SetCursor(NULL);
@@ -236,30 +230,8 @@ void CapLong::setCursor()
     }
 }
 
-void CapLong::onDown(POINT pos, bool isRight)
-{
-    if (!isCrop) return;
-    if (isRight) {
-        cancelCrop();
-        return;
-    }
-    cropDragging = true;
-    // 已经有框了就是调它（startAdjust 自己会按落点认边认角），没有才是新框一道
-    cropAdjusting = cropMask->hasRect();
-    if (cropAdjusting) cropMask->startAdjust(pos);
-    else cropMask->startMakeRect(pos);
-    win->refresh();
-}
-
 void CapLong::onMove(POINT pos)
 {
-    if (isCrop) {
-        if (!cropDragging) return;
-        if (cropAdjusting) cropMask->adjust(pos);
-        else cropMask->makeRect(pos);
-        win->refresh();
-        return;
-    }
     if (isFinish) {
         if (isShowStartBtn) {
             isShowStartBtn = false;
@@ -283,11 +255,6 @@ void CapLong::onMove(POINT pos)
 
 void CapLong::onUp(POINT pos)
 {
-    if (isCrop) {
-        cropDragging = false;
-        cropAdjusting = false;
-        return;
-    }
     if (isScrolling || isFinish) return;
     if (isShowStartBtn) { //按下开始按钮
         isScrolling = true;
@@ -315,7 +282,13 @@ void CapLong::onTimerCB(UINT timerId)
         if (targetHwnd == nullptr) {
             targetHwnd = tarHwnd;
         }
-        if (tarHwnd != targetHwnd) return; //鼠标没在截屏区域直接退出，定时器仍在检查
+        if (tarHwnd != targetHwnd) {
+            // 光标没在截屏区域：这一次不滚。但定时器必须自己续上 —— 顶上那句
+            // killTimer 已经把本轮的定时器撤了，直接 return 就再也没有人来 arm，
+            // 整个滚动截图永久停在这儿（画面还在、进度还在，就是一动不动 = "卡住"）
+            armScroll();
+            return;
+        }
         win->killTimer(scrollMsgId);
         INPUT input = { 0 };
         input.type = INPUT_MOUSE;
@@ -490,6 +463,8 @@ void CapLong::flipDir()
     settleRecheckCount = 0;
     // 已经拼出来的那一截是沿另一个轴排的：resultW / resultH 的含义和 imgData 的行距全变了，
     // 几何对不上，只能丢掉、拿当前这一帧重新起头（换向都发生在"滚不动"那一步，此时 img1 就是最新一帧）
+    // ⚠️ 所以换向**只在一次都没拼成过的时候**才允许发生 —— 那条守则在 countDismiss 里，
+    // 这里丢掉的是"结果图"，拼过东西之后再走这条路就等于把用户已经截到的内容扔了
     imgData = img1;
     resultW = imgW;
     resultH = imgH;
@@ -500,7 +475,12 @@ void CapLong::flipDir()
 
 void CapLong::armScroll()
 {
-    // 手动模式没有"滚轮沉降"要等，抓屏可以密一些；自动那一路要把沉降时间算进去
+    // 手动模式没有"滚轮沉降"要等，抓屏可以密一些；自动那一路要把沉降时间算进去。
+    // 正在"滚不动"的重试里（dismissTime > 0）走更短的间隔，见 dismissRetryMs
+    if (!manual && dismissTime > 0) {
+        win->setTimer(dismissRetryMs, scrollMsgId);
+        return;
+    }
     win->setTimer(manual ? manualPollMs : scrollIntervalMs, scrollMsgId);
 }
 
@@ -513,8 +493,13 @@ void CapLong::countDismiss()
         return;    // 已自行续上，调用方直接返回
     }
     dismissTime++;
-    // 换方向要趁早：等满 maxDismissTime 再换，用户已经干等好几秒了
-    if (dismissTime > dirFlipAt && !dirFlipped) { flipDir(); return; }
+    // ⚠️ 已经拼进过内容之后**绝不能再换方向**。换向要把几何整个重来（resultW / resultH 的
+    // 含义、imgData 的行距都跟着轴变），已经拼好的那一整段接不上，只能丢掉 ——
+    // 于是成图只剩最后一帧。而"往另一个方向也滚不动"是必然的（页面本就是竖向滚的），
+    // 结果是任何一次正常的竖向长截图，滚到底之后都会被换向 + 丢弃，
+    // 最后交出去的是一张单屏图 —— 反馈里"经常只截取了最后一屏"就是这么来的
+    const bool stitched{ resultH != imgH || resultW != imgW };
+    if (!stitched && dismissTime > dirFlipAt && !dirFlipped) { flipDir(); return; }
     if (dismissTime > maxDismissTime) { stopCap(true); return; }
     armScroll();
     return;
@@ -607,7 +592,6 @@ void CapLong::paintImgPreview(ID2D1DeviceContext* ctx)
 }
 
 // 收工。手动模式下整窗是让出鼠标的，这里要收回来，否则成图之后连工具条都点不到
-// （工具条是独立窗口、本来点得到，但剪裁要在图上框选，图必须重新接受鼠标）
 void CapLong::stopCap(bool reachedEnd)
 {
     isFinish = true;
@@ -618,11 +602,10 @@ void CapLong::stopCap(bool reachedEnd)
     win->setMouseTransparent(false);
     makeStopText(reachedEnd);
     win->refresh();
-    // 自己滚到底停下的 = 这一轮图截完了：直接把成图交给编辑界面，用户不必再点一次「贴图」。
+    // 自己滚到底停下的 = 这一轮图截完了：直接把成图交给编辑界面，用户不必再点一次什么。
     // 上面那句话只会闪一帧，但留着它有用 —— 交接没成（一帧都没抓到时 pin 自己会返回）
     // 或者图超了限时窗口本来就得留着，那正是唯一能给用户的交代。
-    // 用户叫停那两条路（ESC / 工具条上的「贴图」）不经过这里：它们走 finish / pin，
-    // 最后汇到的是同一扇编辑窗。
+    // 用户叫停那条路（ESC）不经过这里：它走 finish → pin，最后汇到的是同一扇编辑窗。
     // 超限的不交接：那张图 D2D 建不出位图（见 capStep 里同一道判断），交过去只是一扇空窗
     if (reachedEnd && !imgData.empty() && resultW <= longLimit && resultH <= longLimit) {
         pin();
@@ -684,7 +667,6 @@ bool CapLong::saveToFile()
 
 void CapLong::toggleMode()
 {
-    if (isCrop) return;
     manual = !manual;
     // 拼接是按"前后两帧的内容"对齐的，与谁发的滚动无关，所以中途换模式不会把已拼好的
     // 那一截弄坏。要跟着换的只有一件事：手动模式得把鼠标让给底下的窗口，用户才拖得动滚动条
@@ -695,120 +677,16 @@ void CapLong::toggleMode()
 
 void CapLong::finish(bool toPin)
 {
-    if (isCrop) cancelCrop();
     if (isRunning()) stopCap(false);
     if (toPin && !imgData.empty()) pin();
 }
 
-void CapLong::startCrop()
-{
-    if (imgData.empty()) return;
-    // 还在滚就先收工：剪裁要的是一张静止的成图
-    if (isRunning()) stopCap(false);
-    isCrop = true;
-    cropDragging = false;
-    cropAdjusting = false;
-    cropMask = std::make_unique<CutMask>(win);
-    // 尺寸必须自由：截图那边的「固定区域」设置不能把剪裁框钉成别的大小
-    cropMask->ignoreFixedSize = true;
-    // 标签量的是窗口坐标，而用户关心的是剪完剩多少像素，摆出来只会误导，藏掉
-    cropMask->hideLabel = true;
-    makeCropImg();
-    makeCropTip();
-    win->refresh();
-}
-
-void CapLong::cancelCrop()
-{
-    if (!isCrop) return;
-    isCrop = false;
-    cropDragging = false;
-    cropAdjusting = false;
-    cropMask.reset();
-    cropImg.Reset();
-    layoutCropTip = nullptr;
-    win->refresh();
-}
-
-void CapLong::makeCropImg()
-{
-    cropImg.Reset();
-    D2D1_BITMAP_PROPERTIES1 props{
-        .pixelFormat{ D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED) },
-        .dpiX{ 96.f }, .dpiY{ 96.f }, .bitmapOptions{ D2D1_BITMAP_OPTIONS_NONE }
-    };
-    auto hr = Ling::D2D::get()->deviceContext->CreateBitmap(
-        D2D1::SizeU((UINT32)resultW, (UINT32)resultH), imgData.data(),
-        (UINT32)resultW * 4, props, cropImg.GetAddressOf());
-    if (FAILED(hr)) { cropImg.Reset(); return; }
-    // 整图缩到窗口里（只缩不放），居中。剪裁框是窗口坐标，换回成图像素全靠 cropScale
-    const float pad = 24.f * win->dpi;
-    cropScale = std::min((win->w - pad * 2.f) / (float)resultW, (win->h - pad * 2.f) / (float)resultH);
-    if (cropScale > 1.f) cropScale = 1.f;
-    const float drawW = (float)resultW * cropScale;
-    const float drawH = (float)resultH * cropScale;
-    const float left = (win->w - drawW) / 2.f;
-    const float top = (win->h - drawH) / 2.f;
-    cropDest = D2D1::RectF(left, top, left + drawW, top + drawH);
-}
-
-void CapLong::makeCropTip()
-{
-    layoutCropTip = Ling::D2D::get()->makeTextLayout(Lang::get(L"long.cropTip"), 13 * win->dpi);
-}
-
-void CapLong::paintCrop(ID2D1DeviceContext* ctx)
-{
-    auto dim = D2D1::ColorF(0x000000, 0.72f);
-    ctx->Clear(&dim);
-    if (cropImg) {
-        ctx->DrawBitmap(cropImg.Get(), cropDest, 1.f, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
-    }
-    cropMask->paint(ctx);
-    if (!layoutCropTip) return;
-    DWRITE_TEXT_METRICS tm{};
-    if (FAILED(layoutCropTip->GetMetrics(&tm))) return;
-    const float pad = 8.f * win->dpi;
-    D2D1_RECT_F bar{ win->w / 2.f - tm.width / 2.f - pad, pad,
-        win->w / 2.f + tm.width / 2.f + pad, pad + tm.height + pad * 2.f };
-    ctx->FillRectangle(bar, bgBrush.Get());
-    ctx->DrawTextLayout({ bar.left + pad, bar.top + pad },
-        layoutCropTip.Get(), textBrush.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
-}
-
-void CapLong::confirmCrop()
-{
-    if (!isCrop || !cropMask->hasRect()) return;
-    auto& r = cropMask->maskRect;
-    const int x0 = std::clamp((int)std::lround((r.left - cropDest.left) / cropScale), 0, resultW);
-    const int y0 = std::clamp((int)std::lround((r.top - cropDest.top) / cropScale), 0, resultH);
-    const int x1 = std::clamp((int)std::lround((r.right - cropDest.left) / cropScale), 0, resultW);
-    const int y1 = std::clamp((int)std::lround((r.bottom - cropDest.top) / cropScale), 0, resultH);
-    const int nw = x1 - x0, nh = y1 - y0;
-    if (nw <= 0 || nh <= 0) return;
-    const size_t rowBytes = (size_t)nw * 4;
-    std::vector<BYTE> out(rowBytes * nh);
-    for (int y = 0; y < nh; y++) {
-        CopyMemory(out.data() + (size_t)y * rowBytes,
-            imgData.data() + ((size_t)(y0 + y) * resultW + x0) * 4, rowBytes);
-    }
-    imgData = std::move(out);
-    resultW = nw;
-    resultH = nh;
-    cancelCrop();
-    // 剪完的图才是要拿去贴图 / 存盘的那张，缩略图重出一次
-    makeImgPreview();
-    win->refresh();
-}
-
 // 收工，并把成图开到编辑界面上（工具条在、矩形预选）。这是滚动截图这一轮的终点 ——
 // 与"框选截图 → 框完直接进编辑界面"（见 WinCap::onUp）殊途同归，用户看到的是同一种窗。
-// 三条路都汇到这里：滚到底自动停（stopCap）、用户按 ESC 叫停（finish）、
-// 工具条上的「贴图」按钮（WinCap::longPin）
+// 两条路都汇到这里：滚到底自动停（stopCap）、用户按 ESC 叫停（finish）
 void CapLong::pin()
 {
     if (imgData.empty()) return;
-    if (isCrop) cancelCrop();
     if (isRunning()) stopCap(false);
     // 居中放置在主显示器
     auto monitor = MonitorFromPoint({ 0, 0 }, MONITOR_DEFAULTTOPRIMARY);

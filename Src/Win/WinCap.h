@@ -17,6 +17,10 @@ public:
 	// 悬浮球上那些一键图标点的就是它，命令行 --enter=xxx 走的是同一条路
 	static void init(const std::wstring& enter = L"");
 	static void initNow(const std::wstring& enter = L"");
+	// 带着一个已经定好的选区进截图（**屏幕坐标**）。编辑界面右侧那条竖排上的
+	// 「截长图 / 录屏」走这条 —— 用户那块范围早就框好了，不该再让他框一次
+	//（原先那条路是另起一次空白的全屏截图，选好的范围当场作废，这是明确的反馈）
+	static void initWithRect(const RECT& screenRect, const std::wstring& enter);
 	static WinCap* get();
 	// 退出流程里调：窗口对象是文件级静态变量，交给静态析构就在 CoUninitialize 之后了
 	static void dispose();
@@ -56,17 +60,11 @@ public:
 	// ToolLong，转给 capLong
 	// ToolLong 的摆放规则在 CapLong 手里，它 DPI 变了要重走一遍，从这里转进去
 	void layoutLongTool();
-	void longPin();
-	// ToolLong 上的新增按钮：手动 / 自动开关、二次剪裁
+	// ToolLong 上那枚手动 / 自动滚动开关
 	void toggleLongMode();
-	void longStartCrop();
-	// 剪裁框确认（回车）。返回是否已经接手，好让调用方跳过原本的动作
-	bool longConfirmCrop();
 	// 长截图收工并贴图。ESC 走的就是这条：滚完即贴图，再按一次 ESC 由贴图窗口退出
 	void longFinishAndPin();
 	bool isLongManual() const;
-	// 长截图已经拼出图了没有。ToolLong 上那几个出口按钮靠它挡住"还没开始就点"
-	bool longHasImage() const;
 	// 用户在另存为对话框里取消时返回 false，此时图还在，不该收工
 	bool longSaveToFile();
 	void longCopyToClipboard();
@@ -75,6 +73,9 @@ public:
 	std::unique_ptr<CutMask> cutMask;
 private:
 	WinCap();
+	// init / initNow / initWithRect 的公共部分：取快照、建窗。presetRect 非空时
+	// 记下这块选区，onCreated 里直接摆好并进入 enter 指定的阶段
+	static WinCap* create(const std::wstring& enter, const RECT* presetRect);
 	void onCreated() override;
 	void layout() override;
 	BOOL setCursor() override;
@@ -124,9 +125,13 @@ private:
 	std::unique_ptr<CapVideo> capVideo;
 	Microsoft::WRL::ComPtr<ID2D1Bitmap1> screenImg,pixImg;
 	D2D1_RECT_F pixSrcRect{};
-	// 本次进截图要直接走的阶段（悬浮球的一键图标 / 命令行 --enter）。
+	// 本次进截图要直接走的阶段（悬浮球的一键图标 / 命令行 --enter / 编辑界面右侧竖排）。
 	// 空串表示照常拖框、然后进编辑界面。框选在 onUp 里才结束，所以得先存下来
 	std::wstring enterArg;
+	// 进窗时就要摆好的选区（屏幕坐标）。只有 initWithRect 会置上它，
+	// onCreated 里摆完就清掉，之后与正常拖框那条路再无差别
+	bool hasEnterRect{ false };
+	RECT enterRect{};
 	// 铺满窗口的画布，走 swap chain 双缓冲：底图、蒙版、放大镜每帧都重画，
 	// 单缓冲会让合成器采到"擦干净还没画完"的中间态
 	Ling::Canvas* canvas{ nullptr };

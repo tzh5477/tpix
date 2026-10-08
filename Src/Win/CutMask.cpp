@@ -385,7 +385,12 @@ void CutMask::adjust(POINT pos)
 
 void CutMask::paint(ID2D1DeviceContext* ctx)
 {
-	if (!layout || !hasRect()) return;
+	// 前置条件只有"框出选区了"。layout 是左上角那个尺寸标签，不能拿它当整幅遮罩的开关：
+	// 从外面直接摆好 maskRect 进来的那条路（贴图窗右侧竖排的「截长图 / 录屏」，见
+	// WinCap::onCreated 的 hasEnterRect 分支）从来没走 makeRect，也就没建过 layout ——
+	// 于是滚动截图全程既不压暗四周、也不画选区那圈蓝框，用户根本看不出在截哪一块
+	//（反馈原话："滚动截图，框选的线框消失了"）。标签本身仍然是有 layout 才画
+	if (!hasRect()) return;
 	if (isPoly() && ringGeom && polyGeom) {
 		ctx->FillGeometry(ringGeom.Get(), brushBg.Get());
 		ctx->DrawGeometry(polyGeom.Get(), brushBorder.Get(), strokeWidth);
@@ -398,7 +403,7 @@ void CutMask::paint(ID2D1DeviceContext* ctx)
 		auto halfStrokeWidth{ strokeWidth / 2.f };
 		ctx->DrawRectangle(D2D1::RectF(maskRect.left - halfStrokeWidth, maskRect.top - halfStrokeWidth, maskRect.right + halfStrokeWidth, maskRect.bottom + halfStrokeWidth), brushBorder.Get(), strokeWidth);
 	}
-	if (hideLabel) return;
+	if (hideLabel || !layout) return;
 	ctx->FillRectangle(layoutRect, brushBg.Get());
 	ctx->DrawTextLayout({ layoutRect.left+ paddingMargin, layoutRect.top+ paddingMargin }, layout.Get(), brushText.Get(), D2D1_DRAW_TEXT_OPTIONS_NONE);
 }

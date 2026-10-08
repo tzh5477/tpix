@@ -68,31 +68,14 @@ void ToolLong::refreshMode()
 
 void ToolLong::onClick(Ling::Button* btn)
 {
-	// 模式开关与剪裁都不是"做完就收工"，切完留在原地继续
+	// 模式开关不是"做完就收工"，切完留在原地继续，用户接着滚
 	if (btn->id == L"mode") {
 		win->toggleLongMode();
 		return;
 	}
-	else if (btn->id == L"crop") {
-		win->longStartCrop();
-		return;
-	}
-	// 还没点"开始"时一张图都没有，这几个出口点了也是白点。与 Ctrl+S / Ctrl+C 那边的
-	// hasImage 判断是同一条规则，别让用户刚进长截图就把窗口点没了
-	if (btn->id == L"pin" || btn->id == L"save" || btn->id == L"clipboard" || btn->id == L"crop") {
-		if (!win->longHasImage()) return;
-	}
-	// 其余都是"做完就收工"：先停滚动，做完动作后统一关掉整个滚动截图流程
-	if (btn->id == L"pin") {
-		win->longPin();
-	}
-	else if (btn->id == L"clipboard") {
-		win->longCopyToClipboard();
-	}
-	else if (btn->id == L"save") {
-		// 唯一的例外：另存为对话框被取消了，滚了半天的图还在，别就这么关掉
-		if (!win->longSaveToFile()) return;
-	}
+	// 剩下的只有关闭：整个滚动截图流程连同这一轮拼好的内容一并作废。
+	// "收工、把图拿去编辑"是另一条路 —— ESC（见 WinCap::onKey），
+	// 以及滚到底时它自己会走的那条（CapLong::stopCap）
 	win->close();
 }
 

@@ -15,33 +15,26 @@ public:
 	// 以下几个都由 WinCap 在对应的事件里转进来
 	void onMove(POINT pos);
 	void onUp(POINT pos);
-	// 剪裁阶段的按下 / 抬起。滚动阶段不需要：那时光标归被截的窗口
-	void onDown(POINT pos, bool isRight);
 	void onTimerCB(UINT timerId);
 	void setCursor();
 	void paint(ID2D1DeviceContext* ctx);
-	// 三个都是 ToolLong 的按钮动作，做完由 ToolLong 关掉宿主窗口。
-	// saveToFile 返回是否真的存下来了：用户在另存为对话框里按了取消时不该收工
+	// 把拼好的图存进剪切板 / 存成文件。Ctrl+C、Enter 与 Ctrl+S 走这两条，
+	// 做完由 WinCap 关掉宿主窗口（saveToFile 返回是否真的存下来了：用户在另存为
+	// 对话框里按了取消时不该收工）
 	void copyToClipboard();
 	bool saveToFile();
-	// 把成图开到编辑界面上（预选矩形）。滚到底自动停 / ESC 叫停 / 「贴图」按钮都汇到这里
+	// 把成图开到编辑界面上（预选矩形）。滚到底自动停 / ESC 叫停 都汇到这里
 	void pin();
 	// Ctrl+S / Ctrl+C 用：还没点"开始"的时候一张图都没有，此时快捷键不该生效
 	bool hasImage() const { return !imgData.empty(); }
-	// 正在滚动（还没收工）。ESC 与工具条上的按钮都靠它判断该不该先停下来
+	// 正在滚动（还没收工）。ESC 靠它判断该不该改成"收工并贴图"（见 WinCap::onKey）
 	bool isRunning() const { return isScrolling && !isFinish; }
-	bool isCropping() const { return isCrop; }
 	// 手动 / 自动切换：手动不发滚轮，只按固定间隔抓屏比对，滚动条由用户自己拖
 	bool isManual() const { return manual; }
 	void toggleMode();
 	// 收工。reachedEnd = 是滚到底自己停的（会显示"已触底"），false = 用户叫停的。
 	// toPin = 收工后把拼好的图钉到桌面上（ESC 走的就是这条）
 	void finish(bool toPin);
-	// 二次剪裁：滚动时带进来的滚动条断断续续，成图之后可以再框一次把它剪掉
-	void startCrop();
-	// 回车确认剪裁：把剪裁框映射回成图像素，就地替换 imgData
-	void confirmCrop();
-	void cancelCrop();
 	// ToolLong 的摆放规则：摆在选区右侧（右边放不下就改到左侧），底边与选区底边齐，
 	// 最后一律夹进工作区 —— 全屏截图时前两条规则算出来的都在屏幕外。
 	// 建窗口时走一遍，工具条的 DPI 变了之后由它回头再走一遍
@@ -62,10 +55,6 @@ private:
 	void stitch(const std::vector<BYTE>& data, const int shift);
 	// 配置的那个方向滚不动：换另一个方向再来一次，一次截图里只换一次
 	void flipDir();
-	// 剪裁：把成图缩到窗口里铺开，记下映射关系；画与命中都靠它
-	void makeCropImg();
-	void paintCrop(ID2D1DeviceContext* ctx);
-	void makeCropTip();
 	// 重新起表等下一次抓屏 / 发下一次滚轮
 	void armScroll();
 	// 这一帧"没滚得动"：手动模式就此打住（用户自己在控制节奏），自动模式累计到次数就换方向 / 触底
@@ -93,7 +82,6 @@ private:
 	Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> bgBrush;
 	Microsoft::WRL::ComPtr<IDWriteTextLayout> layoutTextStart;
 	Microsoft::WRL::ComPtr<IDWriteTextLayout> layoutTextEnd;
-	Microsoft::WRL::ComPtr<IDWriteTextLayout> layoutCropTip;
 	float startCircleR{ 30.f };
 	POINT circleCenter{};
 	HWND targetHwnd{ nullptr };
@@ -105,15 +93,4 @@ private:
 	// 成图尺寸：竖向时宽 = imgW、高在长；横向时高 = imgH、宽在长
 	int resultW{ 0 }, resultH{ 0 };
 	POINT capStartPos{};
-	// —— 二次剪裁 ——
-	bool isCrop{ false };
-	bool cropDragging{ false };
-	// 这一轮拖动是在调已有的剪裁框（而不是第一次框出它）
-	bool cropAdjusting{ false };
-	// 剪裁用的独立蒙层，与宿主的 cutMask 分开：它框的是成图，不是屏幕上的选区
-	std::unique_ptr<CutMask> cropMask;
-	Microsoft::WRL::ComPtr<ID2D1Bitmap1> cropImg;
-	// 成图铺在窗口里的落点与缩放。剪裁框（窗口坐标）换算回成图像素全靠它
-	D2D1_RECT_F cropDest{};
-	float cropScale{ 1.f };
 };

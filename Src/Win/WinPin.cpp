@@ -232,8 +232,11 @@ void WinPin::onClosed()
 		// 它就是在这次 sync 里发现那张已经不在了、把指针清掉的
 		PinHiddenBar::sync();
 		// 用完即走模式下，最后一个贴图窗口关掉就退出进程，不驻留在系统里。
-		// 贴图可以同时开好几个（标注、长截图各来一张），所以得等它们都没了才退
-		if (winPins.empty()) {
+		// 贴图可以同时开好几个（标注、长截图各来一张），所以得等它们都没了才退。
+		// "没有贴图窗了"不等于"活儿干完了"：截图窗口还在跑的那条路（框完选区直接点
+		// 「截长图」，这张图当场关掉、选区交给新的截图窗口，见 startLongTask），
+		// 这时候退出去会把正在滚的那一轮长截图截断
+		if (winPins.empty() && !WinCap::get()) {
 			if (Ling::App::get()->args[L"--auto-quit"] == L"true") {
 				Ling::App::get()->quit(0);
 			}
@@ -2599,20 +2602,49 @@ void WinPin::setTextSelect(bool on)
 // 长截图 / 录屏：**另起一次截图流程**去处理，当前这张不参与。
 // 为什么要先把当前这张收起来：新任务是铺满整个桌面的截图窗口，这张图要是不让位，
 // 就会挡住用户要截的那片屏幕；录屏更直接 —— 它会连这张图一起录进去。
-// 收进屏幕边上的书签条而不是关掉：作者要的是"保留当前编辑的截图" ——
+// 画过标注的收进屏幕边上的书签条而不是关掉：作者要的是"保留当前编辑的截图" ——
 // 位置、底图、标注一个都不动，长图 / 录屏做完鼠标移回那条书签上它就原样回来
 void WinPin::startLongTask()
 {
 	if (isClosed) return;
+	// 把当前这张图占着的屏幕区域原样交给新任务：窗口铺的就是这张图（客户区即图），
+	// 所以窗口矩形就是"用户已经框好的那块"。不这么做的话新任务是**另起一次空白截图**，
+	// 用户辛苦框好的范围当场作废、还得从头再框一遍 —— 那正是反馈里的问题
+	const RECT rect{ x, y, x + (LONG)w, y + (LONG)h };
+	// 这张图上什么都没画（框完选区顺手就点了「截长图」，最常走的那条路）：没有东西需要
+	// 替用户留住 —— 而长图拼完自己会开一扇编辑窗（见 CapLong::stopCap），用户要的是那一张。
+	// 留着它只会让屏幕左边多出一条书签，用户还得自己去认领那条东西是什么
+	//（反馈原话："会有最开始选区的截图贴屏操作，在屏幕左上角隐藏"）。
+	// 画过标注的才走 setHidden 那条：那些标注是用户的作品，得能原样回来
+	if (!hasAnnotations()) {
+		close();
+		WinCap::initWithRect(rect, L"long");
+		return;
+	}
 	setHidden(true);
-	WinCap::init(L"long");
+	WinCap::initWithRect(rect, L"long");
 }
 
+// 录屏这条不动上面那套判断：它收工之后把文件交给剪切板 / 存盘就完了，
+// 不像长图那样会自己开一扇编辑窗 —— 关掉这张图，用户桌面上就什么都不剩了
 void WinPin::startVideoTask()
 {
 	if (isClosed) return;
+	// 与 startLongTask 同一条路：录屏也要的是"已经框好的这一块"，不该让用户再框一次
+	const RECT rect{ x, y, x + (LONG)w, y + (LONG)h };
 	setHidden(true);
-	WinCap::init(L"video");
+	WinCap::initWithRect(rect, L"video");
+}
+
+// "这张图上有没有东西"。撤销掉的元素不算 —— 用户画了又全撤回原样，
+// 留下来也只是一张和框选结果一模一样的截图
+bool WinPin::hasAnnotations() const
+{
+	if (!drawing || !drawing->history) return false;
+	for (auto& shape : drawing->history->shapes) {
+		if (!shape->isUndo) return true;
+	}
+	return false;
 }
 
 // 文字识别：对当前这张图跑一次 OCR，结果开在识别窗里（可复制 / 换语言 / 表格模式）。

@@ -71,9 +71,8 @@ void WinCap::init(const std::wstring& enter)
     initNow(enter);
 }
 
-void WinCap::initNow(const std::wstring& enter)
+WinCap* WinCap::create(const std::wstring& enter, const RECT* presetRect)
 {
-    if (winCap) return;
     // 指针快照必须在建窗之前取：窗口一出来指针就换成 tpix 自己的了，
     // 那时再取，截到的是我们的箭头而不是用户当时指着的那个
     Util::snapshotCursor();
@@ -82,9 +81,26 @@ void WinCap::initNow(const std::wstring& enter)
     auto ptr = new WinCap();
     ptr->prevForeground = prev;
     ptr->enterArg = enter;
+    if (presetRect) {
+        ptr->hasEnterRect = true;
+        ptr->enterRect = *presetRect;
+    }
     winCap.reset(ptr);
-	ptr->cutMask = std::make_unique<CutMask>(ptr);
+    ptr->cutMask = std::make_unique<CutMask>(ptr);
     ptr->createNativeWindow(WS_EX_TOOLWINDOW | WS_EX_TOPMOST, WS_POPUP);//WS_EX_TOPMOST
+    return ptr;
+}
+
+void WinCap::initNow(const std::wstring& enter)
+{
+    if (winCap) return;
+    create(enter, nullptr);
+}
+
+void WinCap::initWithRect(const RECT& screenRect, const std::wstring& enter)
+{
+    if (winCap) return;
+    create(enter, &screenRect);
 }
 
 WinCap* WinCap::get()
@@ -114,6 +130,19 @@ void WinCap::onCreated()
     getPixImg(pos);
     setPixPos(pos);
     show();
+    // 带着预设选区进来的（编辑界面右侧竖排的「截长图」）：先把选区摆好，再直接进目标阶段。
+    // enterByArg 的前提正是"选区已经定下来了"，这里恰好满足它。
+    // 之所以要绕这一道而不是在 initWithRect 里建窗后立刻做：cutMask 是 onCreated 之前
+    // 刚 new 出来的，而底图（screenImg）要到 onCreated 里才抓 —— 顺序反了就白忙
+    if (hasEnterRect) {
+        hasEnterRect = false;
+        auto& m = cutMask->maskRect;
+        m.left = (float)(enterRect.left - (int)x);
+        m.top = (float)(enterRect.top - (int)y);
+        m.right = (float)(enterRect.right - (int)x);
+        m.bottom = (float)(enterRect.bottom - (int)y);
+        enterByArg();
+    }
 }
 
 void WinCap::layout()
@@ -127,10 +156,9 @@ void WinCap::layout()
     if (!hideScreenImg) {
         ctx->DrawBitmap(screenImg.Get(), destRect);
     }
-    // 剪裁阶段屏幕上画的是成图，原来那个屏幕选区的蒙层不该再出现
-    if (!capLong || !capLong->isCropping()) {
-        cutMask->paint(ctx);
-    }
+    // 蒙层每帧都要画：滚动截图的选区是**从外面摆进来**的（见 onCreated 的 hasEnterRect），
+    // 这一圈蓝框就是用户判断"正在截哪一块"的唯一依据，绝不能因为别的原因跳过
+    cutMask->paint(ctx);
     if (capLong) capLong->paint(ctx);
     paintPix(ctx);
     canvas->finishPaint();
@@ -288,11 +316,6 @@ void WinCap::onKey(UINT key)
         return cr;
     };
     if (key == VK_ESCAPE) {
-        // 剪裁中：ESC 是放弃这一刀，回到成图那一步（下面那次 ESC 才关窗）
-        if (capLong && capLong->isCropping()) {
-            capLong->cancelCrop();
-            return;
-        }
         // 滚动中：ESC = 收工并贴图。图钉到桌面后这个窗口就没用了，
         // 再按一次 ESC 关的是贴图窗口 —— 与"截图 -> 贴图 -> 退出"的手感一致
         if (capLong && capLong->isRunning()) {
@@ -328,12 +351,14 @@ void WinCap::onKey(UINT key)
         Ling::Util::setTextToClipboard(std::format(L"{},{}", pos.x, pos.y));
         close();
     }
-    // 长图与录屏阶段：Ctrl+S 存文件，Ctrl+C 存剪切板，等价于各自工具条上的那两个按钮。
+    // 长图与录屏阶段：Ctrl+S 存文件，Ctrl+C 存剪切板 —— 对长图来说是绕过编辑界面的两条
+    // 近路（ToolLong 上的那几枚出口按钮已经去掉，滚完自然会开编辑界面；这里是给
+    // 不想走编辑界面的老手留的快捷键），对录屏来说等价于工具条上那两个按钮。
     // 这两个阶段里键盘消息进的往往是工具条，ToolLong / ToolVideo 会把 onKeyDown 转回这里
     else if ((key == 'S' || key == 'C') && (GetKeyState(VK_CONTROL) & 0x8000)) {
         const bool toClipboard{ key == 'C' };
         if (stage == CapStage::Long && capLong && capLong->hasImage()) {
-            // 与 ToolLong::onClick 同一套规则：存盘被取消了就留在原地，图还没丢
+            // 存盘被取消了就留在原地，图还没丢
             if (toClipboard) longCopyToClipboard();
             else if (!longSaveToFile()) return;
             close();
@@ -354,8 +379,6 @@ void WinCap::onKey(UINT key)
     }
     // Enter 与 Ctrl+C 一个意思：把图存进剪切板
     else if (key == VK_RETURN) {
-        // 剪裁中回车是"就剪这一块"，不是复制
-        if (longConfirmCrop()) return;
         copyCurrentStage();
     }
 }
@@ -474,17 +497,13 @@ void WinCap::releaseMouse()
 void WinCap::onDown(POINT pos, bool isRight)
 {
     if (isRight) {
-        // 剪裁中右键是"放弃这一刀、回到成图"，不是关窗
-        if (capLong && capLong->isCropping()) {
-            capLong->cancelCrop();
-            return;
-        }
         close();
         return;
     }
     // 选区定下来之后本窗口就交给编辑界面了（框选那条路在 onUp 里 startPin），
-    // 所以这里只剩"拖框取色"与长图 / 录屏两件事 —— 原先还有一段"在选区上调边调角"
-    // 与"双击选区 = 复制"，现在都归编辑界面：调范围拖那边的裁剪采样点，双击就是复制
+    // 所以这里只剩"拖框取色" —— 长图 / 录屏那两个阶段的光标归被截的窗口与工具条，
+    // 本窗口收不到按下。原先还有一段"在选区上调边调角"与"双击选区 = 复制"，
+    // 现在都归编辑界面：调范围拖那边的裁剪采样点，双击就是复制
     if (stage == CapStage::Select) {
         isPress = true;
         captureMouse();
@@ -492,10 +511,6 @@ void WinCap::onDown(POINT pos, bool isRight)
         isPolyDrag = Setting::get()->getCapShape() == 1 || (GetKeyState(VK_MENU) & 0x8000) != 0;
         if (isPolyDrag) cutMask->startPoly(pos);
         else cutMask->startMakeRect(pos);
-    }
-    else if (stage == CapStage::Long && capLong) {
-        // 只有剪裁阶段要按下：滚动那会儿光标归被截的窗口，本窗口收不到按下
-        capLong->onDown(pos, isRight);
     }
 }
 
@@ -506,8 +521,8 @@ void WinCap::onMove(POINT pos)
     // 直接调 onClick），窗口建出来时手指还在按钮上，松手前抖那么一下就会走到这里；
     // 光标这时停在屏幕边上的悬浮球处，底下多半压着一个最大化的窗口，吸附一下就是整屏被框住，
     // 抬手便"替用户框好了整屏"——用户看到的就是"悬浮球截图默认截全屏"。
-    // 只拦 Select 阶段：长截图那条路（CapLong 自己收按下 / 抬手）不经过 isPress，
-    // 一拦就把它的剪裁拖动拦掉了
+    // 只拦 Select 阶段：长截图那条路要靠每一次光标移动去跟出"开始"按钮（它自己收着
+    // 那套跟随逻辑，见 CapLong::onMove），一拦就什么都不动了
     if (stage == CapStage::Select && !isPress && (GetAsyncKeyState(VK_LBUTTON) & 0x8000)) return;
     if (stage == CapStage::Select) {
         if (isPress) {
@@ -690,6 +705,11 @@ void WinCap::enterLiveStage()
     cutMask->hideLabel = true;
     // 原来的 WinLong / WinVideo 建窗口时就是 topmost，这里补上
     SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+    // 键盘消息只送到**有焦点**的那个窗口。滚动截图期间光标在选区里、窗口又被抠了个洞，
+    // 用户随手点到被截的那个程序上，焦点就跟过去了 —— 那之后 ESC 再也进不来（反馈里
+    // "按 esc 没反应"半个来自这里）。这里把前台与焦点收回来：SWP_NOACTIVATE 只管 Z 序
+    SetForegroundWindow(hwnd);
+    SetFocus(hwnd);
     refresh();
 }
 
@@ -747,26 +767,9 @@ void WinCap::layoutLongTool()
     if (capLong) capLong->layoutTool();
 }
 
-void WinCap::longPin()
-{
-    if (capLong) capLong->pin();
-}
-
 void WinCap::toggleLongMode()
 {
     if (capLong) capLong->toggleMode();
-}
-
-void WinCap::longStartCrop()
-{
-    if (capLong) capLong->startCrop();
-}
-
-bool WinCap::longConfirmCrop()
-{
-    if (!capLong || !capLong->isCropping()) return false;
-    capLong->confirmCrop();
-    return true;
 }
 
 void WinCap::longFinishAndPin()
@@ -779,11 +782,6 @@ void WinCap::longFinishAndPin()
 bool WinCap::isLongManual() const
 {
     return capLong && capLong->isManual();
-}
-
-bool WinCap::longHasImage() const
-{
-    return capLong && capLong->hasImage();
 }
 
 bool WinCap::longSaveToFile()
