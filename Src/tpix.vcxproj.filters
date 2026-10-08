@@ -75,6 +75,9 @@
     <ClCompile Include="Win\WinOcr.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
+    <ClCompile Include="Win\WinColorPicker.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
     <ClCompile Include="Win\WinWatermarkPanel.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
@@ -268,6 +271,9 @@
       <Filter>头文件</Filter>
     </ClInclude>
     <ClInclude Include="Win\WinOcr.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
+    <ClInclude Include="Win\WinColorPicker.h">
       <Filter>头文件</Filter>
     </ClInclude>
     <ClInclude Include="Win\WinWatermarkPanel.h">
