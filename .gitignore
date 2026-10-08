@@ -49,6 +49,7 @@ onnxruntime/
 
 # Agent 工作区
 .workbuddy/
+.superpowers/
 
 # 系统
 Thumbs.db
