@@ -13,6 +13,14 @@ namespace {
 	constexpr float codeFont{ 12.5f };
 	constexpr const wchar_t* monoFamily{ L"Consolas" };
 
+	// 表格线 / 表头底色（逻辑像素）
+	constexpr uint32_t tableLine{ 0xD8D8DEff };
+	constexpr uint32_t tableHeadBg{ 0xF5F6F8ff };
+	// 单元格四周的内边距，以及分栏线的粗细
+	constexpr float cellPadX{ 8.f };
+	constexpr float cellPadY{ 5.f };
+	constexpr float cellLine{ 1.f };
+
 	std::wstring trim(const std::wstring& s)
 	{
 		const size_t b = s.find_first_not_of(L" \t");
@@ -52,6 +60,29 @@ namespace {
 			return false;
 		}
 		return dash;
+	}
+
+	// "| a | b |" -> { "a", "b" }。两端的竖线会各多切出一个空串，只在那一段确实是空的时候丢掉
+	//（"|a|b" 这种省了尾竖线的写法，末列不能跟着被吃掉）。\| 是转义，不当分隔符
+	std::vector<std::wstring> splitCells(const std::wstring& line)
+	{
+		std::vector<std::wstring> cells;
+		std::wstring cur;
+		for (size_t i = 0; i < line.size(); ++i) {
+			const wchar_t c = line[i];
+			if (c == L'\\' && i + 1 < line.size() && line[i + 1] == L'|') {
+				cur.push_back(L'|');
+				++i;
+				continue;
+			}
+			if (c == L'|') { cells.push_back(cur); cur.clear(); continue; }
+			cur.push_back(c);
+		}
+		cells.push_back(cur);
+		if (!cells.empty() && trim(cells.front()).empty()) cells.erase(cells.begin());
+		if (!cells.empty() && trim(cells.back()).empty()) cells.pop_back();
+		for (auto& c : cells) c = trim(c);
+		return cells;
 	}
 
 	// 列表项。命中就把 marker 填上（有序是 "1."，无序留空）并返回 true
@@ -177,6 +208,13 @@ namespace {
 		lab->setFontSize(baseFont);
 		lab->setColor(0x333333FF);
 		lab->setLineSpacing(Markdown::lineSpacing);
+		// ⚠️ 这一条不能省，它管的是"折行宽度算在哪"。
+		// yoga 的非 web 默认 flexShrink 是 **0**：一行里前面还有兄弟节点（列表的序号格、
+		// 引用的竖条）时，标签的 flex 基准量的是"父容器的可用宽"（不是减掉兄弟之后的余量），
+		// 又不会收缩 ⇒ 它自己拿到整行宽、再被摆到兄弟后面，正文就整整顶出右边框 ——
+		// 顶出去的正好是兄弟们的宽度（列表 24+4，引用 3+8）。开了收缩，flex 行会把它压回
+		// 余量里，最终布局再按压完的宽度重新折行。段落那种独占一行的块本来就用不上收缩
+		lab->setFlexShrink(1.f);
 	}
 
 	// 只在文字真的变了才动控件：Text::setText 会把 DWrite layout 整个重建，
@@ -188,6 +226,59 @@ namespace {
 		if (lab->getText() == text) return;
 		lab->setText(text);
 		lab->setRuns(runs);
+	}
+
+	// 表格的一行。cols 由调用方按"表头那行"的列数定死 —— 模型偶尔会少打一两个竖线，
+	// 后面几行就短一截，按 cols 补空格子列才对得齐。
+	//
+	// 网格线的画法：容器底色就是线的颜色，格子铺不透明的底、彼此之间只留 1 逻辑像素的
+	// 缝 —— 缝里透出来的就是线。Ling 的 Node 没有分边框，只有这条路能不靠画布画出网格；
+	// 缝用的 margin 不参与 flexShrink（只有格子的宽度会被挤），所以线宽恒为 1
+	void buildTableRow(Ling::Node* grid, const Block& block, const size_t r, const int cols)
+	{
+		auto row = grid->makeChild<Ling::Node>();
+		row->setWidthPercent(100.f);
+		row->setFlexDirection(Ling::FlexDirection::Row);
+		// 交叉轴拉伸：一行里所有格子同高，横向的线才对得齐
+		row->setAlignItems(Ling::Align::Stretch);
+		if (r > 0) row->setMarginTop(cellLine);
+		for (int c = 0; c < cols; ++c) {
+			const std::wstring txt = c < static_cast<int>(block.cells[r].size())
+				? block.cells[r][c] : std::wstring{};
+			auto cell = row->makeChild<Ling::Label>();
+			setupText(cell);
+			// 等宽。合计比容器宽多出 (cols-1) 个像素（那几条缝），交给 flexShrink 摊掉 ——
+			// setupText 已经开了收缩，压完的宽度会在最终布局里重新折一次行
+			cell->setWidthPercent(100.f / static_cast<float>(cols));
+			cell->setPadding(cellPadX, cellPadY, cellPadX, cellPadY);
+			cell->setBg(r == 0 ? tableHeadBg : 0xFFFFFFFF);
+			// 分栏缝：只给第一栏之后的格子加，整行右边缘就不会多出一道
+			if (c > 0) cell->setMarginLeft(cellLine);
+			// 对齐要落在**主轴**上。Label 是"外层容器 + 内层文字"的复合件，拿交叉轴的
+			// alignItems 去摆内层文字会让 yoga 量它时不给可用宽度（折行失效 ——
+			// 见 WinAiChat::addItem 里那段注释），所以改成 Row + justifyContent
+			cell->setFlexDirection(Ling::FlexDirection::Row);
+			const int a = c < static_cast<int>(block.aligns.size()) ? block.aligns[c] : 0;
+			cell->setJustifyContent(a == 1 ? Ling::Justify::Center
+				: (a == 2 ? Ling::Justify::End : Ling::Justify::Start));
+			if (r == 0) cell->setColor(0x1F1F1FFF);
+			cell->setText(txt);
+			if (r == 0 && !txt.empty()) {
+				cell->setRuns({ Ling::TextRun{ 0, txt.size(), true, false, false } });
+			}
+		}
+	}
+
+	// 一行表格里的格子（按创建顺序）。挑 Label 而不是按下标取 children ——
+	// 以后要往行里插别的东西（线、空白格）时，这里不会跟着错位
+	std::vector<Ling::Label*> tableRowCells(Ling::Node* row)
+	{
+		std::vector<Ling::Label*> out;
+		if (!row) return out;
+		for (auto& ch : row->children) {
+			if (auto lab = dynamic_cast<Ling::Label*>(ch.get())) out.push_back(lab);
+		}
+		return out;
 	}
 }
 
@@ -279,19 +370,30 @@ std::vector<Block> Markdown::parse(const std::wstring& src)
 			continue;
 		}
 
-		// 表格：本行有 | 且下一行是分隔行。整块原样按等宽显示
+		// 表格：本行有 | 且下一行是分隔行。列宽与对齐由分隔行定（:--- 左 / :---: 中 / ---: 右），
+		// 之后连续含 | 的行都是这一张表的记录行
 		if (line.find(L'|') != std::wstring::npos && i + 1 < lines.size()
 			&& isTableSep(trim(lines[i + 1]))) {
-			std::wstring code;
+			Block b;
+			b.kind = Kind::Table;
+			// 第 0 行是表头。行内标记（**粗体**、`代码`）在解析时就拍平成字面文字 ——
+			// 一格一格地画行内样式太碎，换来的是"格子里不再出现裸的星号"
+			auto pushRow = [&b](const std::wstring& src) {
+				std::vector<std::wstring> row;
+				for (auto& c : splitCells(src)) row.push_back(flatten(parseInline(c)).text);
+				b.cells.push_back(std::move(row));
+			};
+			pushRow(line);
+			for (auto& s : splitCells(trim(lines[i + 1]))) {
+				const bool l = !s.empty() && s.front() == L':';
+				const bool r = !s.empty() && s.back() == L':';
+				b.aligns.push_back(l && r ? 1 : (r ? 2 : 0));
+			}
+			i += 2;
 			while (i < lines.size() && trim(lines[i]).find(L'|') != std::wstring::npos) {
-				if (!code.empty()) code += L'\n';
-				code += trim(lines[i]);
+				pushRow(trim(lines[i]));
 				++i;
 			}
-			Block b;
-			b.kind = Kind::Code;
-			b.table = true;
-			b.text = code;
 			out.push_back(std::move(b));
 			continue;
 		}
@@ -324,7 +426,19 @@ std::wstring Markdown::tag(const Block& block)
 	t += L':';
 	t += std::to_wstring(block.level);
 	t += block.ordered ? L":o" : L":u";
-	if (block.table) t += L":t";
+	// 表格：列数与每列的对齐属于骨架（列数变了得整块重建）。行数**不**算 —— 流式输出时
+	// 表格是一行行长出来的，refresh 会就地补行，带上行数就会每来一行重建一次、正文一直闪。
+	// 列数以表头那一行为准
+	if (block.kind == Kind::Table) {
+		const size_t cols = block.cells.empty() ? 0 : block.cells.front().size();
+		t += L":";
+		t += std::to_wstring(cols);
+		t += L":";
+		for (size_t c = 0; c < cols; ++c) {
+			const int a = c < block.aligns.size() ? block.aligns[c] : 0;
+			t += static_cast<wchar_t>(L'0' + std::clamp(a, 0, 9));
+		}
+	}
 	return t;
 }
 
@@ -376,6 +490,34 @@ bool Markdown::refresh(const Block& block, Ling::Node* node)
 		setTextIfChanged(lab, f.text, f.runs);
 		return true;
 	}
+	case Kind::Table: {
+		// 列数由 tag 保证一致（变了就整块重建）。行数可以变，就地补行 / 改字 ——
+		// 重建要重开一批 composition 绘制表面，流式输出时正文会一直闪
+		if (block.cells.empty()) return false;
+		const int cols = static_cast<int>(block.cells.front().size());
+		if (cols <= 0) return false;
+		while (node->children.size() > block.cells.size()) {
+			node->removeChild(node->children.back().get());
+		}
+		for (size_t r = 0; r < block.cells.size(); ++r) {
+			if (r >= node->children.size()) {
+				buildTableRow(node, block, r, cols);
+				continue;
+			}
+			const auto labs = tableRowCells(node->children[r].get());
+			// 这一行的格子数与列数对不上（模型少打了竖线）—— 就地改字补不了，交给调用方重建
+			if (static_cast<int>(labs.size()) != cols) return false;
+			const int n = static_cast<int>(block.cells[r].size());
+			for (int c = 0; c < cols; ++c) {
+				const std::wstring txt = c < n ? block.cells[r][c] : std::wstring{};
+				const std::vector<Ling::TextRun> runs = (r == 0 && !txt.empty())
+					? std::vector<Ling::TextRun>{ Ling::TextRun{ 0, txt.size(), true, false, false } }
+					: std::vector<Ling::TextRun>{};
+				setTextIfChanged(labs[c], txt, runs);
+			}
+		}
+		return true;
+	}
 	}
 	return false;
 }
@@ -403,12 +545,26 @@ void Markdown::render(const Block& block, Ling::Node* parent, const bool first)
 		lab->setFontSize(codeFont);
 		lab->setColor(0x2F2F35FF);
 		lab->setMarginTop(top);
-		if (!block.table) {
-			lab->setBg(0xE6E6ECFF);
-			lab->setPadding(8.f, 6.f, 8.f, 6.f);
-			lab->setBorderRadius(6.f);
-		}
+		lab->setBg(0xE6E6ECFF);
+		lab->setPadding(8.f, 6.f, 8.f, 6.f);
+		lab->setBorderRadius(6.f);
 		lab->setText(block.text);
+		break;
+	}
+	case Kind::Table: {
+		if (block.cells.empty()) break;
+		const int cols = static_cast<int>(block.cells.front().size());
+		if (cols <= 0) break;
+		auto grid = parent->makeChild<Ling::Node>();
+		grid->setWidthPercent(100.f);
+		grid->setFlexDirection(Ling::FlexDirection::Column);
+		grid->setMarginTop(first ? 0.f : 8.f);
+		// 容器底色 = 线的颜色：格子之间那 1 像素的缝、格子与外框之间的边距都透出它。
+		// 外框由容器自己描，格子不再各描一圈，边上就不会叠成两条
+		grid->setBg(tableLine);
+		grid->setBorder(cellLine, tableLine);
+		grid->setBorderRadius(4.f);
+		for (size_t r = 0; r < block.cells.size(); ++r) buildTableRow(grid, block, r, cols);
 		break;
 	}
 	case Kind::Heading: {
