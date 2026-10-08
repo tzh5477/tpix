@@ -88,6 +88,21 @@ public:
 	// 按工具取选中色（RGBA 原值）。与 getSelectedColorValue 的区别同上：那个读的是
 	// "当前工具"共享的那一份下标（selectColorIndex），切一次工具就换了人
 	UINT32 getToolColorValue(const std::wstring& tool) const;
+	// 内置预设色的个数。色板行只画这些格子，末尾另有一块「当前色」是取色器的入口
+	// （对齐 pixpin：预设色供快选，任意色点最大的那块进去调）
+	int presetCount() const;
+	// 色板表全量（预设在前、自定义在后）。取色器要照它画那两排格子：
+	// [0, presetCount) 是「常用」，后面是用户存下的「自定义」
+	const std::vector<UINT32>& colorTable() const { return colors; }
+	// 按色板表的下标换当前工具的颜色。色板行上的预设格子、取色器里的预设 / 自定义格子
+	// 都走它 —— 那些格子本来就对应表里的一项，只需换下标
+	void setColorIndex(size_t idx);
+	// 用一个**具体颜色**换当前工具的颜色：表里已有就复用那一格，否则作为新的自定义色
+	// 记进 common.customColors 再用它（最近用过的排最前，上限 maxCustomColors）。
+	// 取色器的「确定」走这条 —— 那里拿到的是从 SV 方块上现调出来的颜色，不对应任何格子
+	void applyColor(UINT32 rgba);
+	// 开 / 收取色器。色板行末尾那块点了走它
+	void toggleColorPicker(Ling::Node* anchor);
 	// 「填充」开关此刻的值 —— 取的是面板正在显示的那个工具的那一份（矩形 / 圆形 / 箭头 / 序号各存一份）。
 	// 语义与 getSelectedColor / getSliderVal 同一档：都是"面板此刻是什么样"。
 	// 元素改样式（ShapeRectBase::applyStyle）要的正是这个，而不是"这个元素自己是哪一类" ——
@@ -154,6 +169,12 @@ private:
 	void paintBorder(ID2D1DeviceContext* ctx);
 	void onColorSelect(Ling::Button* btn);
 	void initColorBtns();
+	// 把 colors 重建成「内置预设 + 用户自定义色」。自定义色存在 config.json 的
+	// common.customColors（逗号分隔的 8 位 RGBA）。构造与每次切工具时都跑一遍 ——
+	// 用户在设置里清了配置、或取色器刚存进一个新颜色，都要立刻反映到色板行上
+	void refreshColors();
+	// 按当前 selectColorIndex 刷新色板行：预设格子上该打勾的打勾，末尾那块当前色块换底色
+	void syncColorBtns();
 	void initSlider();
 	// 建一个横向滑块。值域 / 当前值都由调用方给（水印的不透明度、间距、大小都要用，
 	// 而每工具一份的那套字段只有"大小"这一项），建好之后登记进 sliders 好让悬停提示找到它。
@@ -228,6 +249,9 @@ private:
 	float toPx(float logical) const;
 private:
 	Ling::Node* contentNode;
+	// 色板行上的预设格子。与 colors 的**前 presetCount_ 项**一一对应 ——
+	// 末尾那块「当前色」不进来：这个数组是按下标取格子的（见 onColorSelect），
+	// 混进一块不对应的，下标就整体串位
 	std::vector<Ling::Button*> colorBtns;
 	// 当前的滑块。切换工具时会被销毁重建，重建后由 initSlider 重新赋值。
 	// 存下来是为了在窗口的 onMouseMove 里判断鼠标是否在它上面，好显示数值提示。
@@ -259,6 +283,13 @@ private:
 	// 悬停提示。要 hwnd，所以在 onCreated 里才建得起来
 	std::unique_ptr<Tip> tip;
 	static constexpr float btnSize{ 32.f };
+	// 色板行末尾那块「当前色 / 取色器入口」的宽度。刻意比别的格子宽 ——
+	// pixpin 里它就是"最大的那个颜色块"，宽度本身就是"这里能点开调色"的提示，
+	// 与旁边九个等宽的预设格子一眼分得开。宽度要从 initSize 里预留出来
+	static constexpr float colorMoreW{ 54.f };
+	// 自定义色最多留几个。取色器里那两排格子按 10 列排，18 个正好占满一排多、
+	// 不至于把弹窗撑高一截；再多的旧颜色就顶掉了 —— 按"最近用过"排序，被顶掉的都是最久没用的
+	static constexpr size_t maxCustomColors{ 18 };
 	static constexpr float sliderSize{ 80.f };     // 滑块宽度，initSlider 和 initSize 都用它，改这里就够
 	static constexpr float sliderMargin{ 3.f };    // 滑块左右各留的间距
 	static constexpr float marginTop{ 3.f };       // 顶部箭头区域高度
@@ -314,6 +345,9 @@ private:
 	// 单独一份的理由见上面 getWatermarkSize 的注释：它与其它工具共用的 sliderVal 不是一回事
 	float watermarkFontSize{ 24.f };
 	UINT selectColorIndex{ 0 };
+	// 内置预设色（对齐 pixpin 那排常见颜色）。用户自定义色接在它们后面拼成 colors，
+	// 于是 colorIndex 一套下标语义同时管住两者，取色那几处一行都不用改
+	static const std::vector<UINT32>& presetColors();
 	// 滑块值。每次切换工具都由 beginTool 从 config.json 里换成那个工具自己的那份。
 	float sliderVal{ 2.f };
 	float sliderMin{ 1.f }, sliderMax{ 20.f };
@@ -323,5 +357,15 @@ private:
 	// 序号半径的取值范围（逻辑像素）。下限跟着 ShapeNumber 拖拽/滚轮的下限走，
 	// 上限给滑块留个头 —— 再大就超出滑块能表达的范围了，拖拽仍可继续放大，只是不再回写
 	static constexpr float numberMin{ 6.f }, numberMax{ 86.f };
-	std::vector<UINT32> colors = { 0XCF1322FF, 0XD48806FF, 0X389E0DFF, 0X13C2C2FF, 0X0958D9FF, 0X722ED1FF, 0XEB2F96FF, 0X000000FF, 0XFFFFFFFF };
+	// 内置预设 + 用户自定义色。下标即落盘的 colorIndex —— 前缀是预设，后缀是自定义
+	std::vector<UINT32> colors;
+	// colors 里预设占了几项。色板行画 presetCount_ 格预设 + 1 块当前色块
+	size_t presetCount_{ 0 };
+	// 色板行末尾那一块：底色永远是当前选中色，点它开取色器。
+	// 就是 pixpin 里"最大的那个颜色块"—— 预设只负责快选，任意颜色从这里进去调。
+	// 切工具时随 contentNode 一起销毁，beginTool 里必须置空
+	Ling::Button* colorMoreBtn{ nullptr };
+	// 上面那块里画的那个方块。换选中色时要改它的底色与对勾颜色（浅色底要用黑勾），
+	// 存下来省得每次去 children 里按下标摸
+	Ling::Label* colorMoreLabel{ nullptr };
 };

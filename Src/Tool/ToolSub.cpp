@@ -1,6 +1,9 @@
 #include "pch.h"
 #include <cmath>
+#include <cstdlib>
+#include <cstdio>
 #include <ctime>
+#include <algorithm>
 #include "../Win/WinPin.h"
 #include "../Lang.h"
 #include "../SelectPopup.h"
@@ -11,6 +14,7 @@
 #include "../Shape/ShapeNumber.h"
 #include "../Shape/ShapeWatermark.h"
 #include "../Tip.h"
+#include "../Win/WinColorPicker.h"
 #include "../Win/WinWatermarkPanel.h"
 #include "../Win/WinWatermarkText.h"
 #include "ToolSub.h"
@@ -108,6 +112,53 @@ namespace {
 	const float pinOpacitySteps[]{ 1.f, 0.75f, 0.5f, 0.25f };
 	// 水印的旋转档位（角度只有在平铺下才有意义）
 	const float watermarkRotateSteps[]{ 0.f, 30.f, 45.f, 60.f };
+
+	// 色块上的对勾用黑还是白，要看底色定 —— 浅黄块上的白勾、纯蓝块上的黑勾都看不见。
+	// 用感知亮度（人眼对绿最敏感、对蓝最迟钝、对红居中）而不是三通道平均：
+	// 纯蓝的平均亮度是 85（看着"暗"）、白勾其实很清楚，感知亮度算出来 29，给的正是白勾。
+	// 颜色是 RRGGBBAA 排的（与 Ling::Color(uint32_t) 一致，见 0xCF1322FF = 红）
+	UINT32 checkInkOn(UINT32 rgba)
+	{
+		const auto r = (rgba >> 24) & 0xFF, g = (rgba >> 16) & 0xFF, b = (rgba >> 8) & 0xFF;
+		return (0.299 * r + 0.587 * g + 0.114 * b) > 150 ? 0x000000FF : 0xFFFFFFFF;
+	}
+
+	// 浅色底要补一圈描边：白块摆在 0xFAFAFA 的工具条 / 白底弹窗上，不描边就是一个看不见的洞
+	bool isLightColor(UINT32 rgba)
+	{
+		const auto r = (rgba >> 24) & 0xFF, g = (rgba >> 16) & 0xFF, b = (rgba >> 8) & 0xFF;
+		return (0.299 * r + 0.587 * g + 0.114 * b) > 200;
+	}
+
+	// 8 位十六进制（RRGGBBAA）→ 颜色。配置被手工改坏时**返回 false 而不是抛出 / 读半截值**：
+	// 半截值看着就是"某个颜色不对"，比缺一格难查得多
+	bool parseHex8(const std::wstring& s, UINT32& out)
+	{
+		if (s.size() != 8) return false;
+		wchar_t* end{ nullptr };
+		const auto v = std::wcstoul(s.c_str(), &end, 16);
+		if (end != s.c_str() + 8) return false;
+		out = static_cast<UINT32>(v);
+		return true;
+	}
+
+	// 颜色 → 8 位十六进制。落盘用，所以要能在下次启动时被 parseHex8 读回来
+	std::wstring toHex8(UINT32 v)
+	{
+		wchar_t buf[16]{};
+		swprintf_s(buf, L"%08X", v);
+		return buf;
+	}
+
+	std::wstring joinHexColors(const std::vector<UINT32>& list)
+	{
+		std::wstring out;
+		for (size_t i = 0; i < list.size(); i++) {
+			if (i) out += L",";
+			out += toHex8(list[i]);
+		}
+		return out;
+	}
 }
 
 // 「字体」下拉里固定这十款：系统里装的族往往上百个，全列出来既翻不到底、九成也没人用。
@@ -210,6 +261,9 @@ ToolSub::ToolSub(WinPin* win) :Ling::WinBase(), win(win)
 {
 	// 跟着宿主窗口的缩放走：WinBase 构造里取的是系统 dpi，WinPin 可能在另一块缩放比例不同的屏上
 	dpi = win->dpi;
+	// 色板表先就位。后面任何一个 getSelectedColor* 都直接按下标取 colors[]，
+	// 表空着的话第一次取色就是越界读 —— 而那可能发生在做任何 UI 之前（图上的水印每帧取色）
+	refreshColors();
 	// DPI 变了（工具条被挪到缩放比例不同的显示器上，或者用户改了系统缩放）：
 	// Ling 只会把窗口按系统给的建议矩形整体缩放一遍，我们自己定的那套摆放规则不会重跑，
 	// 工具条就歪在别处了。位置也不能在 onDpiChanged 里直接改 —— 那个事件在 Ling 应用建议矩形
@@ -312,7 +366,12 @@ void ToolSub::beginTool(const std::wstring& id)
 	watermarkContentBtn = nullptr;
 	styleBtn = nullptr;
 	watermarkClearBtn = nullptr;
+	// 同上：色板行末尾那块「当前色」也随 contentNode 一起销毁
+	colorMoreBtn = nullptr;
+	colorMoreLabel = nullptr;
 	WinWatermarkPanel::close();
+	// 同上：取色器的锚点（色板行末尾那块）马上要被销毁重建，留着它就是悬空的
+	WinColorPicker::close();
 	curToolId = id;
 	auto cfg = findSliderCfg(id);
 	if (!cfg) return;
@@ -323,6 +382,9 @@ void ToolSub::beginTool(const std::wstring& id)
 	// 夹一遍值域：配置文件可能是上个版本写的（值域变过），也可能被手工改坏，
 	// 而这个值会直接当线宽/字号喂给 D2D，超出范围要么看不见要么慢得离谱
 	sliderVal = std::clamp(setting->getToolNum(id, cfg->key, cfg->def), cfg->min, cfg->max);
+	// colors 要赶在读 colorIndex 之前重建：它决定这个下标还有没有意义
+	// （自定义色被删掉 / 换了机器上的配置，下标就可能指到表外）
+	refreshColors();
 	// colors[selectColorIndex] 那几处都不做边界检查，越界就读到界外了
 	auto idx = static_cast<UINT>(setting->getToolNum(id, L"colorIndex", 0.f));
 	selectColorIndex = idx < colors.size() ? idx : 0;
@@ -813,20 +875,16 @@ void ToolSub::paintBorder(ID2D1DeviceContext* ctx)
 
 void ToolSub::onColorSelect(Ling::Button* btn)
 {
-	if (colorBtns[selectColorIndex] == btn) return;
-	auto label = dynamic_cast<Ling::Label*>(colorBtns[selectColorIndex]->children[1].get());
-	label->setText(L"");
-	label = dynamic_cast<Ling::Label*>(btn->children[1].get());
-	label->setText(L"\ue6ad");
-	for (size_t i = 0; i < colorBtns.size(); i++)
-	{
-		if (colorBtns[i] == btn) {
-			selectColorIndex = (UINT)i;
-			break;
-		}
+	// 先按下标找出点的是哪一格。必须这样绕一下，不能直接拿 selectColorIndex 去索引
+	// colorBtns —— 选中自定义色时那个下标大于预设格子数（预设行里根本没有它的格子），
+	// 原来那版一上来就是 colorBtns[selectColorIndex]，那一下是越界读
+	size_t idx{ colors.size() };
+	for (size_t i = 0; i < colorBtns.size(); i++) {
+		if (colorBtns[i] == btn) { idx = i; break; }
 	}
-	Setting::get()->setToolNum(curToolId, L"colorIndex", static_cast<float>(selectColorIndex));
-	win->onToolStyleChanged();
+	if (idx >= colors.size()) return;
+	if (idx == selectColorIndex) return;
+	setColorIndex(idx);
 }
 
 void ToolSub::initColorBtns()
@@ -834,9 +892,12 @@ void ToolSub::initColorBtns()
 	// contentNode->removeAllChildren() 已经把上一批按钮销毁了，这里必须同步清空，
 	// 否则 colorBtns 会越积越长且前面全是野指针，selectColorIndex 也会越界。
 	colorBtns.clear();
-	// 与 colors 一一对应的语言键后缀
+	// 与**预设**一一对应的语言键后缀。自定义色不在表里，取不到名字就退回色号
+	//（见下面 tip 那一段），所以这里只管预设那 9 项
 	static const std::vector<std::wstring> colorNames{ L"red",L"yellow",L"green",L"cyan",L"blue",L"purple",L"pink",L"black",L"white" };
-	for (size_t i = 0; i < colors.size(); i++)
+	// 只画预设。自定义色不进这一行 —— 它们可能攒到十几二十个，全铺出来会把
+	// 工具条撑成一条长长的色带，而工具条上真正要紧的是线宽 / 填充那几个控件
+	for (size_t i = 0; i < presetCount_; i++)
 	{
 		auto btn = contentNode->makeChild<Ling::Button>();
 		btn->setHeight(btnSize-2.5);
@@ -845,7 +906,7 @@ void ToolSub::initColorBtns()
 		btn->setJustifyContent(Ling::Justify::Center);
 		btn->setHoverBg(0XF2F2F2ff);
 		btn->onClick.add([this](Ling::Button* btn) {this->onColorSelect(btn);});
-		tip->bind(btn, Lang::get(std::format(L"color.{}", colorNames[i])));
+		if (i < colorNames.size()) tip->bind(btn, Lang::get(std::format(L"color.{}", colorNames[i])));
 		colorBtns.push_back(btn);
 
 		auto label = btn->makeChild<Ling::Label>();
@@ -860,14 +921,125 @@ void ToolSub::initColorBtns()
 		label->setFontSize(8.f);
 		label->setBg(colors[i]);
 		label->setBorderRadius(2.f);
-		if (i == colors.size() - 1) {
-			label->setColor(0x000000FF);
-			label->setBorder(1.f, 0xA8A8A8FF);
-		}
-		else {
-			label->setColor(0xFFFFFFFF);
-		}
+		label->setColor(checkInkOn(colors[i]));
+		// 白块（以及以后的浅色自定义色）在浅色工具条上要描一圈边才看得出是个色块
+		if (isLightColor(colors[i])) label->setBorder(1.f, 0xA8A8A8FF);
 	}
+
+	// 末尾这块：底色就是当前选中色，点它开取色器。宽度比预设格子大 ——
+	// 对齐 pixpin 的「最大的颜色块」，宽度本身就是"这里能点开调"的提示
+	colorMoreBtn = contentNode->makeChild<Ling::Button>();
+	colorMoreBtn->setHeight(btnSize-2.5);
+	colorMoreBtn->setWidth(colorMoreW);
+	colorMoreBtn->setAlignItems(Ling::Align::Center);
+	colorMoreBtn->setJustifyContent(Ling::Justify::Center);
+	colorMoreBtn->setHoverBg(0XF2F2F2ff);
+	colorMoreBtn->onClick.add([this](Ling::Button*) { this->toggleColorPicker(colorMoreBtn); });
+	tip->bind(colorMoreBtn, Lang::get(L"color.more"));
+
+	colorMoreLabel = colorMoreBtn->makeChild<Ling::Label>();
+	colorMoreLabel->setAlignItems(Ling::Align::Center);
+	colorMoreLabel->setJustifyContent(Ling::Justify::Center);
+	// 比预设那 13 格大一圈：它既是入口，也是"当前到底用着哪个颜色"的唯一一处预览 ——
+	// 选中自定义色时预设行里没有任何一格能反映出来，只靠它
+	colorMoreLabel->setSize(22.f, 18.f);
+	colorMoreLabel->setFontFamily(L"icon");
+	colorMoreLabel->setFontSize(10.f);
+	colorMoreLabel->setBorderRadius(3.f);
+	syncColorBtns();
+}
+
+void ToolSub::syncColorBtns()
+{
+	// 预设行：只有下标落在预设范围内时才有一格打勾。选中自定义色时一个都不打，
+	// 信息全在末尾那块当前色块上 —— 硬把勾打在某格预设上是错的（那格并不是当前色）
+	for (size_t i = 0; i < colorBtns.size(); i++) {
+		// children[0] 是 Button 自己那个 Text（见 Ling::Button 构造里的 makeChild<Text>），
+		// 我们后加的那个色块标签在 [1]
+		if (colorBtns[i]->children.size() < 2) continue;
+		auto label = dynamic_cast<Ling::Label*>(colorBtns[i]->children[1].get());
+		if (!label) continue;
+		label->setText(i == selectColorIndex ? L"\ue6ad" : L"");
+	}
+	if (!colorMoreLabel) return;
+	if (selectColorIndex >= colors.size()) selectColorIndex = 0;
+	const auto cur = colors[selectColorIndex];
+	colorMoreLabel->setText(L"\ue6ad");
+	colorMoreLabel->setBg(cur);
+	colorMoreLabel->setColor(checkInkOn(cur));
+	if (isLightColor(cur)) colorMoreLabel->setBorder(1.f, 0xA8A8A8FF);
+	else colorMoreLabel->setBorder(0.f, 0);
+}
+
+int ToolSub::presetCount() const
+{
+	return static_cast<int>(presetCount_);
+}
+
+const std::vector<UINT32>& ToolSub::presetColors()
+{
+	// 静态一份：色板行的格数与它绑定（initSize 按它算宽度），中途变了下标就全乱。
+	// 顺序就是色板行上的排列顺序，也是 colorIndex 的落盘值 —— 别随手调：
+	// 调了以后所有已存配置里的 colorIndex 都会指到另一个颜色上
+	static const std::vector<UINT32> table{
+		0XCF1322FF, 0XD48806FF, 0X389E0DFF, 0X13C2C2FF, 0X0958D9FF,
+		0X722ED1FF, 0XEB2F96FF, 0X000000FF, 0XFFFFFFFF
+	};
+	return table;
+}
+
+void ToolSub::refreshColors()
+{
+	const auto& presets = presetColors();
+	presetCount_ = presets.size();
+	colors.assign(presets.begin(), presets.end());
+	// 用户自定义色接在预设后面，落盘在 common.customColors（逗号分隔的 8 位十六进制）。
+	// 之所以拼进同一张表而不是另开一张：那样 colorIndex 一套下标语义就同时管住两者，
+	// getSelectedColorValue / getToolColorValue / getWatermarkColorValue 一行都不用改
+	const auto raw = Setting::get()->getToolStr(L"common", L"customColors", L"");
+	size_t pos{ 0 };
+	while (pos <= raw.size()) {
+		const auto end = raw.find(L',', pos);
+		const auto stop = end == std::wstring::npos ? raw.size() : end;
+		UINT32 v{ 0 };
+		if (stop > pos && parseHex8(raw.substr(pos, stop - pos), v)) colors.push_back(v);
+		if (end == std::wstring::npos) break;
+		pos = stop + 1;
+	}
+	// 表长变过（自定义色被顶掉、配置被改坏）之后旧下标可能越界
+	if (selectColorIndex >= colors.size()) selectColorIndex = 0;
+}
+
+void ToolSub::setColorIndex(size_t idx)
+{
+	if (idx >= colors.size()) return;
+	selectColorIndex = static_cast<UINT>(idx);
+	Setting::get()->setToolNum(curToolId, L"colorIndex", static_cast<float>(selectColorIndex));
+	// 色板行上的对勾与末尾那块当前色块都要跟着走
+	syncColorBtns();
+	win->onToolStyleChanged();
+}
+
+void ToolSub::applyColor(UINT32 rgba)
+{
+	// 表里已经有就复用那一格：同一个颜色点两次不该长出两个格子，色板会越用越乱
+	for (size_t i = 0; i < colors.size(); i++) {
+		if (colors[i] == rgba) { setColorIndex(i); return; }
+	}
+	// 新颜色插在自定义区的**最前面**（按最近用过排），预设那一段始终在最前。
+	// 插在队首而不是队尾：常用的几个会自然浮上来，被 maxCustomColors 顶掉的是最久没用的
+	std::vector<UINT32> custom(colors.begin() + presetCount_, colors.end());
+	custom.insert(custom.begin(), rgba);
+	if (custom.size() > maxCustomColors) custom.resize(maxCustomColors);
+	Setting::get()->setToolStr(L"common", L"customColors", joinHexColors(custom));
+	refreshColors();
+	setColorIndex(presetCount_);   // 刚插进去的那一项
+}
+
+void ToolSub::toggleColorPicker(Ling::Node* anchor)
+{
+	if (WinColorPicker::isOpen()) { WinColorPicker::close(); return; }
+	WinColorPicker::show(this, anchor);
 }
 
 void ToolSub::applyToggleStyle(Ling::Button* btn, bool selected)
@@ -1271,9 +1443,12 @@ void ToolSub::initSize(int btnCount, bool withColors, bool centerOnBtn, float ex
 	// 0 是合法值：水印那三个滑块搬去了竖排浮层，工具条上一个都不留。
 	// 早先这里写的是 max(1, ...)，水印传 0 也会被按回 1，窗口凭空宽出一格滑块
 	sizeSliderCount = std::max(0, sliderCount);
-	auto count = btnCount + (withColors ? static_cast<int>(colors.size()) : 0);
+	// 色板行 = presetCount_ 格预设 + 末尾那块「当前色」。后者比别的格子宽，单独累加。
+	// 注意不能用 colors.size()：那是预设 + 自定义，自定义色不铺到行上（见 initColorBtns）
+	auto count = btnCount + (withColors ? static_cast<int>(presetCount_) : 0);
 	// 宽度只按内容算，边框画在内容之内（与 ToolMain 一致，那边宽度也只累加按钮）。
-	auto pxW = toPx(btnSize) * count + toPx(sliderSize) * sizeSliderCount
+	auto pxW = toPx(btnSize) * count + (withColors ? toPx(colorMoreW) : 0.f)
+		+ toPx(sliderSize) * sizeSliderCount
 		+ toPx(sliderMargin) * 2 * sizeSliderCount + toPx(extraW);
 	// setSize 收逻辑像素、内部再乘 dpi，所以这里把算好的物理宽高除回去
 	setSize(pxW / dpi, getDesiredHeight() / dpi);
@@ -1326,6 +1501,9 @@ void ToolSub::hideTools()
 	hasTools = false;
 	tip->hide();
 	SelectPopup::close();
+	// 取色器是挂在工具条上的浮层：工具条都收了，它还留在屏幕上就是块孤儿
+	// （它画的颜色是由色板行那块当前色块标识的，那一块已经没了）
+	WinColorPicker::close();
 	if (!isVisible) return;
 	hide();
 	isVisible = false;
