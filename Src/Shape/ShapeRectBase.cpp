@@ -189,14 +189,15 @@ void ShapeRectBase::paintDot(ID2D1DeviceContext* ctx, const D2D1_RECT_F& box, co
 
 void ShapeRectBase::paintDragger(ID2D1DeviceContext* ctx)
 {
-	// 手柄位置每帧重算：rect 可能刚被拖过，而 paintDragger 不一定排在 mouseDrag 之后。
-	// 摆在未旋转的外接框右下角（基类按 getShapeBounds 算），不跟着图形转 ——
-	// 手柄属于"外接框"，元素转过之后它仍待在框的右下角，三个角上的按钮才对得齐
+	// 手柄位置每帧重算：rect 可能刚被拖过，而 paintDragger 不一定排在 mouseDrag 之后
 	makeDraggers();
-	updateRotateDragger();
 	auto prev{ setRotateTransform(ctx) };
 	auto dpi = win->getDpi();
+	// 常驻只画四个角：四条边的中点照样能拖（单边拉伸），但把它们也画出来就是八个白块，
+	// 对象一多满屏都是点、重叠时分不清是谁的。鼠标真落在这个元素上时才一起画出来
+	auto full{ win->shapeHover == this };
 	for (int i = 0; i <= 7; i++) {
+		if (!full && (i & 1)) continue;     // 1/3/5/7 是四条边的中点
 		// 选中的填白、悬停的留空：光标掠过一串元素时能分出改样式会作用到谁。
 		// 先填后描：描边是压在矩形边线中线上的，先描再填会把内半边盖掉，线看着只剩外半截
 		if (win->selected == this) ctx->FillRectangle(draggers[i], brushDraggerFill.Get());
@@ -219,20 +220,44 @@ void ShapeRectBase::paintDragger(ID2D1DeviceContext* ctx)
 		}
 	}
 	ctx->SetTransform(prev);
-	// 手柄没跟着上面的变换转（见上），这里直接按它自己的坐标画
-	paintRotateHandle(ctx);
+	// 旋转不再单独占一个角：光标移到某个角手柄外侧那一圈时（见 hitRotateBand），
+	// 就在那个角的外侧画一枚旋转图标提示 —— 静态画面上没有它，用的时候才现身
+	if (hoverDraggerIndex == HitRotate && rotateCorner >= 100) {
+		auto c0 = rectCenter();
+		auto lc = D2D1::Point2F((draggers[rotateCorner].left + draggers[rotateCorner].right) / 2.f,
+			(draggers[rotateCorner].top + draggers[rotateCorner].bottom) / 2.f);
+		auto wc = rotatePoint(lc, c0, angle);
+		// 沿"中心 → 这个角"的方向再往外挪一点，别压在角手柄上
+		auto dx{ wc.x - c0.x }, dy{ wc.y - c0.y };
+		auto len{ sqrtf(dx * dx + dy * dy) };
+		if (len > 0.001f) {
+			auto k{ (len + draggerSize * 1.6f) / len };
+			paintRotateHandleAt(ctx, D2D1::Point2F(c0.x + dx * k, c0.y + dy * k));
+		}
+	}
 }
 
-// 手柄位置由基类按外接框右下角一次算完（与右上角的 × 对称），这里不必再跟着图形转 ——
-// 手柄属于"外接框"而不是图形本身，元素转过之后它仍待在框的右下角
+// 旋转的命中与画法都按"角手柄外侧那一圈"走（见 hitRotateBand / paintDragger）。
+// 右下角原来那枚独立旋转手柄（updateRotateDragger + paintRotateHandle）已不再用于这一族，
+// 只有文本还在用 —— 文字没有角手柄，它仍需要一枚看得见的把手
 
 void ShapeRectBase::mouseDrag(const float x, const float y)
 {
 	switch (hoverDraggerIndex)
 	{
 	case HitRotate:
-		angle = rotateAngleAt(rectCenter(), x, y);
+	{
+		// 增量式：按下时记下 angle 与鼠标方向，这里按"转过了多少度"往上叠加。
+		// 不用"鼠标方向 - 手柄静止方向"那种绝对式：手柄静止方向得按当前 angle 现算，
+		// 而拖动过程中 angle 正在变 —— 两者互相依赖，转起来会漂、还会把已有角度吞掉。
+		// Shift 按下时按 15 度吸附
+		auto c = rectCenter();
+		auto dir = atan2f(x - c.x, -(y - c.y)) * 180.f / kPi;
+		auto deg = rotateStartAngle + (dir - rotateStartDir);
+		if ((GetKeyState(VK_SHIFT) & 0x8000) != 0) deg = roundf(deg / 15.f) * 15.f;
+		angle = norm360(deg);
 		return;
+	}
 	// 圆角：四个分支都留着，但只有 HitRadiusTL 走得到 —— makeDraggers 只给左上角建了框
 	//（作者：四枚收成一枚）。四个角共用同一个 radius，所以拖左上那枚四个角一起变。
 	// 留全四支是为了"以后想再放开某个角"时不用回来重写这段几何
@@ -343,6 +368,13 @@ void ShapeRectBase::mouseDown(const float x, const float y)
 	pressW = rect.right - rect.left;
 	pressH = rect.bottom - rect.top;
 	if (hoverDraggerIndex >= HitRotate) {
+		if (hoverDraggerIndex == HitRotate) {
+			// 增量旋转的起点：按下那一刻自身的角度，与鼠标相对中心的方向。
+			// 拖动时按"转过了多少"往上叠加（见 mouseDrag 的 HitRotate 分支）
+			auto c = rectCenter();
+			rotateStartAngle = angle;
+			rotateStartDir = atan2f(x - c.x, -(y - c.y)) * 180.f / kPi;
+		}
 		// 旋转与那几枚内部手柄都在 mouseDrag 里按"当前位形 + 鼠标位置"现算，
 		// 按下这一下只要把尺寸记下来就够
 		pressX = x;
@@ -362,19 +394,42 @@ void ShapeRectBase::mouseUp(const float x, const float y)
 void ShapeRectBase::mouseMove(const float x, const float y)
 {
 	hoverDraggerIndex = -1;
-	// 手柄位置是 paintDragger 里算的，而它只在 hover 时才跑；这里先补算一次，
+	// 手柄位置每帧由 paintDragger 重算，而它只在 hover 时才跑；这里先补一次，
 	// 免得刚把鼠标移上去的那一帧拿着上一次的旧位置判不中
-	updateRotateDragger();
-	if (isInRect(rotateDragger, x, y)) {
-		hoverDraggerIndex = HitRotate;
-		return;
-	}
+	makeDraggers();
 	// 框转过之后能点中的那块也跟着转，把鼠标点逆着角度转回来再判
 	auto p = unrotatePoint({ x, y }, rectCenter(), angle);
 	hitDraggers(p.x, p.y);
+	// 角手柄外侧那一圈归旋转 —— 旋转不再单独占右下角一个坑（见 hitRotateBand）
+	if (hoverDraggerIndex == -1) {
+		hitRotateBand(p.x, p.y);
+	}
 	if (hoverDraggerIndex == -1) {
 		hitBody(p.x, p.y);
 	}
+}
+
+void ShapeRectBase::hitRotateBand(const float x, const float y)
+{
+	// 四个角手柄外侧那一圈环带：落在里面按下就是转。
+	// 内边界取角手柄的外沿再让开一点（手柄半宽 draggerSize/2），免得与"拖角缩放"抢；
+	// 外边界 2.4 个手柄宽 —— 再宽就伸到相邻那条边的地盘上去了
+	auto inner{ draggerSize * 0.8f };
+	auto outer{ draggerSize * 2.4f };
+	int best{ -1 };
+	float bestD{ 0.f };
+	for (int i : { 0, 2, 4, 6 }) {
+		auto cx{ (draggers[i].left + draggers[i].right) / 2.f };
+		auto cy{ (draggers[i].top + draggers[i].bottom) / 2.f };
+		auto dx{ x - cx }, dy{ y - cy };
+		auto d{ sqrtf(dx * dx + dy * dy) };
+		if (d <= inner || d > outer) continue;
+		// 四个角的环带在图形很小时会互相重叠，取离得最近的那个角
+		if (best < 0 || d < bestD) { best = i; bestD = d; }
+	}
+	if (best < 0) return;
+	hoverDraggerIndex = HitRotate;
+	rotateCorner = best;
 }
 
 void ShapeRectBase::setCursor()

@@ -12,6 +12,11 @@ ShapeBase::ShapeBase(Canvas* win):win{win}, draggerSize{6*win->getDpi()}
 	// 控制点：浅蓝描边（原来的黑色压在标注上很扎眼），选中时填白把下层线挡住
 	d2d->deviceContext->CreateSolidColorBrush(D2D1::ColorF(0x4A9EFF), brushDragger.GetAddressOf());
 	d2d->deviceContext->CreateSolidColorBrush(D2D1::ColorF(0xFFFFFF), brushDraggerFill.GetAddressOf());
+	// 迷你条的三个配角：淡灰边、极淡的投影、删除那格的红。边框取色与圆角半径
+	// 跟取色面板（WinColorPicker）那一套对齐 —— 白底浮层的既有约定，别再发明第二种
+	d2d->deviceContext->CreateSolidColorBrush(D2D1::ColorF(0xDCDFE4), brushBarBorder.GetAddressOf());
+	d2d->deviceContext->CreateSolidColorBrush(D2D1::ColorF(0x000000, 0.08f), brushBarShadow.GetAddressOf());
+	d2d->deviceContext->CreateSolidColorBrush(D2D1::ColorF(0xE24B4A), brushDelete.GetAddressOf());
 }
 
 ShapeBase::~ShapeBase()
@@ -22,49 +27,51 @@ bool ShapeBase::isInRect(const D2D1_RECT_F rect, const float x, const float y) c
 	return (x > rect.left && x<rect.right && y>rect.top && y < rect.bottom);
 }
 
-D2D1_RECT_F ShapeBase::actionBtnRect(const int i) const
+// 复制与 × 并成的一条迷你条：挂在选中框下方居中（放不下就翻到框顶上），横向夹在图内。
+// 原来这两枚分居左上 / 右上两个角，与八向手柄挤在同一圈窄带里，重叠时点错一枚就是误删
+//（见 WinPin::canHitActionBtn）。摆到下方居中之后离四个角的手柄都远，而且整条是一块
+// 连续的热区 —— 比两个散在角上的点好认，也好躲开
+D2D1_RECT_F ShapeBase::actionBarRect() const
 {
 	D2D1_RECT_F b{};
-	if (i < 0 || i >= actionBtnTotal()) return D2D1::RectF(0.f, 0.f, 0.f, 0.f);
 	if (!getShapeBounds(b)) return D2D1::RectF(0.f, 0.f, 0.f, 0.f);
+	auto rad{ draggerSize * 0.9f };
+	auto pad{ draggerSize * 0.42f };
+	auto count{ copyable() ? 2 : 1 };
+	auto barW{ count * rad * 2.f + (count + 1) * pad };
+	auto barH{ rad * 2.f + pad };
+	auto img = win->getImgSize();
+	auto cx{ (b.left + b.right) / 2.f };
+	if (img.width > 0) {
+		// 夹进图里：元素贴着图边时整条都得看得见、点得到。
+		// 图比条还窄时 clamp 的上下界会反过来，std::clamp 在这种情况下是未定义行为，先判一下
+		auto lo{ barW / 2.f }, hi{ (float)img.width - barW / 2.f };
+		cx = lo < hi ? std::clamp(cx, lo, hi) : (float)img.width / 2.f;
+	}
+	auto cy{ b.bottom + draggerSize * 2.2f + barH / 2.f };
+	if (img.height > 0 && cy + barH / 2.f > (float)img.height) {
+		// 翻到框顶上；顶上也放不下（图很矮）就贴着图内夹住，宁可压在元素上也不能被裁掉
+		cy = b.top - draggerSize * 2.2f - barH / 2.f;
+		auto lo{ barH / 2.f }, hi{ (float)img.height - barH / 2.f };
+		cy = lo < hi ? std::clamp(cy, lo, hi) : (float)img.height / 2.f;
+	}
+	return D2D1::RectF(cx - barW / 2.f, cy - barH / 2.f, cx + barW / 2.f, cy + barH / 2.f);
+}
+
+D2D1_RECT_F ShapeBase::actionBtnRect(const int i) const
+{
+	if (i < 0 || i >= actionBtnTotal()) return D2D1::RectF(0.f, 0.f, 0.f, 0.f);
+	auto bar = actionBarRect();
+	if (bar.right <= bar.left) return D2D1::RectF(0.f, 0.f, 0.f, 0.f);
 	const bool hasCopy{ copyable() };
 	const int last{ actionBtnTotal() - 1 };
 	auto rad{ draggerSize * 0.9f };
-	// 离框多远。角上正压着八向手柄，而 WinPin::onDown 里 hitActionBtn 排在 shape 派发之前：
-	// 两者贴太近时，瞄着角手柄去 resize 就会先被按钮截住（点 × 直接把元素删了）。
-	// 3 个手柄宽 = 按钮内边缘离角手柄外边缘还有约 1.8 个手柄宽，鼠标走过去不会中途改判。
-	// 从 3.2 收到 3.0 是作者实测后定的：三个角离框太远时，整排按钮看着像飘在元素外面
-	auto gap{ draggerSize * 3.0f };
-	// 图标之间留一点缝
-	auto step{ rad * 2.f + draggerSize * 0.5f };
-	float cx{}, cy{};
-	if (i == last) {
-		// 末尾那枚（×）恒定在右上角
-		cx = b.right + gap;
-		cy = b.top - gap;
-	}
-	else if (hasCopy && i == actionCount()) {
-		// 复制恒定在左上角：与右上角的 × 分居两个角 —— 分在同一条边上时相邻两枚只隔一个
-		// 手柄宽，鼠标移过去极易点错，而点错 × 就是把刚画的东西删了
-		cx = b.left - gap;
-		cy = b.top - gap;
-	}
-	else {
-		// 派生类自己的动作图标在左下角。多枚时沿框的左边往外排
-		cx = b.left - gap - i * step;
-		cy = b.bottom + gap;
-	}
-	// 顶到画布边上就翻到内侧 —— 否则按钮被画布裁掉，点都点不到
-	auto img = win->getImgSize();
-	if (img.width > 0) {
-		if (cx + rad > (float)img.width) cx = b.right - gap;
-		if (cx - rad < 0.f) cx = b.left + gap;
-	}
-	if (img.height > 0) {
-		if (cy - rad < 0.f) cy = b.top + gap;
-		if (cy + rad > (float)img.height) cy = b.bottom - gap;
-	}
-	return D2D1::RectF(cx - rad, cy - rad, cx + rad, cy + rad);
+	auto pad{ draggerSize * 0.42f };
+	// 条内第几格：× 恒在最右，复制在它左边（只有一枚时就它自己）
+	int slot{ i == last ? (hasCopy ? 1 : 0) : 0 };
+	auto bx{ bar.left + pad + rad + slot * (rad * 2.f + pad) };
+	auto cy{ (bar.top + bar.bottom) / 2.f };
+	return D2D1::RectF(bx - rad, cy - rad, bx + rad, cy + rad);
 }
 
 int ShapeBase::hitActionBtn(const float x, const float y) const
@@ -79,6 +86,24 @@ void ShapeBase::paintActionBtns(ID2D1DeviceContext* ctx)
 {
 	const int last{ actionBtnTotal() - 1 };
 	const bool hasCopy{ copyable() };
+	// 条身：白底 + 淡灰边 + 一层往下偏 1px 的极淡投影。之前只描了一圈浅蓝边，
+	// 压在浅色画面上边界糊成一团，看着就像两个图标飘在白块上 —— 加投影之后
+	// 整条才"浮"得起来，圆角取固定 6 逻辑像素（与取色面板一致），不随条高缩放
+	auto bar = actionBarRect();
+	if (bar.right > bar.left) {
+		auto r{ 6.f * win->getDpi() };
+		auto dpi{ win->getDpi() };
+		auto shadow = D2D1::RectF(bar.left, bar.top + dpi, bar.right, bar.bottom + dpi);
+		ctx->FillRoundedRectangle(D2D1::RoundedRect(shadow, r, r), brushBarShadow.Get());
+		ctx->FillRoundedRectangle(D2D1::RoundedRect(bar, r, r), brushDraggerFill.Get());
+		ctx->DrawRoundedRectangle(D2D1::RoundedRect(bar, r, r), brushBarBorder.Get(), dpi);
+		// 两格之间一条竖分隔线（只有复制 + 删除两格时才有）
+		if (hasCopy) {
+			auto mx{ (bar.left + bar.right) / 2.f };
+			ctx->DrawLine(D2D1::Point2F(mx, bar.top + dpi * 3.f),
+				D2D1::Point2F(mx, bar.bottom - dpi * 3.f), brushBarBorder.Get(), dpi);
+		}
+	}
 	for (int i = 0; i < actionBtnTotal(); i++) {
 		auto box = actionBtnRect(i);
 		if (box.right <= box.left) continue;
@@ -87,11 +112,16 @@ void ShapeBase::paintActionBtns(ID2D1DeviceContext* ctx)
 		// 不再垫白色圆底、也不再描那个圆框（作者：只保留圆圈内部的小图标）。
 		// 图标统一走"白描边 + 原色"两遍（paintIconHaloed），压在任意底图上都读得出来
 		if (i == last) {
+			// × 是删除，红色 —— 危险操作得在颜色上就跟复制那枚分开
 			auto k{ rad * 0.42f };
-			auto stroke{ draggerSize * 0.15f };
+			auto stroke{ draggerSize * 0.18f };
+			ID2D1Brush* del{ brushDelete.Get() };
+			ID2D1Brush* halo{ brushDraggerFill.Get() };
 			paintIconHaloed(ctx, stroke, [&](ID2D1Brush* b, float w) {
-				ctx->DrawLine({ c.x - k, c.y - k }, { c.x + k, c.y + k }, b, w);
-				ctx->DrawLine({ c.x - k, c.y + k }, { c.x + k, c.y - k }, b, w);
+				// 第一遍是白描边衬底（在白底条上不可见，无妨），第二遍才是主体
+				ID2D1Brush* bb{ b == halo ? halo : del };
+				ctx->DrawLine({ c.x - k, c.y - k }, { c.x + k, c.y + k }, bb, w);
+				ctx->DrawLine({ c.x - k, c.y + k }, { c.x + k, c.y - k }, bb, w);
 			});
 		}
 		else if (hasCopy && i == actionCount()) {
@@ -200,10 +230,15 @@ float ShapeBase::rotateAngleAt(const D2D1_POINT_2F& center, const float x, const
 void ShapeBase::paintRotateHandle(ID2D1DeviceContext* ctx)
 {
 	if (rotateDragger.right <= rotateDragger.left) return;
-	auto d2d = Ling::D2D::get();
-	auto dpi = win->getDpi();
 	auto c = D2D1::Point2F((rotateDragger.left + rotateDragger.right) / 2.f,
 		(rotateDragger.bottom + rotateDragger.top) / 2.f);
+	paintRotateHandleAt(ctx, c);
+}
+
+void ShapeBase::paintRotateHandleAt(ID2D1DeviceContext* ctx, const D2D1_POINT_2F& c)
+{
+	auto d2d = Ling::D2D::get();
+	auto dpi = win->getDpi();
 	// 不再垫白圆底（作者：只保留圆圈内部的小图标）。
 	// 图标：半弧 + 一支箭头（转圈的意思），与另外两个角标的画法一样用浅蓝。
 	// 弧从右下角起、越过顶部、停在左侧（正对屏幕左边），末端一支箭头顺着走向往下 ——

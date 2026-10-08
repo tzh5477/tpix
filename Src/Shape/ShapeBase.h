@@ -40,10 +40,10 @@ public:
 	// 默认返回 false（水印铺满整图、折线族那几笔用户说不用加），派生类按需覆写。
 	// 带旋转的元素要把旋转也算进去（摆图标的是外接框，不是未旋转的那个 rect）
 	virtual bool getShapeBounds(D2D1_RECT_F& out) const { return false; }
-	// 选中元素外侧那几枚按钮。四个角各摆一枚：左上恒是复制，右上恒是 ×（删除），
-	// 派生类自己的动作图标排到左下角，旋转手柄固定在右下角（见 updateRotateDragger）。
-	// 分成四个角而不是挤在一条边上：挤在一起时相邻两枚挨得太近，
-	// 鼠标移过去点错一个就是误删或者误改形状
+	// 选中元素外侧那几枚按钮。现在只剩复制与 × 两枚，并成选中框下方的一条迷你条
+	//（见 actionBarRect）—— 原来是左上复制、右上 ×、右下旋转手柄各占一个角，与八向手柄
+	// 挤在同一圈窄带里；分成四个角时相邻两枚挨得太近，鼠标移过去点错一个就是误删。
+	// 派生类自己的动作图标（矩形/圆互转那枚）已经撤掉，换形状统一走工具条
 	virtual int actionCount() const { return 0; }
 	// 多选（Ctrl 框选）那一圈提示框线 / 标记点，要离 getShapeBounds 给的框再让出多少
 	//（底图像素）。默认 0 = 紧贴着画。
@@ -86,6 +86,9 @@ public:
 	D2D1_RECT_F actionBtnRect(const int i) const;
 	// 命中的是第几枚图标，没命中返回 -1
 	int hitActionBtn(const float x, const float y) const;
+	// 装这几枚图标的那条迷你条的方框（底图坐标）。挂在选中框下方居中，翻到顶上时也由它定，
+	// actionBtnRect 按它往里分格 —— 两处必须是同一份几何，条与图标才对得齐
+	D2D1_RECT_F actionBarRect() const;
 	// 画整排图标：只有图标本身，不再垫白色圆底
 	void paintActionBtns(ID2D1DeviceContext* ctx);
 	// 动作图标的统一画法：先把同一份几何用白笔加粗描一遍当衬底，再用原色笔画上去。
@@ -148,6 +151,9 @@ protected:
 	void updateRotateDragger();
 	// 画旋转手柄。坐标已经是转好之后的，调用方不用再叠旋转
 	void paintRotateHandle(ID2D1DeviceContext* ctx);
+	// 在指定位置画一枚旋转图标。矩形族把它挂在"角手柄外侧那一圈"上（抓哪个角画在哪个角外），
+	// 不再有固定的右下角位置；文本那一族仍走上面那个用 rotateDragger 的版本
+	void paintRotateHandleAt(ID2D1DeviceContext* ctx, const D2D1_POINT_2F& c);
 	// 鼠标落在 (x,y) 时，相对手柄的静止方向转过了多少度（顺时针为正）。
 	// center 是元素中心，rotateRestAngle 由 updateRotateDragger 记下
 	float rotateAngleAt(const D2D1_POINT_2F& center, const float x, const float y) const;
@@ -167,6 +173,10 @@ protected:
 	// 不填白的话线从框中间穿过去，一排点看着全是花的）
 	Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brushDragger;
 	Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brushDraggerFill;
+	// 迷你条的配角：淡灰边框、极淡投影、删除那格的红（构造函数里建）
+	Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brushBarBorder;
+	Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brushBarShadow;
+	Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brushDelete;
 	// 旋转手柄的方框（底图坐标），与它静止时所在的方向（度，顺时针为正、0 = 正上方）
 	D2D1_RECT_F rotateDragger{};
 	float rotateRestAngle{ 0.f };

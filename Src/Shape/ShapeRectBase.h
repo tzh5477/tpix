@@ -55,6 +55,10 @@ protected:
 	};
 	// 命中八向手柄与那几个内部手柄（传进来的点已经是"逆着旋转转回来"的局部坐标）
 	void hitDraggers(const float x, const float y);
+	// 命中"角手柄外侧那一圈"（旋转）。传进来的同样是局部坐标。
+	// 旋转原来独占右下角一个坑，与八向手柄挤在同一圈窄带里；改成角外的环带之后不占位置，
+	// 光标移到那一圈时才在对应角外冒出一枚图标（见 paintDragger）
+	void hitRotateBand(const float x, const float y);
 	// 命中"整体拖动"（索引 8）。矩形判一圈边框，椭圆（含扇形 / 环形）判环带
 	void hitBody(const float x, const float y);
 	// 按当前 rect 重算所有手柄的位置，抬手时与整体移动后都要走一遍
@@ -122,6 +126,13 @@ protected:
 	D2D1_POINT_2F anchorWorld{ 0.f, 0.f };
 	// 按下时 rect 的宽高。拖上下 / 左右手柄时，另一维要保持这个尺寸
 	float pressW{ 0.f }, pressH{ 0.f };
+	// 增量旋转的起点：按下那一刻自身的角度，与鼠标相对中心的方向（度）。
+	// 拖动时按"转过了多少"往上叠加（见 mouseDrag 的 HitRotate 分支）——
+	// 不用"鼠标方向 - 手柄静止方向"那种绝对式，手柄静止方向得按当前 angle 现算，
+	// 而拖动过程中 angle 正在变，两者互相依赖会漂
+	float rotateStartAngle{ 0.f }, rotateStartDir{ 0.f };
+	// 这会儿抓的是哪个角的环带（0/2/4/6，对应左上/右上/右下/左下）。只用于画那枚提示图标
+	int rotateCorner{ -1 };
 	// 这一族取不取工具条上"当前那一套样式"（颜色 / 线宽 / 填充 / 类别）。
 	// 只有矩形与圆这两个"照工具条画"的会用到：马赛克与擦除的画刷是按画面自己算出来的，
 	// 跟着工具条走就被涂掉了，它们也不参与"换个形状"
