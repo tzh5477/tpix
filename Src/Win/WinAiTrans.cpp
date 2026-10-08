@@ -59,7 +59,14 @@ void WinAiTrans::init(const std::wstring& preset)
 	// createNativeWindow 把 onCreated 跑完了 —— 构造前存一份成员变量的老写法，
 	// 读到它的时候永远是空的，"带原文进来"从来就没生效过
 	winAiTrans->applyPreset(preset);
-	if (winAiTrans->hwnd) SetForegroundWindow(winAiTrans->hwnd);
+	if (winAiTrans->hwnd) {
+		// createNativeWindow 建出来的窗口**不带 WS_VISIBLE**，不 show 就一直是隐藏的。
+		// 这条新实例的路以前漏了 show()：第一次调 init 时窗口只被建出来、没露过面
+		// （而且 winAiTrans 已经存在，下一次进来走的是上面那条分支，恰好又会 show ——
+		// 所以症状是"第一次点没反应，第二次才有窗口"，特别像没反应）
+		winAiTrans->show();
+		SetForegroundWindow(winAiTrans->hwnd);
+	}
 }
 
 void WinAiTrans::applyPreset(const std::wstring& text)
