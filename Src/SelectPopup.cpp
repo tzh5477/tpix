@@ -17,6 +17,22 @@ namespace
 	constexpr float listMinW{ 120.f };
 	constexpr float sampleListMinW{ 60.f };
 
+	// 命中测试（Node::isPosIn）比的是 Node::x/y，而 ScrollerBox 里的内容只是 visual
+	// 被整体上移了 scrollY —— x/y 仍是没减滚动量的 yoga 坐标。列表一滚，所有项的
+	// 响应位置就整体偏一个滚动量：滚一下再点，选中的是别的项。与设置页的
+	// WinSetting::syncScrollHitCoords 治的是同一件事，这里照抄它的摆正办法。
+	// 按 yoga 的相对坐标把绝对坐标重算一遍再减掉 scrollY，写回 Node::y。
+	// 每次都从 yoga 重算，所以幂等 —— 调多少次都不会累积偏移。
+	// absTop 是 root 自己的绝对坐标（layout 写好后不再动它）。
+	void shiftForScroll(Ling::Node* root, float absTop, float scrollY)
+	{
+		for (auto& child : root->children) {
+			const float childAbsTop = absTop + YGNodeLayoutGetTop(child->node);
+			child->y = childAbsTop - scrollY;
+			shiftForScroll(child.get(), childAbsTop, scrollY);
+		}
+	}
+
 	class Popup;
 	// 声明在类定义之前：Popup 自己的 onDestroy 里要按地址比对后把它放掉
 	std::unique_ptr<Popup> popup;
@@ -87,9 +103,14 @@ namespace
 		}
 		void onCreated() override
 		{
+			// 这两个订阅必须排在列表 / 各项按钮**之前**：Ling 的 winrt::event 按订阅
+			// 顺序回调，要赶在 ScrollerBox（滚动条拖动）与 Button（点击选中）处理鼠标
+			// 之前把坐标摆正、把"落在滚动条上"的那一下标记出来（见 syncHitCoords）
+			onMouseDown.add([this](POINT pos, bool) { syncHitCoords(pos); });
+			onMouseMove.add([this](POINT pos) { syncHitCoords(pos); });
 			body->setBg(0xFFFFFFFF);
 			body->setBorder(1.f, 0x597EF766);
-			auto list = body->makeChild<Ling::ScrollerBox>();
+			list = body->makeChild<Ling::ScrollerBox>();
 			list->setSizePercent(100.f, 100.f);
 			for (int i = 0; i < (int)items.size(); ++i)
 			{
@@ -136,8 +157,25 @@ namespace
 				samples[i]->finishPaint();
 			}
 		}
+	private:
+		// 鼠标事件分派给列表与各按钮之前的摆正 + 滚动条判定。
+		// 滚动条竖带（sliderW 宽、仅内容溢出时存在）压在每一项按钮的右边缘上 ——
+		// Button::isPosIn 只认自己的矩形，点滚动条就会被当成点了那一项、直接选中一个模型。
+		// 这里把它记进 swallowPick，picked() 里拦掉；拖动滑块本身由 ScrollerBox::onDown 管
+		void syncHitCoords(POINT pos)
+		{
+			if (!list) return;
+			const float sy = list->getScrollY();
+			if (sy > 0.f) shiftForScroll(list, list->y, sy);
+			const float sbW = list->getScrollBarWidth();
+			swallowPick = sbW > 0.f
+				&& pos.x >= list->x + list->w - sbW && pos.x < list->x + list->w
+				&& pos.y >= list->y && pos.y < list->y + list->h;
+		}
 		void picked(int index)
 		{
+			// 这一下落在滚动条竖带上（按下滑块 / 正要拖动），不是在选那一项
+			if (swallowPick) return;
 			// 先收起再回调：回调里多半要重画界面（换语言那处甚至是关窗重开），
 			// 列表还挂着的话会跟着一起被卷进去
 			auto cb = std::move(onPick);
@@ -149,6 +187,10 @@ namespace
 		int cur{ -1 };
 		std::function<void(int)> onPick;
 		std::wstring fontFamily;
+		// 各项按钮所在的滚动容器。onCreated 里建好就不再变，指针在本窗口生命周期内有效
+		Ling::ScrollerBox* list{ nullptr };
+		// 按下的这一点是否落在滚动条竖带上（见 syncHitCoords）
+		bool swallowPick{ false };
 		// 自绘项的那几格画布，与 items 一一对应（不自绘时是空的）
 		std::vector<Ling::Canvas*> samples;
 		SelectPopup::SamplePainter paintSample;

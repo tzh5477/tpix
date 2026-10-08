@@ -15,8 +15,9 @@ namespace {
 	constexpr float modelPopupMinW{ 240.f };
 
 	// 模型那个组合框的尺寸（逻辑像素）。两个数必须自己配平：外框只画一圈边框，
-	// 里面输入框与箭头按钮是"外框宽 - 按钮宽"，不给 flex 留任何分配余地
-	constexpr float comboW{ 240.f };
+	// 里面输入框与箭头按钮是"外框宽 - 按钮宽"，不给 flex 留任何分配余地。
+	// 320 = 下面场景行"接口 + 模型"两枚按钮的合计宽度，四行右边缘才对得齐
+	constexpr float comboW{ 320.f };
 	constexpr float pickBtnW{ 28.f };
 
 	// 四类业务场景的行。顺序就是界面上从上到下的顺序；加一个场景要同步 Setting.h 的
@@ -301,7 +302,12 @@ void WinSettingAi::initProviderCtrls()
 	auto nameRow = makeRow(L"setting.aiProviderName");
 	nameBox = nameRow->makeChild<Ling::TextBox>();
 	nameBox->setHeight(28.f);
-	nameBox->setWidth(240.f);
+	nameBox->setWidth(320.f);
+	// 单行输入框的上下内边距让位给 setVerticalCenter 的居中：TextBox 构造默认上下各 6，
+	// 28 高的框只剩 16 逻辑像素装文本，而一行 14 号字就有 ~19 —— 内容永远"溢出"半行，
+	// 滚动条就常驻在框上（没换行也在）。上下清零后装得下一行；真换了行滚动条照常出现。
+	// 下面地址 / 密钥 / 模型与翻译页的 AK / SK 六个框同理
+	nameBox->setPadding(6.f, 0.f, 6.f, 0.f);
 	nameBox->setBorder(1.f, 0xE0E0E0FF);
 	nameBox->setVerticalCenter(true);
 	nameBox->onTextChanged.add([this](Ling::TextBox*, const std::wstring& val) {
@@ -320,7 +326,8 @@ void WinSettingAi::initProviderCtrls()
 	auto urlRow = makeRow(L"setting.aiBaseUrl");
 	urlBox = urlRow->makeChild<Ling::TextBox>();
 	urlBox->setHeight(28.f);
-	urlBox->setWidth(240.f);
+	urlBox->setWidth(320.f);
+	urlBox->setPadding(6.f, 0.f, 6.f, 0.f);
 	urlBox->setBorder(1.f, 0xE0E0E0FF);
 	urlBox->setVerticalCenter(true);
 	urlBox->setPlaceholder(L"https://api.deepseek.com/v1");
@@ -337,7 +344,8 @@ void WinSettingAi::initProviderCtrls()
 	auto keyRow = makeRow(L"setting.aiApiKey");
 	keyBox = keyRow->makeChild<Ling::TextBox>();
 	keyBox->setHeight(28.f);
-	keyBox->setWidth(240.f);
+	keyBox->setWidth(320.f);
+	keyBox->setPadding(6.f, 0.f, 6.f, 0.f);
 	keyBox->setBorder(1.f, 0xE0E0E0FF);
 	keyBox->setVerticalCenter(true);
 	keyBox->setPasswordMode(true);
@@ -370,6 +378,7 @@ void WinSettingAi::initProviderCtrls()
 	modelBox = combo->makeChild<Ling::TextBox>();
 	modelBox->setWidth(comboW - pickBtnW);   // 让出箭头按钮那一格
 	modelBox->setHeightPercent(100.f);
+	modelBox->setPadding(6.f, 0.f, 6.f, 0.f);
 	modelBox->setVerticalCenter(true);
 	modelBox->onTextChanged.add([this](Ling::TextBox*, const std::wstring& val) {
 		if (filling) return;
@@ -530,6 +539,7 @@ void WinSettingAi::initTransCtrls()
 	auto akBox = akRow->makeChild<Ling::TextBox>();
 	akBox->setHeight(28.f);
 	akBox->setWidth(240.f);
+	akBox->setPadding(6.f, 0.f, 6.f, 0.f);   // 同上面四个框：上下让位，滚动条不再常驻
 	akBox->setBorder(1.f, 0xE0E0E0FF);
 	akBox->setVerticalCenter(true);
 	akBox->setText(setting->getAiStr(L"volcAk", L""));
@@ -542,6 +552,7 @@ void WinSettingAi::initTransCtrls()
 	auto skBox = skRow->makeChild<Ling::TextBox>();
 	skBox->setHeight(28.f);
 	skBox->setWidth(240.f);
+	skBox->setPadding(6.f, 0.f, 6.f, 0.f);
 	skBox->setBorder(1.f, 0xE0E0E0FF);
 	skBox->setVerticalCenter(true);
 	skBox->setPasswordMode(true);

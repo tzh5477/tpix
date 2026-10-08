@@ -312,6 +312,11 @@ void ToolMain::onClick(Ling::Button* btn)
 		win->saveToFile();
 		return;
 	}
+	// 复制当前编辑状态的图到剪贴板，但**不关窗** —— 与「剪切板」那枚的唯一区别
+	else if (btn->id == L"copy") {
+		win->copyImageToClipboard();
+		return;
+	}
 	else if (btn->id == L"clipboard") {
 		win->copyToClipboard();
 		return;

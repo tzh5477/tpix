@@ -3442,13 +3442,20 @@ void WinPin::setMinimized(bool on)
 	refresh();
 }
 
-void WinPin::copyToClipboard()
+bool WinPin::copyImageToClipboard()
 {
 	std::vector<BYTE> pixels;
 	D2D1_SIZE_U size{};
-	if (!getImagePixels(pixels, size)) return;
+	if (!getImagePixels(pixels, size)) return false;
 	Util::saveToClipboard((int)size.width, (int)size.height, pixels.data());
-	close();
+	// 窗口不开不关，给个"成了"的凭据（「关闭窗」那条路的凭据就是窗口自己消失了）
+	showToast(Lang::get(L"tool.copied"));
+	return true;
+}
+
+void WinPin::copyToClipboard()
+{
+	if (copyImageToClipboard()) close();
 }
 
 // ---- 对象剪贴板（见 WinPin.h 的说明）----

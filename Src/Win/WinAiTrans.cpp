@@ -208,6 +208,14 @@ void WinAiTrans::onCreated()
 	statusLabel->setFontSize(12.f);
 	statusLabel->setColor(0x888888FF);
 
+	// 行尾那枚：这单翻译走的是哪条路（见 refreshSrcLabel）。statusLabel 占着 flexGrow，
+	// 它自然被推到行尾
+	srcLabel = actRow->makeChild<Ling::Label>();
+	srcLabel->setMarginLeft(8.f);
+	srcLabel->setFontSize(12.f);
+	srcLabel->setColor(0x888888FF);
+	refreshSrcLabel();
+
 	// 结果区。用 TextBox 而不是 Label：Label 既不会折行、也没法选中一段来复制，
 	// 而译文常常很长。滚动由 TextBox 自己带，不必再套 ScrollerBox
 	resultBox = body->makeChild<Ling::TextBox>();
@@ -277,6 +285,23 @@ void WinAiTrans::refreshResult(const std::wstring& text)
 	resultBox->setText(text);
 }
 
+void WinAiTrans::refreshSrcLabel()
+{
+	if (!srcLabel) return;
+	auto setting = Setting::get();
+	if (setting->getAiStr(L"transProvider", L"volc") == L"model") {
+		// 大模型那条路用的是「翻译」场景自己绑的那套接口 + 模型（credFor 的兜底与
+		// AiTranslate::ready 背后是同一套解析，显示的就是真正要发请求的那一家）
+		auto cred = setting->credFor(std::wstring{ AiScenario::translate });
+		std::wstring desc = L"LLM " + cred.providerName;
+		if (!cred.model.empty()) desc += L"：" + cred.model;
+		srcLabel->setText(desc);
+	}
+	else {
+		srcLabel->setText(std::wstring{ L"API " } + Lang::get(L"ai.providerVolc"));
+	}
+}
+
 void WinAiTrans::setBusy(const bool on)
 {
 	busy = on;
@@ -285,6 +310,8 @@ void WinAiTrans::setBusy(const bool on)
 
 void WinAiTrans::run()
 {
+	// 设置可能在窗口开着的时候被改过，每次发车前把接口那枚刷一遍
+	refreshSrcLabel();
 	auto text = input->getText();
 	// 首尾空白不算内容：OCR 出来的文字常常带一堆换行，全送去翻就是白白花钱
 	while (!text.empty() && (text.front() == L'\n' || text.front() == L' ' || text.front() == L'\r')) text.erase(0, 1);

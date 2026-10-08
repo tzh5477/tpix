@@ -202,9 +202,20 @@ def icon_arrow_taper(pen):
     pen.closePath()
 
 
+def icon_copy(pen):
+    """两张错位的页 = 复制。前页整圈描边；后页只描没被前页压住的那几段
+    （整圈会在前页的肚子里串线，13px 下糊成一团），画法同 Feather 的 copy。"""
+    w = 56
+    rrect_ring(pen, 352, 32, 880, 560, w, 64)   # 前页（右下），完整描边
+    seg(pen, 144, 424, 144, 848, w)             # 后页左边（沿用到上边）
+    seg(pen, 144, 848, 672, 848, w)             # 后页上边
+    seg(pen, 672, 848, 672, 656, w)             # 后页右边一小段，末端悬空（离前页上沿留个缺口）
+
+
 ICONS = [
     (0xE909, 'arrowPlain', icon_arrow_plain),
     (0xE90A, 'arrowTaper', icon_arrow_taper),
+    (0xE90B, 'copy', icon_copy),
     (0xE907, 'pinOlder', icon_pin_older),
     (0xE908, 'pinClipOlder', icon_pin_clip_older),
     (0xE900, 'clock', icon_clock),

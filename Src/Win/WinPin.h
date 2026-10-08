@@ -59,6 +59,9 @@ public:
 	bool isToolsVisible() const;
 	// 把底图与所有未撤销的 shape 合成后写入剪切板，成功即关窗
 	void copyToClipboard();
+	// 同上，但**不动窗口**：ToolMain 上的「复制」用 —— 用户复制一份之后
+	// 多半还想接着标注 / 存文件。失败（取不到像素）返回 false
+	bool copyImageToClipboard();
 	// 弹另存为对话框，把合成结果存成 PNG，成功即关窗；用户取消或失败则保持窗口
 	void saveToFile();
 	// ---- 右边缘那条竖排（ToolPinSide）上的四个动作 ----

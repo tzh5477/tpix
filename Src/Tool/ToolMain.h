@@ -48,14 +48,16 @@ private:
 	// 没有"图片剪裁"这个按钮：剪裁的 8 个采样点常驻在贴图窗口的边框上，随时可拖
 	//（见 WinPin::paintCropHandles），不必先按一个按钮进"剪裁态"。
 	// 排在最前的 select 是「选择对象」：不用先判断"这是哪个组件"再回去切工具，
-	// 直接点它、点中哪个元素就切到哪个元素的工具上（见 WinPin::onUp）
-	std::vector<std::wstring> btnIds = { L"selector",L"rect",L"ellipse",L"arrow",L"number",L"line",L"text",L"mosaic", L"eraser",L"watermark",L"pin",L"|",L"undo",L"redo",L"|",L"pinHide",L"textSelect",L"close",L"save",L"clipboard" };
+	// 直接点它、点中哪个元素就切到哪个元素的工具上（见 WinPin::onUp）。
+	// 尾部三枚的顺序：复制（不关窗）→ 保存 → 剪切板（复制后关窗）→ 关闭收尾
+	std::vector<std::wstring> btnIds = { L"selector",L"rect",L"ellipse",L"arrow",L"number",L"line",L"text",L"mosaic", L"eraser",L"watermark",L"pin",L"|",L"undo",L"redo",L"|",L"pinHide",L"textSelect",L"copy",L"save",L"clipboard",L"close" };
 	// 「选文」（textSelect）与「选择对象」一样是空串：那两枚都不写字，自己画。
 	// textSelect 原来借的是「文字识别」那枚 \ue67b —— 编辑界面右边缘那条竖排
 	//（ToolPinSide）上正好也有一枚 \ue67b，同一个屏里撞脸。图标字体只有 41 个码位
 	// 且全部有主（见工作区笔记），没有现成的 I 形文本光标，于是照「选择对象」那套自绘：
 	// 一支文本光标最能说清"在这儿选字"（另两个空闲的 E909 右箭头 / E97F 调色板都不合适）
-	std::vector<std::wstring> btnCodes = { L"",L"\ue8e8",L"\ue6bc",L"\ue603",L"\ue776",L"\ue601",L"\ue6ec",L"\ue82e",L"\ue6be",L"\ue607",L"\ue6a2",L"|",L"\ued85",L"\ued8a",L"|",L"\ue907",L"",L"\ue62d",L"\ue608",L"\ue6ad" };
+	// 「复制」那枚 \ue90b 是照 Doc/tools/mkicons.py 补进字体的两张错位的页
+	std::vector<std::wstring> btnCodes = { L"",L"\ue8e8",L"\ue6bc",L"\ue603",L"\ue776",L"\ue601",L"\ue6ec",L"\ue82e",L"\ue6be",L"\ue607",L"\ue6a2",L"|",L"\ued85",L"\ued8a",L"|",L"\ue907",L"",L"\ue90b",L"\ue608",L"\ue6ad",L"\ue62d" };
 	std::vector<Ling::Button*> btns;
 	// 「选择对象」那枚按钮里垫的自绘画布（Button 不能自绘，Canvas 收不到鼠标，叠起来才两样都有）
 	Ling::Canvas* selectIcon{ nullptr };

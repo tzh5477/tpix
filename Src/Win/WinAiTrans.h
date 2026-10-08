@@ -26,6 +26,10 @@ private:
 	// 把目标语言切到 code 并同步按钮显示（"自动检测"推出的目标语言走这里）
 	void setToLang(const std::wstring& code);
 	void refreshResult(const std::wstring& text);
+	// 把当前这一单翻译走的是哪条路写进 srcLabel：
+	// 大模型 = 「LLM 接口名：模型名」，火山 = 「API 火山引擎翻译」。
+	// 建窗时写一次；每次点翻译再写一次（设置可能在窗口开着的时候被改过）
+	void refreshSrcLabel();
 	void run();
 	void setBusy(bool on);
 	// 当前选中的源 / 目标语言代码
@@ -40,6 +44,8 @@ private:
 	// 而译文经常很长、用户还想抠其中一段
 	Ling::TextBox* resultBox{ nullptr };
 	Ling::Label* statusLabel{ nullptr };
+	// 行尾那枚：当前翻译走的接口（见 refreshSrcLabel）
+	Ling::Label* srcLabel{ nullptr };
 	Ling::Button* fromBtn{ nullptr };
 	Ling::Button* toBtn{ nullptr };
 	Ling::Button* runBtn{ nullptr };
