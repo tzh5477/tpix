@@ -74,6 +74,9 @@ private:
 	// 这些文件已经没有对应的消息了
 	void clearMsgThumbs();
 	void setBusy(bool on);
+	// 输入区里「接口 - 模型」那一枚按钮。需求要的就是"问答之前可以换一个模型"，
+	// 它显示的是 chat 这个场景当前绑的那一套，选完改的就是那套绑定（下次开还在）
+	void refreshModelBtn();
 	// 分割线以下那一整块的高度（逻辑像素）
 	void setInputAreaH(float logical);
 	// 消息区里的按钮都挂在 ScrollerBox 里，命中坐标要减去滚动量（同 WinSetting）
@@ -113,6 +116,10 @@ private:
 	Ling::TextBox* input{ nullptr };
 	Ling::Button* sendBtn{ nullptr };
 	Ling::Button* attachBtn{ nullptr };
+	// 附件按钮右边那一枚「接口名 - 模型名」，点开是所有可选组合
+	Ling::Button* modelBtn{ nullptr };
+	// 模型按钮上那一整串标签。名字长的时候按钮会截断，悬停提示要拿完整的这串
+	std::wstring modelLabel;
 	Ling::Node* attachStrip{ nullptr };
 	Ling::ImageBox* attachThumb{ nullptr };
 	Ling::Label* attachInfo{ nullptr };

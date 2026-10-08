@@ -4,9 +4,14 @@
 #include <memory>
 #include <string>
 #include <vector>
+#include "Setting.h"
 
-// 云端 AI 服务（OpenAI 兼容接口）。配置项在系统设置的 ai 组：baseUrl / apiKey / model。
-// S1 的对话窗是它第一个调用方；S2 的翻译后续复用同一个 chat（换一套消息拼法即可）。
+// 云端 AI 服务（OpenAI 兼容接口）。
+// 调用方按需给两样东西之一：
+//   1) 场景名（AiScenario::chat / translate / recognize / table）—— 由 Setting 里
+//      「这个业务该用哪个接口、哪个模型」的绑定解出凭据；
+//   2) 直接给一组 AiCred —— 界面上临时换模型（对话窗那个下拉框）走这条路。
+// 底下真正的收发只有一份：Bearer + OpenAI 兼容的 /models 与 /chat/completions。
 // 火山的机器翻译是另一套认证（签名，见 S3），不走这里。
 class AiService
 {
@@ -38,16 +43,23 @@ public:
 	};
 	using TaskPtr = std::shared_ptr<Task>;
 
-	// baseUrl / apiKey / model 三样缺一样就不能用。UI 拿它决定要不要先引导去配置
-	static bool ready();
-	// 拉模型列表 == 验证连接：二者是同一个请求（OpenAI 兼容的 GET /models），
+	// 某个业务场景当前能不能用（它绑的那个接口地址 / 密钥 / 模型都齐了）
+	static bool ready(const std::wstring& scenario);
+	// 把场景解成地址 / 密钥 / 模型。UI 拿它显示"现在用着的是哪一个"
+	static AiCred credFor(const std::wstring& scenario);
+	// 拉某个接口的模型列表 == 验证连接：二者是同一个请求（OpenAI 兼容的 GET /models），
 	// 拿到了就既能填下拉框，也说明地址、密钥、网络都通
-	static TaskPtr models(std::function<void(const std::vector<std::wstring>& ids)> onModels,
+	static TaskPtr models(const AiCred& cred,
+		std::function<void(const std::vector<std::wstring>& ids)> onModels,
 		std::function<void(const std::wstring& err)> onDone);
-	// 流式对话。onDelta 每收到一小段回调一次，顺序拼起来是完整回答；
+	// 流式对话（按场景）。onDelta 每收到一小段回调一次，顺序拼起来是完整回答；
 	// onDone 的 err 为空表示正常结束，取消时是 ai.canceled。
 	// 两个回调都在 UI 线程，且都排在 chat 返回之后 —— UI 必然先拿到 TaskPtr，不会错过回调
-	static TaskPtr chat(const std::vector<Msg>& msgs,
+	static TaskPtr chat(const std::wstring& scenario, const std::vector<Msg>& msgs,
+		std::function<void(const std::wstring& delta)> onDelta,
+		std::function<void(const std::wstring& err)> onDone);
+	// 同上，但凭据由调用方直接给（临时换模型的那条路）
+	static TaskPtr chat(const AiCred& cred, const std::vector<Msg>& msgs,
 		std::function<void(const std::wstring& delta)> onDelta,
 		std::function<void(const std::wstring& err)> onDone);
 };

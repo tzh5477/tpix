@@ -18,6 +18,16 @@ namespace {
 	// 里面输入框与箭头按钮是"外框宽 - 按钮宽"，不给 flex 留任何分配余地
 	constexpr float comboW{ 240.f };
 	constexpr float pickBtnW{ 28.f };
+
+	// 四类业务场景的行。顺序就是界面上从上到下的顺序；加一个场景要同步 Setting.h 的
+	// AiScenario 与这里各一行
+	struct ScenarioDef { std::wstring_view scenario; const wchar_t* labelKey; };
+	const ScenarioDef scenarioDefs[]{
+		{ AiScenario::chat,       L"setting.scenarioChat" },
+		{ AiScenario::translate,  L"setting.scenarioTrans" },
+		{ AiScenario::recognize,  L"setting.scenarioRecognize" },
+		{ AiScenario::table,      L"setting.scenarioTable" },
+	};
 }
 
 WinSettingAi::WinSettingAi(Ling::WinBase* parent) :Ling::Node(parent)
@@ -119,108 +129,88 @@ Ling::Button* WinSettingAi::makeSwitchBtn(Ling::Node* row,
 	return btn;
 }
 
+AiProvider* WinSettingAi::cur()
+{
+	if (curProvider >= 0 && curProvider < static_cast<int>(providers.size())) {
+		return &providers[curProvider];
+	}
+	return nullptr;
+}
+
+AiProvider* WinSettingAi::findProvider(const std::wstring& id)
+{
+	for (auto& p : providers) {
+		if (p.id == id) return &p;
+	}
+	return nullptr;
+}
+
+void WinSettingAi::reloadProviders()
+{
+	providers = Setting::get()->getAiProviders();
+}
+
+void WinSettingAi::switchProvider(const std::wstring& id)
+{
+	curProvider = -1;
+	for (int i = 0; i < static_cast<int>(providers.size()); ++i) {
+		if (providers[i].id == id) { curProvider = i; break; }
+	}
+	fillProviderRow();
+}
+
+std::vector<std::wstring> WinSettingAi::modelItems(const AiProvider& provider)
+{
+	// 没验证过连接就拿不到清单。那时至少把框里正填着的那个给它 ——
+	// 用户是可以纯手打模型名的，不该被清单是空的这件事挡住
+	if (!provider.models.empty()) return provider.models;
+	if (!provider.model.empty()) return { provider.model };
+	return {};
+}
+
+Ling::Button* WinSettingAi::makePickBtn(Ling::Node* row, float width, const std::wstring& text)
+{
+	auto btn = row->makeChild<Ling::Button>();
+	btn->setHeight(28.f);
+	btn->setWidth(width);
+	btn->setBorder(1.f, 0xE0E0E0FF);
+	btn->setHoverBg(0xFFFFFFFF);
+	btn->setText(text);
+	return btn;
+}
+
+void WinSettingAi::fillProviderRow()
+{
+	auto p = cur();
+	// ⚠️ filling 期间必须关掉落盘：setText 会替当时那一个触发一次文本变更，
+	//    不拦住就把刚选中的这个覆盖掉了
+	filling = true;
+	auto blank = std::wstring{};
+	nameBox->setText(p ? p->name : blank);
+	urlBox->setText(p ? p->baseUrl : blank);
+	keyBox->setText(p ? p->apiKey : blank);
+	modelBox->setText(p ? p->model : blank);
+	filling = false;
+	if (providerBtn) {
+		providerBtn->setText(p ? Setting::providerName(*p) : Lang::get(L"ai.noProvider"));
+	}
+}
+
+void WinSettingAi::refreshScenarioRows()
+{
+	for (auto& refresh : scenarioRefresh) refresh();
+}
+
 void WinSettingAi::initAiCtrls()
 {
-	auto setting = Setting::get();
+	providers = Setting::get()->getAiProviders();
+	// ensureProviders 保证过至少有一个；这里是给"配置文件被手工改坏"兜底
+	curProvider = providers.empty() ? -1 : 0;
 
-	// 地址与密钥都是手工填：兼容 OpenAI 的服务地址没有"列表"这回事，各家长得都不一样
-	auto urlRow = makeRow(L"setting.aiBaseUrl");
-	auto urlBox = urlRow->makeChild<Ling::TextBox>();
-	urlBox->setHeight(28.f);
-	urlBox->setWidth(240.f);
-	urlBox->setBorder(1.f, 0xE0E0E0FF);
-	urlBox->setVerticalCenter(true);
-	urlBox->setPlaceholder(L"https://api.deepseek.com/v1");
-	urlBox->setText(setting->getAiStr(L"baseUrl", L""));
-	urlBox->onTextChanged.add([](Ling::TextBox*, const std::wstring& val) {
-		Setting::get()->setAiStr(L"baseUrl", val);
-	});
+	initProviderCtrls();
+	initScenarioCtrls();
 
-	// 密码模式：框里画的是圆点，getText 拿到的仍是真实值。它挡的是"旁边有人 / 被截屏"
-	// 这一层 —— 值本身还是明文落在 config.json 上的（见 Setting.h 的注释），别把它当成保护
-	auto keyRow = makeRow(L"setting.aiApiKey");
-	auto keyBox = keyRow->makeChild<Ling::TextBox>();
-	keyBox->setHeight(28.f);
-	keyBox->setWidth(240.f);
-	keyBox->setBorder(1.f, 0xE0E0E0FF);
-	keyBox->setVerticalCenter(true);
-	keyBox->setPasswordMode(true);
-	keyBox->setText(setting->getAiStr(L"apiKey", L""));
-	keyBox->onTextChanged.add([](Ling::TextBox*, const std::wstring& val) {
-		Setting::get()->setAiStr(L"apiKey", val);
-	});
-
-	// 模型：一键一框合成一个组合框 —— 边框只由 combo 画一次，里面两件都不设边框
-	// （照 WinBall 的 itemBox：外框容器 + 子控件保持自身默认外观）
-	//
-	// 两件的宽度都写死、由 comboW 配平，不能靠 flexGrow：TextBox 的构造函数自带
-	// setWidth(240)，那是个"确定宽度"，而 flexGrow 只在有剩余空间时才有发言权 ——
-	// 240 已经把外框占满了；yoga 的 flexShrink 默认又是 0（不是 CSS 的 1），
-	// 这个框一个像素都不会让出来。结果是箭头按钮被摆到外框的右边界之外 35px 处，
-	// 被圆角 clip 一裁，整个按钮就"消失"了（模型下拉框点不开、屏幕上找不到）
-	auto modelRow = makeRow(L"setting.aiModel");
-	auto combo = modelRow->makeChild<Ling::Node>();
-	combo->setHeight(28.f);
-	combo->setWidth(comboW);   // 与上面地址 / 密钥两个框同宽，右边缘对齐
-	combo->setBorder(1.f, 0xE0E0E0FF);
-	combo->setBorderRadius(4.f);
-	combo->setFlexDirection(Ling::FlexDirection::Row);
-	combo->setAlignItems(Ling::Align::Center);
-
-	auto modelBox = combo->makeChild<Ling::TextBox>();
-	modelBox->setWidth(comboW - pickBtnW);   // 让出箭头按钮那一格
-	modelBox->setHeightPercent(100.f);
-	modelBox->setVerticalCenter(true);
-	modelBox->setText(setting->getAiStr(L"model", L""));
-	modelBox->onTextChanged.add([](Ling::TextBox*, const std::wstring& val) {
-		Setting::get()->setAiStr(L"model", val);
-	});
-	auto pickBtn = combo->makeChild<Ling::Button>();
-	pickBtn->setWidth(pickBtnW);
-	pickBtn->setHeightPercent(100.f);
-	pickBtn->setHoverBg(0xF2F2F2FF);
-	pickBtn->setText(L"\u25BE");
-	pickBtn->onClick.add([this, modelBox](Ling::Button* btn) {
-		auto items = Setting::get()->getAiModels();
-		if (items.empty()) {
-			MessageBox(win->hwnd, Lang::get(L"ai.fetchFirst").data(),
-				Lang::get(L"about.sysTip").data(), MB_OK | MB_ICONINFORMATION);
-			return;
-		}
-		// 选完只往框里填，落盘由 onTextChanged 那一支做 —— 两条路共用一个出口，
-		// 免得"下拉选的"和"手打的"哪天走到不同的键上
-		SelectPopup::show(win, btn, items, -1, [modelBox, items](int idx) {
-			modelBox->setText(items[idx]);
-		}, {}, modelPopupMinW);
-	});
-
-	// 验证 == 拉一次 /models。拿到列表就说明地址、密钥、网络三者都通，顺带把下拉框的数据源更新掉
-	auto verifyRow = makeRow(L"setting.aiVerify");
-	auto verifyBtn = verifyRow->makeChild<Ling::Button>();
-	verifyBtn->setText(Lang::get(L"setting.aiVerifyBtn"));
-	verifyBtn->setHeight(28.f);
-	verifyBtn->setWidth(80.f);
-	verifyBtn->setBorder(1.f, 0xE0E0E0FF);
-	verifyBtn->setHoverBg(0xFFFFFFFF);
-	auto statusLabel = verifyRow->makeChild<Ling::Label>();
-	statusLabel->setMarginLeft(8.f);
-	statusLabel->setFlexGrow(1.f);
-	verifyBtn->onClick.add([this, statusLabel](Ling::Button*) {
-		statusLabel->setText(Lang::get(L"ai.verifying"));
-		auto alive = aiAlive;
-		AiService::models(
-			[this, statusLabel, alive](const std::vector<std::wstring>& ids) {
-				if (!*alive) return;
-				Setting::get()->setAiModels(ids);
-				statusLabel->setText(Lang::get(L"ai.ok") + std::to_wstring(ids.size()));
-			},
-			[statusLabel, alive](const std::wstring& err) {
-				if (!*alive) return;
-				// 成功时 err 是空的，那时别把刚写上去的"连接正常"擦掉
-				if (!err.empty()) statusLabel->setText(err);
-			});
-	});
-
+	// 历史落盘的开关与两档清理，与用哪家模型无关，跟着「LLM」这一页摆
 	makeSwitchBtn(makeRow(L"setting.aiHistorySave"),
 		[] { return Setting::get()->getAiHistorySave(); },
 		[](bool on) {
@@ -251,6 +241,278 @@ void WinSettingAi::initAiCtrls()
 	auto dayRow = makeRow(L"setting.aiHistoryDays");
 	makeSelectBtn(dayRow, 80.f, dayItems, dayIdx,
 		[dayOpts](int idx) { Setting::get()->setAiHistoryDays(dayOpts[idx]); });
+}
+
+void WinSettingAi::initProviderCtrls()
+{
+	// ---- 选哪一个接口 ----
+	// 接口可以多套并存（翻译用 A 家的、表格识别用 B 家的），所以先挑"现在编辑哪一套"，
+	// 下面那几行编辑的都是它
+	auto pickRow = makeRow(L"setting.aiProvider");
+	providerBtn = makePickBtn(pickRow, 160.f, L"");
+	providerBtn->onClick.add([this](Ling::Button* btn) {
+		// 列表每次点击时现攒：接口可以新增、删除、改名，建这一页时留存下来的一份马上就旧了
+		std::vector<std::wstring> items, ids;
+		for (auto& p : providers) {
+			items.push_back(Setting::providerName(p));
+			ids.push_back(p.id);
+		}
+		if (ids.empty()) return;
+		SelectPopup::show(win, btn, items, curProvider, [this, ids](int idx) {
+			switchProvider(ids[idx]);
+		});
+	});
+
+	auto addBtn = pickRow->makeChild<Ling::Button>();
+	addBtn->setText(Lang::get(L"setting.aiAddProvider"));
+	addBtn->setHeight(28.f);
+	addBtn->setWidth(80.f);
+	addBtn->setBorder(1.f, 0xE0E0E0FF);
+	addBtn->setHoverBg(0xFFFFFFFF);
+	addBtn->onClick.add([this](Ling::Button*) {
+		AiProvider fresh;
+		fresh.id = Setting::get()->newProviderId();
+		// 名字留空由界面给默认名（Setting::providerName）；其余等用户自己填
+		Setting::get()->setAiProvider(fresh);
+		reloadProviders();
+		switchProvider(fresh.id);
+	});
+
+	// 留着最后一个不许删：一个都没有的话，从这里到对话窗的每个入口都得各自处理空态
+	auto delBtn = pickRow->makeChild<Ling::Button>();
+	delBtn->setText(Lang::get(L"setting.aiDelProvider"));
+	delBtn->setHeight(28.f);
+	delBtn->setWidth(80.f);
+	delBtn->setBorder(1.f, 0xE0E0E0FF);
+	delBtn->setHoverBg(0xFFFFFFFF);
+	delBtn->onClick.add([this](Ling::Button*) {
+		auto p = cur();
+		if (!p || providers.size() <= 1) return;
+		Setting::get()->removeAiProvider(p->id);
+		reloadProviders();
+		switchProvider(providers.empty() ? std::wstring{} : providers.front().id);
+		// 绑在被删那个上的场景已经退回现有的第 0 个，行上的字要跟着换
+		refreshScenarioRows();
+	});
+
+	// ---- 自定义名称 ----
+	// 接口可以有好几个，光靠地址分不清谁是谁，所以给一个自己起的名字。
+	// 它不是凭证，改起来没有副作用 —— 只是各处显示时换一串字
+	auto nameRow = makeRow(L"setting.aiProviderName");
+	nameBox = nameRow->makeChild<Ling::TextBox>();
+	nameBox->setHeight(28.f);
+	nameBox->setWidth(240.f);
+	nameBox->setBorder(1.f, 0xE0E0E0FF);
+	nameBox->setVerticalCenter(true);
+	nameBox->onTextChanged.add([this](Ling::TextBox*, const std::wstring& val) {
+		if (filling) return;
+		auto p = cur();
+		if (!p) return;
+		p->name = val;
+		Setting::get()->setAiProvider(*p);
+		// 设置页的下拉与对话窗的模型框都拿这个名字指代它，改完要一并跟上
+		if (providerBtn) providerBtn->setText(Setting::providerName(*p));
+		refreshScenarioRows();
+	});
+
+	// ---- 地址 / 密钥 ----
+	// 都是手工填：兼容 OpenAI 的服务地址没有"列表"这回事，各家长得都不一样
+	auto urlRow = makeRow(L"setting.aiBaseUrl");
+	urlBox = urlRow->makeChild<Ling::TextBox>();
+	urlBox->setHeight(28.f);
+	urlBox->setWidth(240.f);
+	urlBox->setBorder(1.f, 0xE0E0E0FF);
+	urlBox->setVerticalCenter(true);
+	urlBox->setPlaceholder(L"https://api.deepseek.com/v1");
+	urlBox->onTextChanged.add([this](Ling::TextBox*, const std::wstring& val) {
+		if (filling) return;
+		auto p = cur();
+		if (!p) return;
+		p->baseUrl = val;
+		Setting::get()->setAiProvider(*p);
+	});
+
+	// 密码模式：框里画的是圆点，getText 拿到的仍是真实值。它挡的是"旁边有人 / 被截屏"
+	// 这一层 —— 值本身还是明文落在 config.json 上的（见 Setting.h 的注释），别把它当成保护
+	auto keyRow = makeRow(L"setting.aiApiKey");
+	keyBox = keyRow->makeChild<Ling::TextBox>();
+	keyBox->setHeight(28.f);
+	keyBox->setWidth(240.f);
+	keyBox->setBorder(1.f, 0xE0E0E0FF);
+	keyBox->setVerticalCenter(true);
+	keyBox->setPasswordMode(true);
+	keyBox->onTextChanged.add([this](Ling::TextBox*, const std::wstring& val) {
+		if (filling) return;
+		auto p = cur();
+		if (!p) return;
+		p->apiKey = val;
+		Setting::get()->setAiProvider(*p);
+	});
+
+	// ---- 模型 ----
+	// 一个框 + 一个箭头按钮合成一个组合框 —— 边框只由 combo 画一次，里面两件都不设边框
+	// （照 WinBall 的 itemBox：外框容器 + 子控件保持自身默认外观）
+	//
+	// 两件的宽度都写死、由 comboW 配平，不能靠 flexGrow：TextBox 的构造函数自带
+	// setWidth(240)，那是个"确定宽度"，而 flexGrow 只在有剩余空间时才有发言权 ——
+	// 240 已经把外框占满了；yoga 的 flexShrink 默认又是 0（不是 CSS 的 1），
+	// 这个框一个像素都不会让出来。结果是箭头按钮被摆到外框的右边界之外 35px 处，
+	// 被圆角 clip 一裁，整个按钮就"消失"了（模型下拉框点不开、屏幕上找不到）
+	auto modelRow = makeRow(L"setting.aiModel");
+	auto combo = modelRow->makeChild<Ling::Node>();
+	combo->setHeight(28.f);
+	combo->setWidth(comboW);   // 与上面地址 / 密钥两个框同宽，右边缘对齐
+	combo->setBorder(1.f, 0xE0E0E0FF);
+	combo->setBorderRadius(4.f);
+	combo->setFlexDirection(Ling::FlexDirection::Row);
+	combo->setAlignItems(Ling::Align::Center);
+
+	modelBox = combo->makeChild<Ling::TextBox>();
+	modelBox->setWidth(comboW - pickBtnW);   // 让出箭头按钮那一格
+	modelBox->setHeightPercent(100.f);
+	modelBox->setVerticalCenter(true);
+	modelBox->onTextChanged.add([this](Ling::TextBox*, const std::wstring& val) {
+		if (filling) return;
+		auto p = cur();
+		if (!p) return;
+		p->model = val;
+		Setting::get()->setAiProvider(*p);
+	});
+	auto pickBtn = combo->makeChild<Ling::Button>();
+	pickBtn->setWidth(pickBtnW);
+	pickBtn->setHeightPercent(100.f);
+	pickBtn->setHoverBg(0xF2F2F2FF);
+	pickBtn->setText(L"\u25BE");
+	pickBtn->onClick.add([this](Ling::Button* btn) {
+		auto p = cur();
+		if (!p) return;
+		auto items = modelItems(*p);
+		if (items.empty()) {
+			MessageBox(win->hwnd, Lang::get(L"ai.fetchFirst").data(),
+				Lang::get(L"about.sysTip").data(), MB_OK | MB_ICONINFORMATION);
+			return;
+		}
+		// 选完只往框里填，落盘由 onTextChanged 那一支做 —— 两条路共用一个出口，
+		// 免得"下拉选的"和"手打的"哪天走到不同的键上
+		SelectPopup::show(win, btn, items, -1, [this, items](int idx) {
+			modelBox->setText(items[idx]);
+		}, {}, modelPopupMinW);
+	});
+
+	// ---- 连接验证 ----
+	// 拉一次 /models：拿到列表就说明地址、密钥、网络三者都通，顺带把这一家的模型清单更新掉
+	auto verifyRow = makeRow(L"setting.aiVerify");
+	auto verifyBtn = verifyRow->makeChild<Ling::Button>();
+	verifyBtn->setText(Lang::get(L"setting.aiVerifyBtn"));
+	verifyBtn->setHeight(28.f);
+	verifyBtn->setWidth(80.f);
+	verifyBtn->setBorder(1.f, 0xE0E0E0FF);
+	verifyBtn->setHoverBg(0xFFFFFFFF);
+	auto statusLabel = verifyRow->makeChild<Ling::Label>();
+	statusLabel->setMarginLeft(8.f);
+	statusLabel->setFlexGrow(1.f);
+	verifyBtn->onClick.add([this, statusLabel](Ling::Button*) {
+		auto p = cur();
+		if (!p) return;
+		// 验证的是"这一套接口本身"，不是某个场景，所以凭据直接从它身上取
+		AiCred cred;
+		cred.providerId = p->id;
+		cred.providerName = Setting::providerName(*p);
+		cred.baseUrl = p->baseUrl;
+		cred.apiKey = p->apiKey;
+		cred.model = p->model;
+		if (cred.baseUrl.empty() || cred.apiKey.empty()) {
+			statusLabel->setText(Lang::get(L"ai.noKey"));
+			return;
+		}
+		statusLabel->setText(Lang::get(L"ai.verifying"));
+		auto alive = aiAlive;
+		auto id = p->id;
+		AiService::models(cred,
+			[this, statusLabel, alive, id](const std::vector<std::wstring>& ids) {
+				if (!*alive) return;
+				// 按 id 回头找而不是接着用上面那个指针：请求飞这几秒里用户可能已经删了它
+				auto owner = findProvider(id);
+				if (owner) {
+					owner->models = ids;
+					Setting::get()->setAiProvider(*owner);
+				}
+				statusLabel->setText(Lang::get(L"ai.ok") + std::to_wstring(ids.size()));
+			},
+			[statusLabel, alive](const std::wstring& err) {
+				if (!*alive) return;
+				// 成功时 err 是空的，那时别把刚写上去的"连接正常"擦掉
+				if (!err.empty()) statusLabel->setText(err);
+			});
+	});
+
+	fillProviderRow();
+}
+
+void WinSettingAi::initScenarioCtrls()
+{
+	// 四类业务各选各的一套：翻译可以用 A 家的某某模型，表格识别用 B 家的另一个。
+	// 一行两枚按钮 —— 左"接口"、右"模型"，都不接受手打（模型名来自该接口的清单）
+	for (auto& def : scenarioDefs) {
+		auto scenario = std::wstring{ def.scenario };
+		auto row = makeRow(def.labelKey);
+
+		auto provBtn = makePickBtn(row, 150.f, L"");
+		auto modelBtn = makePickBtn(row, 170.f, L"");
+
+		// 这一行自己负责把"当前绑的是谁"画到两枚按钮上。注册进 scenarioRefresh 是因为
+		// 别处（删接口、改名字）也会让它失效
+		auto refresh = [this, scenario, provBtn, modelBtn]() {
+			auto id = Setting::get()->getScenarioProvider(scenario);
+			AiProvider owner;
+			if (Setting::get()->getAiProvider(id, owner)) {
+				provBtn->setText(Setting::providerName(owner));
+			}
+			else {
+				provBtn->setText(Lang::get(L"ai.noProvider"));
+			}
+			modelBtn->setText(Setting::get()->getScenarioModel(scenario));
+		};
+		scenarioRefresh.push_back(refresh);
+		refresh();
+
+		provBtn->onClick.add([this, scenario](Ling::Button* btn) {
+			std::vector<std::wstring> items, ids;
+			int cur = 0;
+			auto bound = Setting::get()->getScenarioProvider(scenario);
+			for (auto& p : providers) {
+				if (p.id == bound) cur = static_cast<int>(items.size());
+				items.push_back(Setting::providerName(p));
+				ids.push_back(p.id);
+			}
+			if (ids.empty()) return;
+			SelectPopup::show(win, btn, items, cur, [this, scenario, ids](int idx) {
+				// 换接口时把这个场景的模型一并换成新接口当前那个 —— 留着上一家的模型名
+				// 发到新地址去，十有八九换来一句"模型不存在"
+				AiProvider owner;
+				auto model = Setting::get()->getAiProvider(ids[idx], owner)
+					? owner.model : std::wstring{};
+				Setting::get()->setScenario(scenario, ids[idx], model);
+				refreshScenarioRows();
+			});
+		});
+
+		modelBtn->onClick.add([this, scenario](Ling::Button* btn) {
+			auto bound = Setting::get()->getScenarioProvider(scenario);
+			AiProvider owner;
+			if (!Setting::get()->getAiProvider(bound, owner)) return;
+			auto items = modelItems(owner);
+			if (items.empty()) {
+				MessageBox(win->hwnd, Lang::get(L"ai.fetchFirst").data(),
+					Lang::get(L"about.sysTip").data(), MB_OK | MB_ICONINFORMATION);
+				return;
+			}
+			SelectPopup::show(win, btn, items, -1, [this, scenario, bound, items](int idx) {
+				Setting::get()->setScenario(scenario, bound, items[idx]);
+				refreshScenarioRows();
+			}, {}, modelPopupMinW);
+		});
+	}
 }
 
 void WinSettingAi::initTransCtrls()

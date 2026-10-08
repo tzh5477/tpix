@@ -331,7 +331,11 @@ bool AiTranslate::volcReady()
 
 bool AiTranslate::ready()
 {
-	if (Setting::get()->getAiStr(L"transProvider", L"volc") == L"model") return AiService::ready();
+	// 走大模型那条路时用的是「翻译」这个场景自己绑的那套（接口 + 模型），
+	// 与对话、识别可以是完全不同的两个服务商
+	if (Setting::get()->getAiStr(L"transProvider", L"volc") == L"model") {
+		return AiService::ready(std::wstring{ AiScenario::translate });
+	}
 	return volcReady();
 }
 
@@ -358,7 +362,7 @@ AiService::TaskPtr AiTranslate::run(const std::wstring& text, const std::wstring
 		msgs.push_back(std::move(user));
 		// 流式一段段来，攒够了在收尾时一次给出去 —— 翻译窗要的就是"最后那一整段"
 		auto acc = std::make_shared<std::wstring>();
-		return AiService::chat(msgs,
+		return AiService::chat(std::wstring{ AiScenario::translate }, msgs,
 			[acc](const std::wstring& delta) { *acc += delta; },
 			[acc, cb](const std::wstring& err) {
 				while (!acc->empty() && (acc->front() == L'\n' || acc->front() == L' ')) acc->erase(0, 1);

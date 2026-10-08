@@ -50,6 +50,31 @@ namespace {
         }
         return nullptr;
     }
+    // 从一个已确认是对象的 JsonObject 里读出一个接口。列表遍历与「按 id 取」共用这一份，
+    // 免得"下拉框里看到的"和"实际发请求用的"哪天长成两套读法
+    AiProvider readProvider(const JsonObject& obj)
+    {
+        AiProvider p;
+        p.id = std::wstring{ obj.GetNamedString(L"id", L"") };
+        p.name = std::wstring{ obj.GetNamedString(L"name", L"") };
+        p.baseUrl = std::wstring{ obj.GetNamedString(L"baseUrl", L"") };
+        p.apiKey = std::wstring{ obj.GetNamedString(L"apiKey", L"") };
+        p.model = std::wstring{ obj.GetNamedString(L"model", L"") };
+        auto models = obj.GetNamedArray(L"models", nullptr);
+        if (models) {
+            for (auto&& item : models) {
+                // 手改过的配置里什么都可能躺在这一层，不是字符串就跳过，别让它把下拉框搞崩
+                if (item.ValueType() != JsonValueType::String) continue;
+                p.models.push_back(std::wstring{ item.GetString() });
+            }
+        }
+        return p;
+    }
+
+    // 迁移老配置时第 0 个接口用的 id。ensureProviders 与 ensureAiMigration 只可能跑到一次，
+    // 之后它就是一个普通接口的 id，与界面上「新增」生成的不冲突（那个从 p1 起，见 newProviderId）
+    constexpr std::wstring_view firstProviderId{ L"p0" };
+
     // 配置文件的默认内容。空文件、坏 JSON、缺键都拿它兜底，所以这里列出的每一项
     // 都是代码里会直接按名字取的（见 getLang / getAutoStart / initShortcutKeys）
     constexpr std::wstring_view defaultConfig{ LR"""({"common":{"autoStart":false,"language":"zh-CN"},"shortcutKey":{"cap":"Ctrl+Alt+A","pinLast":"Ctrl+Alt+Z"}})""" };
@@ -63,16 +88,23 @@ Setting::Setting() :dataPath{ initDataPath() }, configPath{ initConfigPath() }
         if (content.empty() || content.find_first_not_of(L" \t\r\n") == std::wstring::npos) {
             configObj = JsonObject::Parse(defaultConfig);
             save();
-            return;
         }
-        JsonObject obj{ nullptr };
-        if (JsonObject::TryParse(content, obj)) {
-            configObj = obj;
-            return;
+        else {
+            JsonObject obj{ nullptr };
+            if (JsonObject::TryParse(content, obj)) {
+                configObj = obj;
+            }
+            else {
+                MessageBox(nullptr, L"config.json parse error，use default config", L"tpix", MB_OK | MB_ICONWARNING);
+                configObj = JsonObject::Parse(defaultConfig);
+            }
         }
-        MessageBox(nullptr, L"config.json parse error，use default config", L"tpix", MB_OK | MB_ICONWARNING);
     }
-    configObj = JsonObject::Parse(defaultConfig); 
+    else {
+        configObj = JsonObject::Parse(defaultConfig);
+    }
+    // 无论走了哪条路都要补一遍：接口列表的迁移与「至少有一个接口」的兜底都在这里
+    ensureProviders();
 }
 
 
@@ -300,25 +332,199 @@ void Setting::setAiStr(const std::wstring& key, const std::wstring& val)
 	save();
 }
 
-std::vector<std::wstring> Setting::getAiModels()
+JsonArray Setting::getAiProvidersArray()
 {
-	std::vector<std::wstring> ids;
-	auto arr = getAiObj().GetNamedArray(L"models", nullptr);
-	if (!arr) return ids;
-	for (auto&& item : arr) {
-		// 手改过的配置里什么都可能躺在这一层，不是字符串就跳过，别让它把整个下拉框搞崩
-		if (item.ValueType() != JsonValueType::String) continue;
-		ids.push_back(std::wstring{ item.GetString() });
+	auto arr = getAiObj().GetNamedArray(L"providers", nullptr);
+	if (!arr) {
+		arr = JsonArray();
+		getAiObj().SetNamedValue(L"providers", arr);
 	}
-	return ids;
+	return arr;
 }
 
-void Setting::setAiModels(const std::vector<std::wstring>& ids)
+JsonObject Setting::getScenarioObj()
 {
-	JsonArray arr;
-	for (const auto& id : ids) arr.Append(JsonValue::CreateStringValue(id));
-	getAiObj().SetNamedValue(L"models", arr);
+	auto obj = getAiObj().GetNamedObject(L"scenarios", nullptr);
+	if (!obj) {
+		obj = JsonObject();
+		getAiObj().SetNamedValue(L"scenarios", obj);
+	}
+	return obj;
+}
+
+void Setting::ensureProviders()
+{
+	if (getAiProvidersArray().Size() > 0) return;
+	// 老版本把地址 / 密钥 / 模型 / 模型列表平铺在 ai 组里，搬进来当第 0 个接口 ——
+	// 用户早就填好的东西不该因为换了版本就变成"没配过"
+	AiProvider legacy;
+	auto arr = getAiObj().GetNamedArray(L"models", nullptr);
+	if (arr) {
+		for (auto&& item : arr) {
+			if (item.ValueType() != JsonValueType::String) continue;
+			legacy.models.push_back(std::wstring{ item.GetString() });
+		}
+	}
+	legacy.baseUrl = getAiStr(L"baseUrl", L"");
+	legacy.apiKey = getAiStr(L"apiKey", L"");
+	legacy.model = getAiStr(L"model", L"");
+	legacy.id = firstProviderId;
+	// 名字刻意留空，由 providerName 在界面那一层给默认名 —— 这里还不能碰语言包：
+	// Setting::init 排在 Lang::init 之前（见 App.cpp 的构造顺序）
+	setAiProvider(legacy);
+}
+
+std::wstring Setting::newProviderId()
+{
+	const auto list = getAiProviders();
+	// 从 p1 起（p0 留给迁移出来的那一个），每次现查一遍有没有被占 ——
+	// 删过中间某一项之后条数会对不上，不能按 list.size() 推
+	for (int i = 1; i < 10000; ++i) {
+		auto id = std::wstring{ L"p" } + std::to_wstring(i);
+		bool taken{ false };
+		for (const auto& p : list) {
+			if (p.id == id) { taken = true; break; }
+		}
+		if (!taken) return id;
+	}
+	return std::wstring{ L"p" } + std::to_wstring(list.size() + 1);
+}
+
+std::vector<AiProvider> Setting::getAiProviders()
+{
+	std::vector<AiProvider> list;
+	for (auto&& item : getAiProvidersArray()) {
+		// 手改过的配置里这一层什么都可能躺着，不是对象就跳过
+		if (item.ValueType() != JsonValueType::Object) continue;
+		auto one = readProvider(item.GetObject());
+		// 没有 id 就没法被场景引用，等于没法用
+		if (one.id.empty()) continue;
+		list.push_back(std::move(one));
+	}
+	return list;
+}
+
+bool Setting::getAiProvider(const std::wstring& id, AiProvider& out)
+{
+	if (id.empty()) return false;
+	for (auto&& item : getAiProvidersArray()) {
+		if (item.ValueType() != JsonValueType::Object) continue;
+		auto one = readProvider(item.GetObject());
+		if (one.id != id) continue;
+		out = std::move(one);
+		return true;
+	}
+	return false;
+}
+
+void Setting::setAiProvider(const AiProvider& provider)
+{
+	if (provider.id.empty()) return;
+	JsonObject obj;
+	obj.SetNamedValue(L"id", JsonValue::CreateStringValue(provider.id));
+	obj.SetNamedValue(L"name", JsonValue::CreateStringValue(provider.name));
+	obj.SetNamedValue(L"baseUrl", JsonValue::CreateStringValue(provider.baseUrl));
+	obj.SetNamedValue(L"apiKey", JsonValue::CreateStringValue(provider.apiKey));
+	obj.SetNamedValue(L"model", JsonValue::CreateStringValue(provider.model));
+	JsonArray models;
+	for (const auto& id : provider.models) models.Append(JsonValue::CreateStringValue(id));
+	obj.SetNamedValue(L"models", models);
+
+	auto arr = getAiProvidersArray();
+	for (uint32_t i = 0; i < arr.Size(); ++i) {
+		auto item = arr.GetAt(i);
+		if (item.ValueType() != JsonValueType::Object) continue;
+		if (std::wstring{ item.GetObject().GetNamedString(L"id", L"") } != provider.id) continue;
+		arr.SetAt(i, obj);
+		save();
+		return;
+	}
+	arr.Append(obj);
 	save();
+}
+
+void Setting::removeAiProvider(const std::wstring& id)
+{
+	auto arr = getAiProvidersArray();
+	for (uint32_t i = 0; i < arr.Size(); ++i) {
+		auto item = arr.GetAt(i);
+		if (item.ValueType() != JsonValueType::Object) continue;
+		if (std::wstring{ item.GetObject().GetNamedString(L"id", L"") } != id) continue;
+		arr.RemoveAt(i);
+		save();
+		// 绑定在这个接口上的场景不用单独收拾：getScenarioProvider 每次读都会核对它
+		// 还在不在，没了就自然退回现有的第 0 个接口
+		return;
+	}
+}
+
+std::wstring Setting::getScenarioProvider(const std::wstring& scenario)
+{
+	auto obj = getScenarioObj().GetNamedObject(scenario, nullptr);
+	if (obj) {
+		auto id = std::wstring{ obj.GetNamedString(L"provider", L"") };
+		AiProvider tmp;
+		if (!id.empty() && getAiProvider(id, tmp)) return id;   // 绑的那个还在
+	}
+	// 没绑过 / 绑的那个已经被删了：退回现有的第 0 个接口，调用方不必先判空
+	auto list = getAiProviders();
+	return list.empty() ? std::wstring{} : list.front().id;
+}
+
+std::wstring Setting::getScenarioModel(const std::wstring& scenario)
+{
+	auto obj = getScenarioObj().GetNamedObject(scenario, nullptr);
+	if (obj) {
+		auto providerId = std::wstring{ obj.GetNamedString(L"provider", L"") };
+		AiProvider owner;
+		// 只有当这一整套还指着某个活着的接口时，它记的那个模型才算数
+		if (!providerId.empty() && getAiProvider(providerId, owner)) {
+			auto model = std::wstring{ obj.GetNamedString(L"model", L"") };
+			if (!model.empty()) return model;
+			return owner.model;
+		}
+	}
+	AiProvider fallback;
+	if (getAiProvider(getScenarioProvider(scenario), fallback)) return fallback.model;
+	return std::wstring{};
+}
+
+void Setting::setScenario(const std::wstring& scenario, const std::wstring& providerId,
+	const std::wstring& model)
+{
+	JsonObject obj;
+	obj.SetNamedValue(L"provider", JsonValue::CreateStringValue(providerId));
+	obj.SetNamedValue(L"model", JsonValue::CreateStringValue(model));
+	getScenarioObj().SetNamedValue(scenario, obj);
+	save();
+}
+
+AiCred Setting::credFor(const std::wstring& scenario)
+{
+	AiCred cred;
+	auto providerId = getScenarioProvider(scenario);
+	AiProvider provider;
+	if (!getAiProvider(providerId, provider)) {
+		// 一个接口都没有：三个串都留空，让调用方去提示"请先到设置里新增接口"
+		return cred;
+	}
+	cred.providerId = provider.id;
+	cred.providerName = providerName(provider);
+	cred.baseUrl = provider.baseUrl;
+	cred.apiKey = provider.apiKey;
+	cred.model = getScenarioModel(scenario);
+	if (cred.model.empty()) cred.model = provider.model;
+	// 三样缺一样就不能发：少一个地址或者少一个模型，发出去只会收获一句看不懂的报错
+	if (cred.baseUrl.empty() || cred.apiKey.empty() || cred.model.empty()) return cred;
+	cred.ok = true;
+	return cred;
+}
+
+std::wstring Setting::providerName(const AiProvider& provider)
+{
+	// 名称是用户自己填的，允许为空 —— 那时给个语言包里的默认名，让用户知道这一项是什么。
+	// 放在这里兜而不是让每个调用方各判一次：设置页与对话窗都要用
+	return provider.name.empty() ? Lang::get(L"ai.defProvider") : provider.name;
 }
 
 bool Setting::getAiHistorySave()
@@ -734,6 +940,23 @@ bool Setting::exportConfig(const std::wstring& path) const
             JsonObject ai;
             for (auto&& p : pair.Value().GetObject()) {
                 if (p.Key() == L"apiKey" || p.Key() == L"volcSk") continue;
+                if (p.Key() == L"providers") {
+                    // 接口列表里的每一项各自还带着一个密钥，同一个标准 —— 逐个摘掉再抄过去
+                    JsonArray out;
+                    if (p.Value().ValueType() == JsonValueType::Array) {
+                        for (auto&& item : p.Value().GetArray()) {
+                            if (item.ValueType() != JsonValueType::Object) { out.Append(item); continue; }
+                            JsonObject one;
+                            for (auto&& f : item.GetObject()) {
+                                if (f.Key() == L"apiKey") continue;
+                                one.SetNamedValue(f.Key(), f.Value());
+                            }
+                            out.Append(one);
+                        }
+                    }
+                    ai.SetNamedValue(p.Key(), out);
+                    continue;
+                }
                 ai.SetNamedValue(p.Key(), p.Value());
             }
             out.SetNamedValue(pair.Key(), ai);

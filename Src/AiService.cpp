@@ -372,22 +372,23 @@ namespace {
 	}
 }
 
-bool AiService::ready()
+bool AiService::ready(const std::wstring& scenario)
 {
-	auto setting = Setting::get();
-	if (setting->getAiStr(L"baseUrl", L"").empty()) return false;
-	if (setting->getAiStr(L"apiKey", L"").empty()) return false;
-	if (setting->getAiStr(L"model", L"").empty()) return false;
-	return true;
+	return Setting::get()->credFor(scenario).ok;
 }
 
-AiService::TaskPtr AiService::models(std::function<void(const std::vector<std::wstring>& ids)> onModels,
+AiCred AiService::credFor(const std::wstring& scenario)
+{
+	return Setting::get()->credFor(scenario);
+}
+
+AiService::TaskPtr AiService::models(const AiCred& cred,
+	std::function<void(const std::vector<std::wstring>& ids)> onModels,
 	std::function<void(const std::wstring& err)> onDone)
 {
 	auto task = std::make_shared<Task>();
-	auto setting = Setting::get();
-	auto baseUrl = cleanKey(setting->getAiStr(L"baseUrl", L""));
-	auto key = cleanKey(setting->getAiStr(L"apiKey", L""));
+	auto baseUrl = cleanKey(cred.baseUrl);
+	auto key = cleanKey(cred.apiKey);
 	if (baseUrl.empty() || key.empty()) {
 		postDone(task, onDone, Lang::get(L"ai.noKey"));
 		return task;
@@ -396,15 +397,28 @@ AiService::TaskPtr AiService::models(std::function<void(const std::vector<std::w
 	return task;
 }
 
-AiService::TaskPtr AiService::chat(const std::vector<Msg>& msgs,
+AiService::TaskPtr AiService::chat(const std::wstring& scenario, const std::vector<Msg>& msgs,
+	std::function<void(const std::wstring& delta)> onDelta,
+	std::function<void(const std::wstring& err)> onDone)
+{
+	auto cred = Setting::get()->credFor(scenario);
+	if (!cred.ok) {
+		// 连回调都必须在拿到 TaskPtr 之后才送：UI 那边的用法是先接住返回值再被回调
+		auto task = std::make_shared<Task>();
+		postDone(task, onDone, Lang::get(L"ai.noKey"));
+		return task;
+	}
+	return chat(cred, msgs, std::move(onDelta), std::move(onDone));
+}
+
+AiService::TaskPtr AiService::chat(const AiCred& cred, const std::vector<Msg>& msgs,
 	std::function<void(const std::wstring& delta)> onDelta,
 	std::function<void(const std::wstring& err)> onDone)
 {
 	auto task = std::make_shared<Task>();
-	auto setting = Setting::get();
-	auto baseUrl = cleanKey(setting->getAiStr(L"baseUrl", L""));
-	auto key = cleanKey(setting->getAiStr(L"apiKey", L""));
-	auto model = cleanKey(setting->getAiStr(L"model", L""));
+	auto baseUrl = cleanKey(cred.baseUrl);
+	auto key = cleanKey(cred.apiKey);
+	auto model = cleanKey(cred.model);
 	if (baseUrl.empty() || key.empty() || model.empty()) {
 		postDone(task, onDone, Lang::get(L"ai.noKey"));
 		return task;

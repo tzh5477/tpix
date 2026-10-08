@@ -1,4 +1,5 @@
 ﻿#include "pch.h"
+#include <algorithm>
 #include <thread>
 #include "../Lang.h"
 #include "../Ocr.h"
@@ -12,6 +13,52 @@
 
 namespace {
 	std::unique_ptr<WinOcr> winOcr;
+
+	// 让模型看图识字用的三段提示词。它们是**给模型看的协议**，不是给用户看的文案，
+	// 所以不进语言包 —— 换了界面语言也不该让识别结果的格式跟着变；
+	// 表格那条要求输出 TSV，是因为粘贴要的就是它能直接落成一张表（见 parseTsvText）
+	constexpr const wchar_t* promptSys{
+		L"你是一个精确的 OCR 引擎，严格按用户的格式要求输出图片里的内容。" };
+	constexpr const wchar_t* promptText{
+		L"请完整识别这张图片里的文字，按原有的阅读顺序与分段输出，保留换行。"
+		L"只输出识别到的原文，不要翻译、不要解释、不要加任何说明，也不要用代码块包裹。" };
+	constexpr const wchar_t* promptTable{
+		L"请识别这张图片里的表格，用制表符分隔的纯文本输出：第一行是表头，之后每行一条记录，"
+		L"相邻单元格之间用一个制表符，行与行之间换行；单元格内部不要出现制表符与换行。"
+		L"只输出表格内容，不要解释。" };
+
+	// 把模型回的表格文本（行内 tab、行间换行）拆成 TableResult —— 这样同一份结果
+	// 既能当纯文本复制，也能当成 HTML 表格粘进 Word / Excel（见 TableResult::toHtml）
+	bool parseTsvText(const std::wstring& text, TableResult& out)
+	{
+		out.cols = 0;
+		out.rows.clear();
+		std::vector<std::vector<std::wstring>> rows;
+		size_t pos{ 0 };
+		while (pos <= text.size()) {
+			const auto nl = text.find(L'\n', pos);
+			auto line = text.substr(pos, nl == std::wstring::npos ? nl : nl - pos);
+			while (!line.empty() && line.back() == L'\r') line.pop_back();
+			// 整行都是空白就跳过：模型收尾常多打几个空行，留着会在表尾堆一串空记录
+			if (line.find_first_not_of(L" \t") != std::wstring::npos) {
+				std::vector<std::wstring> cells;
+				size_t c{ 0 };
+				while (true) {
+					const auto tab = line.find(L'\t', c);
+					cells.push_back(line.substr(c, tab == std::wstring::npos ? tab : tab - c));
+					if (tab == std::wstring::npos) break;
+					c = tab + 1;
+				}
+				rows.push_back(std::move(cells));
+			}
+			if (nl == std::wstring::npos) break;
+			pos = nl + 1;
+		}
+		if (rows.empty()) return false;
+		for (const auto& r : rows) out.cols = std::max(out.cols, static_cast<int>(r.size()));
+		out.rows = std::move(rows);
+		return true;
+	}
 }
 
 WinOcr::WinOcr(std::vector<BYTE>&& data, const int w, const int h)
@@ -31,6 +78,10 @@ WinOcr::WinOcr(std::vector<BYTE>&& data, const int w, const int h)
 
 WinOcr::~WinOcr()
 {
+	// 关窗时在飞的那次模型识别必须掐掉：postDone 是"取消也照送"的语义，
+	// 光靠 alive 标记只能让它别去动节点，请求本身还在跑
+	*alive = false;
+	if (aiTask) aiTask->cancel();
 }
 
 void WinOcr::init(std::vector<BYTE>&& data, const int w, const int h)
@@ -96,11 +147,12 @@ void WinOcr::onCreated()
 	bottom->setAlignItems(Ling::Align::Center);
 	bottom->setPaddingRight(12.f);
 
-	// 语言按钮。系统装了几种就多几个选项，一个都没装时它只显示一句提示、点了没反应
+	// 语言按钮。系统装了几种就多几个选项，一个都没装时它只显示一句提示、点了没反应。
+	// ⚠️ 它管的是系统离线 OCR 用哪个语言包 —— 切到大模型那条路之后它不起作用，直接藏掉
 	langs = Ocr::languages();
 	langBtn = bottom->makeChild<Ling::Button>();
 	langBtn->setHeight(30.f);
-	langBtn->setWidth(140.f);
+	langBtn->setWidth(120.f);
 	langBtn->setBorder(1.f, 0xE0E0E0FF);
 	langBtn->setHoverBg(0xF2F2F2FF);
 	langBtn->onClick.add([this](Ling::Button* b) {
@@ -123,6 +175,25 @@ void WinOcr::onCreated()
 		}
 	}
 	applyLangBtn();
+
+	// 识别引擎。系统离线 OCR 与大模型两条路并存：前者不联网不花钱，后者认得下的照片、
+	// 艺术字更好，也能直接把表格认出来。切完立刻重认一次（与语言、表格开关一致）
+	engineBtn = bottom->makeChild<Ling::Button>();
+	engineBtn->setHeight(30.f);
+	engineBtn->setWidth(104.f);
+	engineBtn->setBorder(1.f, 0xE0E0E0FF);
+	engineBtn->setHoverBg(0xF2F2F2FF);
+	engineBtn->onClick.add([this](Ling::Button* b) {
+		std::vector<std::wstring> items{ Lang::get(L"ocr.engineSys"), Lang::get(L"ocr.engineAi") };
+		SelectPopup::show(this, b, items, aiMode ? 1 : 0, [this](int idx) {
+			aiMode = idx == 1;
+			Setting::get()->setToolStr(L"ocr", L"engine", aiMode ? L"ai" : L"sys");
+			applyEngineBtn();
+			startRecognize();
+		});
+	});
+	aiMode = Setting::get()->getToolStr(L"ocr", L"engine", L"sys") == L"ai";
+	applyEngineBtn();
 
 	// 表格按钮：在"整页文字"和"按格子出表"之间切。切完立刻重认一次
 	tableBtn = bottom->makeChild<Ling::Button>();
@@ -209,6 +280,16 @@ void WinOcr::applyLangBtn()
 
 void WinOcr::startRecognize()
 {
+	// 走大模型那条路：系统离线 OCR 那套线程 / 语言包一概用不上
+	if (aiMode) {
+		startAiRecognize();
+		return;
+	}
+	// 从大模型切回来时，上一次可能还在飞 —— 掐掉它，否则它的收尾会盖住这一次的结果
+	if (aiTask) {
+		aiTask->cancel();
+		aiTask.reset();
+	}
 	const auto seq = ++taskSeq;
 	auto lang = curLangTag();
 	// 模式在这里定格：线程跑到一半用户可能又点了切换，那边不能再去读成员
@@ -243,6 +324,85 @@ void WinOcr::startRecognize()
 				else setResult(text);
 			});
 	}).detach();
+}
+
+void WinOcr::startAiRecognize()
+{
+	const auto seq = ++taskSeq;
+	// 模式在这里定格：请求飞这几秒里用户可能又切了表格 / 切回系统 OCR
+	const auto asTable = tableMode;
+	if (aiTask) {
+		aiTask->cancel();
+		aiTask.reset();
+	}
+	// 文字与表格是两个场景 —— 需求允许它们各绑不同的接口与模型
+	//（翻译可以用 A 家的某某模型，表格识别用 B 家的另一个）
+	const auto scenario = asTable ? std::wstring{ AiScenario::table }
+		: std::wstring{ AiScenario::recognize };
+	auto cred = Setting::get()->credFor(scenario);
+	if (!cred.ok) {
+		result.clear();
+		html.clear();
+		box->setText(Lang::get(L"ai.noKey"));
+		return;
+	}
+	box->setText(Lang::get(L"ocr.recognizing"));
+
+	std::vector<AiService::Msg> msgs;
+	AiService::Msg sys;
+	sys.role = AiService::Role::System;
+	sys.content = promptSys;
+	AiService::Msg user;
+	user.role = AiService::Role::User;
+	user.content = asTable ? promptTable : promptText;
+	// 图直接走对话窗贴图那条已经做好的通道：AiService::Msg 的 image 会被编 PNG、
+	// 转 base64，落成 image_url 的 data URL —— 这里一个字节都不用新写
+	user.image = pixels;
+	user.imgW = imgW;
+	user.imgH = imgH;
+	msgs.push_back(std::move(sys));
+	msgs.push_back(std::move(user));
+
+	// 流式一段段来，收尾时才一次性给出去 —— 这里要的只是"最后那一整段"
+	auto acc = std::make_shared<std::wstring>();
+	auto aliveFlag = alive;
+	aiTask = AiService::chat(cred, msgs,
+		[acc](const std::wstring& delta) { *acc += delta; },
+		[this, aliveFlag, seq, asTable, acc](const std::wstring& err) {
+			// 窗口已经被销毁（回调排在析构之后），或者已经有更新的识别出了结果 ——
+			// 老结果都不能再盖上去（同上面离线那条线程）
+			if (!*aliveFlag || winOcr.get() != this || taskSeq != seq) return;
+			if (!err.empty() && acc->empty()) {
+				result.clear();
+				html.clear();
+				box->setText(err);
+				return;
+			}
+			// 模型给的东西首尾常带空白（粘了段说明、多打了几个换行），剥干净再用
+			while (!acc->empty() && (acc->front() == L'\n' || acc->front() == L' ')) acc->erase(0, 1);
+			while (!acc->empty() && (acc->back() == L'\n' || acc->back() == L' ')) acc->pop_back();
+			if (asTable) {
+				TableResult table;
+				// 编排得出表格就走 setTable（顺带把那份 HTML 带上，粘进 Excel 是真的一张表）；
+				// 模型没按 TSV 出来就把原文摆回去 —— 那也比一句"没找到表格"有用
+				if (parseTsvText(*acc, table)) {
+					setTable(table);
+					return;
+				}
+			}
+			setResult(*acc);
+		});
+}
+
+void WinOcr::applyEngineBtn()
+{
+	if (!engineBtn) return;
+	engineBtn->setText(aiMode ? Lang::get(L"ocr.engineAi") : Lang::get(L"ocr.engineSys"));
+	// 语言包是系统离线 OCR 才有的概念，大模型那条路用不上 —— 留着会让人以为它在生效
+	if (langBtn) {
+		if (aiMode) langBtn->hide();
+		else langBtn->show();
+	}
 }
 
 void WinOcr::setResult(const std::wstring& text)

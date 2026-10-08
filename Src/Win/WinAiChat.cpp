@@ -7,12 +7,16 @@
 #include "../AiService.h"
 #include "../Lang.h"
 #include "../Markdown.h"
+#include "../SelectPopup.h"
 #include "../Setting.h"
 #include "../Util.h"
 #include "WinAiChat.h"
 
 namespace {
 	std::unique_ptr<WinAiChat> winAiChat;
+	// 模型下拉的最小宽度（逻辑像素）。"接口名 - 模型名"比那枚按钮宽得多，
+	// 不给下限的话列表就按按钮宽度定，名字全被截断
+	constexpr float modelPopupMinW{ 240.f };
 	// 侧栏最多列多少条。超出就只显示最近的这些 —— 更老的那批靠"保留天数 / 条数"自己清掉
 	constexpr int maxSessions{ 12 };
 	// "这一条还没进 msgs"：流式输出中的占位气泡，以及没配好时的提示
@@ -363,6 +367,56 @@ void WinAiChat::onCreated()
 	attachBtn->onEnter.add([this](Ling::Button* btn) { showTip(btn, Lang::get(L"ai.attachImg")); });
 	attachBtn->onLeave.add([this](Ling::Button*) { hideTip(); });
 	attachBtn->onClick.add([this](Ling::Button*) { attach(); });
+
+	// 「接口 - 模型」切换：排在附件按钮右边，回答之前点它换一套。
+	// 列表是所有接口 × 各自模型的摊平表 —— 需求里"翻译用 A 接口 A 模型、表格识别用
+	// B 接口 X 模型"说的是这一类组合，这里让用户临场挑一个，而不是只能用在设置页配的那套
+	modelBtn = tools->makeChild<Ling::Button>();
+	modelBtn->setHeight(24.f);
+	modelBtn->setWidth(168.f);
+	modelBtn->setMarginLeft(4.f);
+	modelBtn->setFontSize(11.f);
+	modelBtn->setColor(0x666666FF);
+	modelBtn->setHoverColor(0x1A73E8FF);
+	modelBtn->setHoverBg(0xEEF3FDFF);
+	modelBtn->setBorderRadius(12.f);
+	refreshModelBtn();
+	modelBtn->onEnter.add([this](Ling::Button* btn) {
+		showTip(btn, modelLabel);
+	});
+	modelBtn->onLeave.add([this](Ling::Button*) { hideTip(); });
+	modelBtn->onClick.add([this](Ling::Button* btn) {
+		// 每一项 = （接口 id, 模型名），标签是"接口名 - 模型名"。
+		// 换成整的组合而不是先选接口再选模型 —— 用户要的是"换个模型试试"，两步太重
+		struct Choice { std::wstring providerId; std::wstring model; };
+		std::vector<Choice> choices;
+		std::vector<std::wstring> items;
+		const auto bound = Setting::get()->credFor(std::wstring{ AiScenario::chat });
+		int cur = -1;
+		for (const auto& p : Setting::get()->getAiProviders()) {
+			auto candidates = p.models.empty() ? std::vector<std::wstring>{} : p.models;
+			if (candidates.empty() && !p.model.empty()) candidates.push_back(p.model);
+			if (candidates.empty()) continue;   // 这一家连一个模型都没有，跳过它
+			const auto name = Setting::providerName(p);
+			for (const auto& model : candidates) {
+				if (p.id == bound.providerId && model == bound.model) {
+					cur = static_cast<int>(items.size());
+				}
+				items.push_back(name + L" - " + model);
+				choices.push_back(Choice{ p.id, model });
+			}
+		}
+		if (items.empty()) {
+			MessageBox(hwnd, Lang::get(L"ai.fetchFirst").data(),
+				Lang::get(L"about.sysTip").data(), MB_OK | MB_ICONINFORMATION);
+			return;
+		}
+		SelectPopup::show(this, btn, items, cur, [this, choices](int idx) {
+			Setting::get()->setScenario(std::wstring{ AiScenario::chat },
+				choices[idx].providerId, choices[idx].model);
+			refreshModelBtn();
+		}, {}, modelPopupMinW);
+	});
 
 	auto spacer = tools->makeChild<Ling::Node>();
 	spacer->setFlexGrow(1.f);
@@ -1174,6 +1228,21 @@ void WinAiChat::setBusy(const bool on)
 	sendBtn->setHoverBg(on ? 0x7C848BFF : 0x3B5BDBFF);
 }
 
+void WinAiChat::refreshModelBtn()
+{
+	if (!modelBtn) return;
+	// credFor 即使配不齐也会把"选了哪个接口、哪个模型"尽量填上（ok 只表示能不能真发请求），
+	// 所以按钮上半句照常显示"现在指的是哪一套"，好让用户知道要去改哪儿
+	const auto cred = Setting::get()->credFor(std::wstring{ AiScenario::chat });
+	if (cred.providerName.empty() && cred.model.empty()) {
+		modelLabel = Lang::get(L"ai.noProvider");
+	}
+	else {
+		modelLabel = cred.providerName + L" - " + cred.model;
+	}
+	modelBtn->setText(modelLabel);
+}
+
 void WinAiChat::abortTask()
 {
 	// 在飞的那次请求的回调全部作废（迟到的回调不能再往消息区里写东西）
@@ -1189,7 +1258,7 @@ void WinAiChat::abortTask()
 
 void WinAiChat::send()
 {
-	if (!AiService::ready()) {
+	if (!AiService::ready(std::wstring{ AiScenario::chat })) {
 		// 没配好就只说一句：这一条不该混进 msgs，也不该落历史
 		tailText = Lang::get(L"ai.noKey");
 		renderMsgs();
@@ -1238,7 +1307,7 @@ void WinAiChat::send()
 
 	const auto gen = ++sendGen;
 	auto aliveFlag = alive;
-	task = AiService::chat(msgs,
+	task = AiService::chat(std::wstring{ AiScenario::chat }, msgs,
 		[this, aliveFlag, gen](const std::wstring& delta) {
 			if (!*aliveFlag || gen != sendGen || !streamingBubble) return;
 			streaming += delta;

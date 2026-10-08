@@ -1,10 +1,47 @@
 ﻿#pragma once
 #include <include/Ling.h>
 #include <filesystem>
+#include <string>
 #include <utility>
 #include <vector>
 #include <winrt/Windows.Data.Json.h>
 using namespace winrt::Windows::Data::Json;
+
+// 一个大模型接口（OpenAI 兼容服务）。「自定义接口名称」就是 name —— 设置页的下拉框、
+// 对话窗的模型切换框都拿它在界面上代表这一项；id 只是它的稳定键，改名、改地址都不动它，
+// 否则已经配好的那些场景绑定会跟着失效
+struct AiProvider
+{
+	std::wstring id;
+	std::wstring name;
+	std::wstring baseUrl;
+	std::wstring apiKey;
+	std::wstring model;                 // 当前选中的模型
+	std::vector<std::wstring> models;   // 上次拉到的列表，填下拉框用
+};
+
+// 一个「业务场景」解出来的、可以直接发请求的那几个值。
+// 需求要求不同场景能配不同的组合（翻译走 A 接口 A 模型，表格识别走 B 接口 X 模型），
+// 所以配置里存的是"选了哪个接口 + 哪个模型"，真正发请求之前要再解一层。
+// ok = false 表示这一整套没配齐（没有接口、或它没填模型），调用方应当引导去设置
+struct AiCred
+{
+	bool ok{ false };
+	std::wstring providerId;
+	std::wstring providerName;
+	std::wstring baseUrl;
+	std::wstring apiKey;
+	std::wstring model;
+};
+
+// 四类业务用途的键名。加一个场景要同步两处：这里一行 + WinSettingAi 里那张场景行表
+namespace AiScenario
+{
+	inline constexpr std::wstring_view chat{ L"chat" };            // AI 对话
+	inline constexpr std::wstring_view translate{ L"translate" };  // 翻译（走大模型那条路）
+	inline constexpr std::wstring_view recognize{ L"recognize" };  // 图片里的文字
+	inline constexpr std::wstring_view table{ L"table" };          // 图片里的表格
+}
 
 class Setting
 {
@@ -92,16 +129,37 @@ public:
 	// 滚动截图的方向：true = 横向（拼出来的图往右长），false = 竖向（默认）
 	bool getLongHorizontal();
 	void setLongHorizontal(bool val);
-	// AI（翻译 / 对话，S1–S3）。存在 config.json 的 ai 组：
-	// baseUrl（OpenAI 兼容服务地址，形如 https://api.deepseek.com/v1）、apiKey、
-	// model（当前选中的模型）、models（上次拉下来的列表，填下拉框用，省得每次开设置都要联网）。
+	// AI（翻译 / 对话，S1–S3）。存在 config.json 的 ai 组。
 	// ⚠️ apiKey 是明文落的：本机单人工具，加密换不来什么，反倒会让已有的「导出配置」跑到别的机器上就用不了。
-	//    补偿靠 exportConfig 把它摘出去，见那里的注释
+	//    补偿靠 exportConfig 把它摘出去，见那里的注释。
+	//    这一组现在只放"与接口无关"的那几个键（翻译选哪家、火山 AK/SK、翻译语言、历史策略）
 	std::wstring getAiStr(const std::wstring& key, const std::wstring& def);
 	void setAiStr(const std::wstring& key, const std::wstring& val);
-	// 上次拉到的模型列表。没拉过返回空数组（此时下拉框只有"点右侧按钮重新拉取"这条路）
-	std::vector<std::wstring> getAiModels();
-	void setAiModels(const std::vector<std::wstring>& ids);
+	// ---- 大模型接口（可多个，各带一个自定义名称）----
+	// 放在 ai.providers 数组里，每项是一个 AiProvider。老版本那份扁平的
+	// baseUrl / apiKey / model / models 会在读到它们的时候搬进来变成第 0 项（见 ensureProviders）
+	std::vector<AiProvider> getAiProviders();
+	// 取一个接口。找不到返回 false —— 它被删掉了，或者配置文件被手写坏了
+	bool getAiProvider(const std::wstring& id, AiProvider& out);
+	// 更新同 id 的那一项，没有就追加到末尾。改一次就落盘
+	void setAiProvider(const AiProvider& provider);
+	void removeAiProvider(const std::wstring& id);
+	// 给「新增接口」生成一个还没被占用的 id
+	std::wstring newProviderId();
+	// 接口在界面上的显示名。名称是用户自己填的、允许为空 —— 那时给一个语言包里的默认名，
+	// 好让用户知道这一项是什么。由 UI 层调用（这时语言包一定已经起来了）
+	static std::wstring providerName(const AiProvider& provider);
+	// ---- 场景 ->（接口, 模型）----
+	// 不同业务各用各的一套：翻译可以走 A 接口 A 模型，表格识别走 B 接口 X 模型。
+	// 这两个返回值都已兜底：没配过就退到第 0 个接口（以及它当前那个模型），
+	// 所以调用方可以直接拿去用，不必先判断"有没有配过"
+	std::wstring getScenarioProvider(const std::wstring& scenario);
+	std::wstring getScenarioModel(const std::wstring& scenario);
+	void setScenario(const std::wstring& scenario, const std::wstring& providerId,
+		const std::wstring& model);
+	// 把一个场景解成能直接发请求的那三个值。缺一样就 ok = false（三个字符串仍会尽量填上，
+	// 好让界面把"到底缺了哪一样"指出来）
+	AiCred credFor(const std::wstring& scenario);
 	// 对话历史（AiHistory）。三个键决定了落盘与清理：
 	// historySave 关掉之后不记也不读，且下次写盘时把已有文件删掉 —— 磁盘上不留聊天记录；
 	// historyLimit 是最多留几个会话，historyDays 是留最近多少天。两个维度各防一段，见 AiHistory::trim
@@ -141,8 +199,16 @@ private:
 	JsonObject getPinObj();
 	// cap 那一组（捕获：延时 / 定时 / 指针），缺则现建
 	JsonObject getCapObj();
-	// ai 那一组（翻译 / 对话的 baseUrl / apiKey / model），缺则现建
+	// ai 那一组（接口列表 / 场景绑定 / 翻译选哪家 / 历史策略），缺则现建
 	JsonObject getAiObj();
+	// ai.providers 数组，缺则现建
+	JsonArray getAiProvidersArray();
+	// ai.scenarios 对象（场景名 -> {provider, model}），缺则现建
+	JsonObject getScenarioObj();
+	// 老版本的配置把 baseUrl / apiKey / model / models 平铺在 ai 组里。读到它们就把它们
+	// 搬成第 0 个接口 —— 用户已经填好的地址与密钥不该因为升了版本就"变成没配过"。
+	// 顺带保证至少有一个接口：界面上总得有一行可以编辑
+	void ensureProviders();
 	std::filesystem::path initDataPath();
 	// 决定配置文件用哪一份：exe 同目录有 config.json 就用它（绿色版，配置跟着程序走），
 	// 否则用 %appdata%\tpix\config.json。二者只认一个，读哪儿就写哪儿。
