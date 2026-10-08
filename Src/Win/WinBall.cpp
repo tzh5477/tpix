@@ -388,7 +388,13 @@ void WinBall::onMove(POINT pos)
 			if (itemBox) itemBox->hide();
 		}
 		if (hasDragged) {
-			setPosition(dragWinX + pos.x - pressPos.x, dragWinY + pos.y - pressPos.y);
+			// 基准必须是**当前**的 x/y，不能是按下那一刻冻住的那一份。pos 是本窗口的
+			// 客户区坐标，而窗口自己正跟着光标在挪：拿冻结值算，窗口一动、同一个屏幕点
+			// 的客户区坐标就跟着回退一个位移，两次移动消息会算出两个互相矛盾的目标位置，
+			// 系统在"挪过去 / 挪回来"之间来回夹 —— 表现就是拖的时候球一直在闪。
+			// 用当前 x/y 等价于只认窗口内的相对位移，同一次拖动重复算多少遍结果都一样
+			//（WinPin::onMove 拖窗口那条路就是这么写的）
+			setPosition(x + pos.x - pressPos.x, y + pos.y - pressPos.y);
 		}
 		return;
 	}
@@ -410,8 +416,6 @@ void WinBall::onDown(POINT pos, bool isRight)
 	isMouseDown = true;
 	hasDragged = false;
 	pressPos = pos;
-	dragWinX = x;
-	dragWinY = y;
 	SetCapture(hwnd);
 }
 

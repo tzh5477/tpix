@@ -83,7 +83,6 @@ private:
 	bool hasDragged{ false };
 	bool dpiChanged{ false };
 	POINT pressPos{ 0, 0 };
-	int dragWinX{ 0 }, dragWinY{ 0 };
 	Ling::Node* lineBox{ nullptr };
 	Ling::Node* itemBox{ nullptr };
 	std::vector<Ling::Button*> itemBtns;
