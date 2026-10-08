@@ -1504,6 +1504,31 @@ void WinPin::hideNumberPreview()
 	refresh();
 }
 
+bool WinPin::canHitActionBtn(const POINT& imgPos) const
+{
+	// 见 onDown 调用处那条说明：迷你条摆在外接框之外，那一格底下可能压着另一个元素。
+	// 光标下没有别的元素、或者就是选中元素自己时，这一下才归按钮
+	auto hover = drawing->shapeHover;
+	if (hover && hover != drawing->selected) return false;
+	// 光看 shapeHover 还不够：未填充的矩形 / 圆只有描边那一圈算命中区
+	//（见 ShapeRectBase::hitBody），光标压在它肚子上时 shapeHover 是空的 —— 上面那条
+	// 判据于是放行，压在另一个元素身上的 × 一按就把选中的那个删了。
+	// 删掉不可撤销，宁可让位：再补一条"别的外接框扣住这一格没有"。
+	// 用外接框而不细分形状：按钮压上去的那一格在视觉上就是那个元素的地盘；
+	// 水印没覆写 getShapeBounds（基类返回 false），铺满整张图也不会把按钮全堵死
+	for (auto& s : drawing->history->shapes) {
+		auto cur = s.get();
+		if (!cur || cur->isUndo || cur == drawing->selected) continue;
+		D2D1_RECT_F b{};
+		if (cur->getShapeBounds(b)
+			&& (float)imgPos.x > b.left && (float)imgPos.x < b.right
+			&& (float)imgPos.y > b.top && (float)imgPos.y < b.bottom) {
+			return false;
+		}
+	}
+	return true;
+}
+
 void WinPin::setPinTitle(const std::wstring& t)
 {
 	pinTitle = t;
@@ -2040,7 +2065,13 @@ void WinPin::onDown(POINT pos, BOOL isRight)
 	// 也赶在"给正在编辑的那个收尾"之前：编辑器开着时这些按钮同样该点得动
 	{
 		auto hitPos = toImgPos(pos);
-		if (drawing->selected) {
+		// 重叠时优先"这一下点到的元素"，而不是按钮 —— 这几枚摆在外接框之外，
+		// 那一格底下很可能有另一个元素（选中 A、A 的 × 正好压在 B 上，想点 B 却把 A 删了，
+		// 作者报的"对象重叠时容易误点"就是这么来的，而且它是唯一一处误点不可撤销的）。
+		// 判据：这一下没落在任何别的元素身上（shapeHover 为空，或就是选中元素自己）才认按钮；
+		// 落在别的元素上就放过去，让它走下面正常的选中 / 编辑。
+		// ⚠️ onMove 里"光标压在按钮上就不预览下一个编号"那一处用的是同一条判据，改这里要一起改
+		if (drawing->selected && canHitActionBtn(hitPos)) {
 			auto idx = drawing->selected->hitActionBtn((float)hitPos.x, (float)hitPos.y);
 			if (idx >= 0) {
 				drawing->selected->onActionBtn(idx);
@@ -2302,7 +2333,8 @@ void WinPin::onMove(POINT pos)
 		// 一律返回 hoverDraggerIndex = -1。光标压在这两枚图标上时点的是"复制 / 删除"，
 		// 同样没有"将要落下的号"可预览：不挡的话预览圈会正好扣在图标上把它糊掉
 		// （作者报的"重叠"）。判据与 onDown 里点这两枚图标用的是同一条
-		if (drawing->selected && drawing->selected->hitActionBtn((float)imgPos.x, (float)imgPos.y) >= 0) {
+		if (drawing->selected && canHitActionBtn(imgPos)
+			&& drawing->selected->hitActionBtn((float)imgPos.x, (float)imgPos.y) >= 0) {
 			hideNumberPreview();
 			return;
 		}
