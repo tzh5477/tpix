@@ -220,21 +220,33 @@ void ShapeRectBase::paintDragger(ID2D1DeviceContext* ctx)
 		}
 	}
 	ctx->SetTransform(prev);
-	// 旋转不再单独占一个角：光标移到某个角手柄外侧那一圈时（见 hitRotateBand），
-	// 就在那个角的外侧画一枚旋转图标提示 —— 静态画面上没有它，用的时候才现身
-	if (hoverDraggerIndex == HitRotate && rotateCorner >= 100) {
-		auto c0 = rectCenter();
-		auto lc = D2D1::Point2F((draggers[rotateCorner].left + draggers[rotateCorner].right) / 2.f,
-			(draggers[rotateCorner].top + draggers[rotateCorner].bottom) / 2.f);
-		auto wc = rotatePoint(lc, c0, angle);
-		// 沿"中心 → 这个角"的方向再往外挪一点，别压在角手柄上
-		auto dx{ wc.x - c0.x }, dy{ wc.y - c0.y };
-		auto len{ sqrtf(dx * dx + dy * dy) };
-		if (len > 0.001f) {
-			auto k{ (len + draggerSize * 1.6f) / len };
-			paintRotateHandleAt(ctx, D2D1::Point2F(c0.x + dx * k, c0.y + dy * k));
-		}
+	// 那枚看得见的旋转图标。画在 SetTransform(prev) **之后** —— 它锚的是外接框（轴对齐的那块），
+	// 不该跟着图形一起转。位置统一由 makeRotateHint 算（摆放 / 命中 / 绘制同一份几何）
+	makeRotateHint();
+	if (rotateHint.right > rotateHint.left) {
+		paintRotateHandleAt(ctx, D2D1::Point2F((rotateHint.left + rotateHint.right) / 2.f,
+			(rotateHint.top + rotateHint.bottom) / 2.f));
 	}
+}
+
+// 那枚看得见的旋转图标挂在哪儿：外接框右下角外侧，与 ShapeText 那枚独立手柄同一个距离。
+// 贴到画布右下边缘就翻到框内侧 —— 否则图标被裁在画布外、鼠标够不着，也就没法转。
+// 锚的是 getShapeBounds 给的**外接框**（已含旋转）而不是 rect：图形自己转的时候图标钉在
+// "看得见的那一块"的右下角，不会跑到斜边上去
+void ShapeRectBase::makeRotateHint()
+{
+	D2D1_RECT_F b{};
+	if (!getShapeBounds(b)) {
+		rotateHint = D2D1::RectF(0.f, 0.f, 0.f, 0.f);
+		return;
+	}
+	auto rad{ draggerSize * 0.9f };
+	auto gap{ draggerSize * 3.f };
+	auto cx{ b.right + gap }, cy{ b.bottom + gap };
+	auto img = win->getImgSize();
+	if (img.width > 0 && cx + rad > (float)img.width) cx = b.right - gap;
+	if (img.height > 0 && cy + rad > (float)img.height) cy = b.bottom - gap;
+	rotateHint = D2D1::RectF(cx - rad, cy - rad, cx + rad, cy + rad);
 }
 
 // 旋转的命中与画法都按"角手柄外侧那一圈"走（见 hitRotateBand / paintDragger）。
@@ -397,6 +409,13 @@ void ShapeRectBase::mouseMove(const float x, const float y)
 	// 手柄位置每帧由 paintDragger 重算，而它只在 hover 时才跑；这里先补一次，
 	// 免得刚把鼠标移上去的那一帧拿着上一次的旧位置判不中
 	makeDraggers();
+	makeRotateHint();
+	// 那枚看得见的旋转图标锚在外接框上（世界坐标），所以先用**没转过**的点判它 ——
+	// 真压在图标上就算抓住了旋转，所见即所点
+	if (isInRect(rotateHint, x, y)) {
+		hoverDraggerIndex = HitRotate;
+		return;
+	}
 	// 框转过之后能点中的那块也跟着转，把鼠标点逆着角度转回来再判
 	auto p = unrotatePoint({ x, y }, rectCenter(), angle);
 	hitDraggers(p.x, p.y);
@@ -429,7 +448,6 @@ void ShapeRectBase::hitRotateBand(const float x, const float y)
 	}
 	if (best < 0) return;
 	hoverDraggerIndex = HitRotate;
-	rotateCorner = best;
 }
 
 void ShapeRectBase::setCursor()
