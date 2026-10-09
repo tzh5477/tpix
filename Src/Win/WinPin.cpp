@@ -177,13 +177,35 @@ WinPin::WinPin(int x, int y, int w, int h, const std::vector<BYTE>* data, const 
 		if (!drawing->shapeHover && drawing->multiSelected.empty()) return;
 		auto imgPos = toImgPos(pos);
 		auto delta = space > 0 ? (short)WHEEL_DELTA : (short)-WHEEL_DELTA;
-		// 多选时一次滚到整批上。各组件自己的 mouseWheel 会先判"我这一样吃不吃滚轮"
-		//（图片 / 填充图形 / 马赛克那几个直接早退）—— 不支持的自然就跳过了
-		if (!drawing->multiSelected.empty()) {
-			for (auto* s : drawing->multiSelected) s->mouseWheel((float)imgPos.x, (float)imgPos.y, delta);
-			return;
+		// 滚轮调尺寸（线宽 / 字号 / 半径 / 箭头大小）也是一次真改动，理应在撤销栈里留一步。
+		// 记在这一层而不是各 shape 里：这条链路上 onToolStyleChanged 也会被调到（图里选着
+		// 东西时，滑块的 onValueChanged 会转调它），两边都记就会连着压两份内容完全相同的
+		// 快照 —— 用户按一下 Ctrl+Z 看着像没反应。wheelAdjusting 就是给那边看的。
+		// 正在编辑文本时不记：那一段编辑自己有一步（见 ShapeText::startEdit）。
+		// 走 markStyle 而不是 mark：飞快地滚是"一趟"，连滚十格也只留一步撤销
+		const bool undoable = (editingShape == nullptr);
+		bool pushed{ false };
+		if (undoable) {
+			pushed = drawing->history->markStyle();
+			wheelAdjusting = true;
 		}
-		drawing->shapeHover->mouseWheel((float)imgPos.x, (float)imgPos.y, delta);
+		// 多选时一次滚到整批上。各组件自己的 mouseWheel 会先判"我这一样吃不吃滚轮"
+		//（图片 / 水印 / 填充图形直接早退），并把"有没有真改到"回传上来
+		bool changed{ false };
+		if (!drawing->multiSelected.empty()) {
+			for (auto* s : drawing->multiSelected) {
+				if (s->mouseWheel((float)imgPos.x, (float)imgPos.y, delta)) changed = true;
+			}
+		}
+		else {
+			changed = drawing->shapeHover->mouseWheel((float)imgPos.x, (float)imgPos.y, delta);
+		}
+		wheelAdjusting = false;
+		// 一样都没改到（已经顶到值域的头、或者这一样压根不吃滚轮）→ 把刚压的那一步撤掉，
+		// 免得在栈里攒出一串"按了没反应"。
+		// 只收"这一下自己压的那一份"：pushed 为假说明它并进了上一格（同一趟里先头的
+		// 那几下是真改到了），那一格不能动 —— 顶到头的这一下自己什么都没改，收不走别人的
+		if (pushed && !changed) drawing->history->dropMark();
 	});
 	onTimer.add([this](UINT id) {this->onTimerCB(id);});
 	onKeyDown.add([this](UINT key) {this->onKey(key);});
@@ -693,7 +715,6 @@ void WinPin::collectMarquee()
 	const auto r = marqueeRect();
 	for (auto& up : drawing->history->shapes) {
 		auto shape = up.get();
-		if (shape->isUndo) continue;
 		// 没有外接框的元素不参与 —— 水印铺满整张图，算进来的话拉什么框都会把它一起选中
 		D2D1_RECT_F b{};
 		if (!shape->getShapeBounds(b)) continue;
@@ -861,7 +882,7 @@ void WinPin::paintBatchButtons(ID2D1DeviceContext* ctx)
 	}
 }
 
-// 批量删除：与按 Delete 那条路同一套 —— 走 undoShapes（只打撤销标记），Ctrl+Y 能整批找回
+// 批量删除：与按 Delete 那条路同一套 —— 走 undoShapes 收成一步，Ctrl+Z 能整批找回
 void WinPin::batchDeleteShapes()
 {
 	if (drawing->multiSelected.empty()) return;
@@ -1084,6 +1105,15 @@ bool WinPin::writeScreenImg(const std::vector<BYTE>& px, const int w, const int 
 	return true;
 }
 
+void WinPin::replaceBasePixels(const std::vector<BYTE>& px, int w, int h)
+{
+	if (!writeScreenImg(px, w, h)) return;
+	// 底图内容换了，之前认出来的词一个都对不上了
+	clearOcr();
+	startOcr();
+	refresh();
+}
+
 void WinPin::pushCanvasUndo()
 {
 	int w{}, h{};
@@ -1163,12 +1193,16 @@ void WinPin::deleteSelection()
 	const int l = std::max(0, (int)selRect.left), t = std::max(0, (int)selRect.top);
 	const int r = std::min(w, (int)selRect.right), b = std::min(h, (int)selRect.bottom);
 	if (r <= l || b <= t) return;
-	pushCanvasUndo();
+	// 改动前的整份底图先留一份：这一刀要能撤销（Ctrl+Z 把内容还回来）。
+	// 过去只有一个"一级撤销"攒着它，现在它跟着这一步一起进撤销栈 ——
+	// 于是"删内容 → 再画两笔 → 一路撤销回来"也能退得回去
+	std::vector<BYTE> before = px;
 	std::vector<BYTE> white((size_t)(r - l) * 4, 0xFF);
 	for (int y = t; y < b; ++y) {
 		CopyMemory(px.data() + ((size_t)y * w + l) * 4, white.data(), white.size());
 	}
 	if (!writeScreenImg(px, w, h)) return;
+	drawing->history->markBase(std::move(before), std::move(px), w, h);
 	// 删掉这一块就退出「选择画布」（作者定的）：这一趟画布上的活儿已经做完了，
 	// 再留在那个模式里等着框下一块没有道理。复制 / 搬移两条路同理
 	setCanvasMode(false);
@@ -1227,6 +1261,22 @@ ShapeBase* WinPin::adoptCanvasBlock(std::unique_ptr<ShapeBase> shape)
 {
 	if (!shape) return nullptr;
 	shape->toolId = L"geom";
+	// 这一步不只落下对象：底图上原位那一块在"提起"时已经被填白了（见 pickUpSelection）。
+	// 两份像素一起交给 History —— 撤销要把底图退回去，重做要再把那块白填回来，
+	// 不然撤销一下会变成"底图回来了、落下的那块位图还压在上面"。
+	// canvasUndoPx 为空说明这一块不是"搬"出来的（复制的块压根没动底图），不用带
+	if (!canvasUndoPx.empty()) {
+		std::vector<BYTE> after;
+		int aw{}, ah{};
+		if (readBasePixels(after, aw, ah) && aw == canvasUndoW && ah == canvasUndoH) {
+			drawing->history->setPendingBase(std::move(canvasUndoPx), std::move(after),
+				canvasUndoW, canvasUndoH);
+		}
+		// 无论成没成都得放手：抬手之后这一块要么已经落成对象、要么已经退回底图，
+		// "提起中"这个窗口结束了，留着它只会让后来的 ESC / 撤销按到一份过期像素
+		canvasUndoPx.clear();
+		canvasUndoW = canvasUndoH = 0;
+	}
 	auto* added = drawing->history->addShape(std::move(shape));
 	selDrag = 0;
 	selHandle = -1;
@@ -1573,12 +1623,12 @@ bool WinPin::canHitActionBtn(const POINT& imgPos) const
 	// 光看 shapeHover 还不够：未填充的矩形 / 圆只有描边那一圈算命中区
 	//（见 ShapeRectBase::hitBody），光标压在它肚子上时 shapeHover 是空的 —— 上面那条
 	// 判据于是放行，压在另一个元素身上的 × 一按就把选中的那个删了。
-	// 删掉不可撤销，宁可让位：再补一条"别的外接框扣住这一格没有"。
+	// 误删一步就够呛，宁可让位：再补一条"别的外接框扣住这一格没有"。
 	// 用外接框而不细分形状：按钮压上去的那一格在视觉上就是那个元素的地盘；
 	// 水印没覆写 getShapeBounds（基类返回 false），铺满整张图也不会把按钮全堵死
 	for (auto& s : drawing->history->shapes) {
 		auto cur = s.get();
-		if (!cur || cur->isUndo || cur == drawing->selected) continue;
+		if (!cur || cur == drawing->selected) continue;
 		D2D1_RECT_F b{};
 		if (cur->getShapeBounds(b)
 			&& (float)imgPos.x > b.left && (float)imgPos.x < b.right
@@ -1632,6 +1682,12 @@ void WinPin::nudgeBy(const UINT key)
 	else if (drawing->selected) targets.push_back(drawing->selected);
 	else if (drawing->shapeHover) targets.push_back(drawing->shapeHover);
 	else return;
+	// 微调改的是已有对象的位置，一步撤销。按一下就是一步 —— 与"拖到位"同属位置改动，
+	// 但按键是离散的，一次一格分开记更符合预期。
+	// 走 markStyle 而不是 mark：**按住方向键会触发系统自动重复**（约 33ms 一格），
+	// 真按一下仍然是一步，而按住不放的那一串会并成一步 —— 否则松手后要按几十下 Ctrl+Z
+	// 才退得回去。同理两下间隔超过"同一趟"的窗口就算两次操作
+	drawing->history->markStyle();
 	for (auto* s : targets) s->moveBy(dx, dy);
 	refresh();
 }
@@ -1965,9 +2021,7 @@ void WinPin::layout()
 	ctx->DrawBitmap(drawing->screenImg.Get(), destRect);
 	for (auto& shape : drawing->history->shapes)
 	{
-		if (!shape->isUndo) {
-			shape->paint(ctx);
-		}
+		shape->paint(ctx);
 	}
 	// 选文态：选中的那些词铺一层蓝底。画在标注之上、窗口装饰之下，而且变换还在标注坐标系里，
 	// 所以它跟着 Ctrl+滚轮缩放、剪裁之后也仍贴在原来的字上
@@ -2067,6 +2121,9 @@ void WinPin::onDown(POINT pos, BOOL isRight)
 			isMouseDown = true;
 			hasDragged = false;
 			SetCapture(hwnd);
+			// 存底：转的是已有那一批，这一下要可撤销（抬手时没真转过就撤掉，见 onUp）
+			drawing->history->mark();
+			shapeEditMarked = true;
 			batchRotating = true;
 			batchRotateCenter = multiSelectCenter();
 			auto ip = toImgPos(pos);
@@ -2174,7 +2231,7 @@ void WinPin::onDown(POINT pos, BOOL isRight)
 		auto hitPos = toImgPos(pos);
 		// 重叠时优先"这一下点到的元素"，而不是按钮 —— 这几枚摆在外接框之外，
 		// 那一格底下很可能有另一个元素（选中 A、A 的 × 正好压在 B 上，想点 B 却把 A 删了，
-		// 作者报的"对象重叠时容易误点"就是这么来的，而且它是唯一一处误点不可撤销的）。
+		// 作者报的"对象重叠时容易误点"就是这么来的 —— 删错了虽然撤得回来，但那也是白跑一趟）。
 		// 判据：这一下没落在任何别的元素身上（shapeHover 为空，或就是选中元素自己）才认按钮；
 		// 落在别的元素上就放过去，让它走下面正常的选中 / 编辑。
 		// ⚠️ onMove 里"光标压在按钮上就不预览下一个编号"那一处用的是同一条判据，改这里要一起改
@@ -2201,6 +2258,8 @@ void WinPin::onDown(POINT pos, BOOL isRight)
 	pressPos.y = pos.y;
 	isMouseDown = true;
 	hasDragged = false;
+	// 同 ctrlToggling 那几条：它只对"同一次按放"有效，一律在这里复位
+	shapeEditMarked = false;
 	SetCapture(hwnd);
 	// 没选画笔，或只开着贴图属性面板（都画不了），左键是拖窗口，拖的时候把工具条收起来。
 	// 收之前先记下它这会儿开着没有：拖到屏幕边线上会顺势把图藏起来，那一次"藏"发生在抬手时，
@@ -2260,6 +2319,9 @@ void WinPin::onDown(POINT pos, BOOL isRight)
 		auto ip = toImgPos(pos);
 		drawing->selected = nullptr;
 		drawing->shapeCur = nullptr;   //挪的是已有元素，不参与空笔判定
+		// 存底：整批要挪位置，这一下要可撤销（抬手时没真挪过就撤掉，见 onUp）
+		drawing->history->mark();
+		shapeEditMarked = true;
 		batchMoving = true;
 		batchMoveLast = POINT{ ip.x, ip.y };
 		return;
@@ -2274,6 +2336,10 @@ void WinPin::onDown(POINT pos, BOOL isRight)
 		// 工具上去（见 onUp）
 		drawing->selected = drawing->shapeHover;
 		drawing->shapeCur = nullptr; //改的是已有元素，不参与空元素判定
+		// 存底：拖它、或者拉它的手柄（挪位置 / 改大小 / 旋转）都算改动它，这一下要可撤销。
+		// 抬手时若一步没拖过（只是点选），onUp 会把这一份撤掉
+		drawing->history->mark();
+		shapeEditMarked = true;
 		drawing->shapeHover->mouseDown((float)imgPos.x, (float)imgPos.y);
 		return;
 	}
@@ -2419,7 +2485,6 @@ void WinPin::onMove(POINT pos)
 		for (; i >= 0; i--)
 		{
 			auto cur = drawing->history->shapes[i].get();
-			if (cur->isUndo) continue;
 			cur->mouseMove((float)imgPos.x, (float)imgPos.y);
 			if (cur->hoverDraggerIndex >= 0) {
 				if (drawing->shapeHover != cur) {
@@ -2454,6 +2519,14 @@ void WinPin::onUp(POINT pos, BOOL isRight)
 	// 拖窗口这一下到此结束。下面无论走哪条早退，拖窗口期间被跳过的那次工具条重排
 	// 都不该再拖着了 —— 所以标志在最前面就放掉（见 winDragging / onMoved）
 	winDragging = false;
+	// 这一下若是"抓住已有元素拖"，按下时存过一份底（见 onDown 各分支）。一步没挪就说明
+	// 什么都没改，把那一步空撤销撤掉 —— 少了这一句，点一下图形（只是选中、没拖）
+	// 也会在栈里留一格，用户接着按 Ctrl+Z 会看到"什么都没发生"。
+	// 放在最前面：下面批拖 / 批转 / 框选 / 选文那几条早退路径都从这儿统一收口
+	if (shapeEditMarked) {
+		shapeEditMarked = false;
+		if (!hasDragged) drawing->history->dropMark();
+	}
 	// 剪裁采样点：这一下只是把范围放稳，没有新建元素要收尾
 	if (cropDragging()) {
 		endCropDrag();
@@ -2532,6 +2605,9 @@ void WinPin::onUp(POINT pos, BOOL isRight)
 		// 新建的这一笔按下马上弹起，什么也没画出来：直接丢掉，
 		// 也省了 mouseUp 里的收尾开销（马赛克那边要把 GPU 像素读回内存，不该为一个要删的元素白做）
 		if (drawing->shapeHover == justCreated && !hasDragged && !drawing->shapeHover->isValidWithoutDrag()) {
+			// 这一笔按下时 createShape 存过一份底（"还没有这一笔"的样子），现在这一笔不留，
+			// 底也一并撤掉 —— 否则"点一下空白"会白留一步撤销
+			drawing->history->dropMark();
 			drawing->history->removeShape(drawing->shapeHover); //它会顺手清掉 drawing->shapeHover 并刷新
 			return;
 		}
@@ -2630,11 +2706,24 @@ History* WinPin::getHistory() const
 
 void WinPin::onToolStyleChanged(bool styleEnumChanged)
 {
+	// 正在编辑文本 / 序号时，样式改动（改颜色 / 滚轮调字号）是那次编辑手势的一部分，
+	// 起点已经存过底了（见 ShapeText::startEdit / ShapeNumber::startEdit）。
+	// 这里再存一份会多出一格内容与上一格完全相同的快照，用户按 Ctrl+Z 看着像没反应。
+	// 滚轮那一趟同理：撤销点挂在滚轮入口上（见 onWheel 里的说明），这里不再记
+	const bool editing = (editingShape != nullptr);
+	const bool fromWheel = wheelAdjusting;
 	// 多选那一批优先：颜色、填充、滑块 / 滚轮调粗细一次作用到整批。
 	// 马赛克与擦除跳过：它们没有"颜色 / 线宽"这一说，而各自的 applyStyle 改的是马赛克块
 	// 大小、擦除笔刷宽度那类东西 —— 批量调一次颜色把它们一起改了，看着就是"顺手改坏了"。
 	// 图片（applyStyle 早退）与水印（不进多选）天然不参与
 	if (!drawing->multiSelected.empty()) {
+		// 先确认真有可改的：整批都是马赛克 / 擦除时这一下其实什么都没改，不该留撤销点
+		bool any{ false };
+		for (auto* s : drawing->multiSelected) {
+			if (s->toolId != L"mosaic" && s->toolId != L"eraser") { any = true; break; }
+		}
+		if (!any) return;
+		if (!editing && !fromWheel) markStyleChange();
 		for (auto* s : drawing->multiSelected) {
 			if (s->toolId == L"mosaic" || s->toolId == L"eraser") continue;
 			s->applyStyle();
@@ -2648,6 +2737,8 @@ void WinPin::onToolStyleChanged(bool styleEnumChanged)
 	// 连 applyStyle 都没实现，颜色永远是构造那一刻的快照
 	auto target = editingShape ? editingShape : drawing->selected;
 	if (!target) return;
+	// 改的是这个对象身上的样式（颜色 / 填充 / 粗细 / 字号 / 档位），这一步要可撤销
+	if (!editing && !fromWheel) markStyleChange();
 	target->applyStyle();
 	// 档位（箭头样式 / 线条类型 / 端点 / 线型）只有用户真去动那个下拉时才套过去。
 	// 颜色、填充开关、滚轮调粗细走的是同一个入口，带上档位的话它们会把形状一起换掉
@@ -2659,6 +2750,15 @@ void WinPin::onToolStyleChanged(bool styleEnumChanged)
 // 而不是等下一次新画的才生效。全量重排的代价可以忽略 —— 一张图上序号通常是个位数
 void WinPin::refreshNumberShapes()
 {
+	// 图上一个序号都没有时，这一下改的只是"下一笔用什么样式"，图层纹丝没动，
+	// 不该在撤销栈里留一格（用户接着按 Ctrl+Z 会看到"什么都没发生"）
+	bool any{ false };
+	for (auto& shape : drawing->history->shapes) {
+		if (dynamic_cast<ShapeNumber*>(shape.get())) { any = true; break; }
+	}
+	if (!any) return;
+	// 换的是图上已有序号的样子（档位 / 外圈），是这些对象身上的改动 —— 一步撤销
+	drawing->history->mark();
 	for (auto& shape : drawing->history->shapes)
 	{
 		auto number = dynamic_cast<ShapeNumber*>(shape.get());
@@ -2671,9 +2771,17 @@ void WinPin::refreshNumberShapes()
 // 只认同类 —— 颜色是按工具各存一份的，跨类型套会让文字、序号被矩形的颜色污染
 void WinPin::applyStyleToAllShapes()
 {
+	// 先确认真有同类元素可套 —— 该工具在图上还一笔都没画时，这一下其实什么都没改，
+	// 不该留一格撤销
+	bool any{ false };
+	for (auto& shape : drawing->history->shapes) {
+		if (shape->toolId == toolMain->curId) { any = true; break; }
+	}
+	if (!any) return;
+	// 「应用到全部」改的是一整批对象，一步撤销
+	drawing->history->mark();
 	for (auto& shape : drawing->history->shapes)
 	{
-		if (shape->isUndo) continue;
 		// 「全」的意思是"照我工具条这套来"，包括形状那一档 —— 比照选中态多走一步
 		// applyToolStyle（见 onToolStyleChanged 里那两条为什么分开）
 		if (shape->toolId == toolMain->curId) {
@@ -2684,22 +2792,41 @@ void WinPin::applyStyleToAllShapes()
 	refresh();
 }
 
+// 工具条上拖滑块：一趟拖动只该在撤销栈里留一步。
+// 为什么不能像颜色那样在 onToolStyleChanged 里直接 mark()：滑块的 onValueChanged
+// 拖动期间每挪一格就来一次，一次手笔会压出几十份快照，撤销要按几十下。
+// 为什么不能像滚轮那样在入口记一次：滑块没有"按下"这个事件（Ling::Slider 只给
+// onValueChanged），也没法从事件上认出"一趟"。所以这里只打一个标记，
+// 由 History 按"同一趟"（时间窗 + 是否还开着）合并 —— 见 History::markStyle
+void WinPin::onSliderStyleChanged()
+{
+	sliderAdjusting = true;
+	onToolStyleChanged();
+	sliderAdjusting = false;
+}
+
+// 样式改动记一步撤销。拖滑块那条连续的走 markStyle，其余（点颜色 / 开填充 / 选档位）
+// 都是离散的一步 —— 判据只在这一处，两条调用点（多选一批 / 单选中一个）共用
+void WinPin::markStyleChange()
+{
+	if (sliderAdjusting) drawing->history->markStyle();
+	else drawing->history->mark();
+}
+
 // 一键清除图上所有水印（水印面板上的「清除」按钮）。
 // 遍历整份 shapes 而不是只看末尾那几个：水印加完之后又画了别的标注，它就不在末尾了；
 // 被别的标注压住的水印同样得清掉 —— 这类"看不见的残留"正是这一键要清的东西。
-// 走 History::undoShapes 而不是 removeShape：后者是真删，清完 Ctrl+Y 也找不回来
+// 走 History::undoShapes 而不是逐个 removeShape：整批收成一步，清完 Ctrl+Z 一下全回来
 void WinPin::clearWatermark()
 {
 	auto& history = drawing->history;
 	std::vector<ShapeBase*> targets;
 	for (auto& shape : history->shapes) {
-		// 已经处于撤销态的不必再算一遍：它这会儿本来就没画在图上
-		if (shape->isUndo) continue;
 		if (dynamic_cast<ShapeWatermark*>(shape.get())) targets.push_back(shape.get());
 	}
 	if (targets.empty()) return;
 	// 正在编辑的文本先收尾：这里是"清空一类元素"，被清掉的要是当前选中的那个，
-	// 编辑框还留在屏幕上就会挂在已撤销的元素上（撤销只是不画，对象还在）
+	// 编辑框还留在屏幕上就会挂到一个马上要析构的 shape 上
 	if (editingShape) editingShape->finishEditing();
 	history->undoShapes(targets);
 }
@@ -2775,15 +2902,13 @@ void WinPin::startVideoTask()
 	WinCap::initWithRect(rect, L"video");
 }
 
-// "这张图上有没有东西"。撤销掉的元素不算 —— 用户画了又全撤回原样，
-// 留下来也只是一张和框选结果一模一样的截图
+// "这张图上有没有东西"。画完又全撤回去的不算 —— 用户全撤回原样之后留下来的，
+// 只是一张和框选结果一模一样的截图。撤销栈现在是"换文档"式的，图层里剩下的就是
+// 真画着的那些，直接看空不空就够
 bool WinPin::hasAnnotations() const
 {
 	if (!drawing || !drawing->history) return false;
-	for (auto& shape : drawing->history->shapes) {
-		if (!shape->isUndo) return true;
-	}
-	return false;
+	return !drawing->history->shapes.empty();
 }
 
 // 文字识别：对当前这张图跑一次 OCR，结果开在识别窗里（可复制 / 换语言 / 表格模式）。
@@ -3172,9 +3297,12 @@ void WinPin::onKey(UINT key)
 		setThumbMode(!isThumb);
 	}
 	else if (ctrl && key == 'Z') {
-		// 底图的一级撤销优先：搬画面 / 删除底图内容比标注的手笔更"重"，
-		// 刚剪完一刀就按 Ctrl+Z，要退的显然是那一刀
-		if (!restoreCanvasUndo()) drawing->history->undo();
+		// 底图那点像素改动不再单占一层"一级撤销"—— 它本来就是撤销栈里的一步
+		//（见 History::Step 里的 baseBefore / baseAfter），搬画面那一下按 Ctrl+Z
+		// 会把底图与落下的那个位图对象**一起**退回去。
+		// 原来是"先试还原底图、再退回对象"，两支各管一半：撤销后底图回来了、
+		// 对象还在，看着就是同一块画面叠了两份
+		drawing->history->undo();
 	}
 	else if (ctrl && key == 'Y') {
 		drawing->history->redo();
@@ -3205,8 +3333,8 @@ void WinPin::onKey(UINT key)
 			deleteSelection();
 		}
 		// 框选出来的那一批优先：一次删掉整批。走 undoShapes 而不是逐个 removeShape ——
-		// 那是真 erase，框错一次就没得救；undoShapes 只打撤销标记，与「清除全部水印」
-		// 同一条路，Ctrl+Y 能整批找回来。整批删除的误伤面比单个大得多，值得留一条退路
+		// 前者把整批收成**一步**，框错一次按一下 Ctrl+Z 就全回来；逐个删则每一步各自成步，
+		// 想退回去得连着按十几次。整批删除的误伤面比单个大得多，值得留这一条退路
 		//
 		// 传的是副本：undoShapes 会把命中的元素从 multiSelected 里摘掉
 		//（见 Canvas::dropFromMultiSelect），把那个 vector 本身递进去就是边遍历边改它
@@ -3653,8 +3781,8 @@ void WinPin::copySelectedShapes(bool cut)
 		if (auto c = s->clone(0.f, 0.f)) shapeClipboard.push_back(std::move(c));
 	}
 	clipPasteCount = 0;
-	// 剪切：剪贴板拿到之后才动原件。走 undoShapes（只打撤销标记、不真删）——
-	// 与框选删除同一条路，误剪一次还能 Ctrl+Y 找回来
+	// 剪切：剪贴板拿到之后才动原件。走 undoShapes（整批收成一步）——
+	// 与框选删除同一条路，误剪一次按一下 Ctrl+Z 就找回来了
 	if (cut) {
 		if (!drawing->multiSelected.empty()) {
 			auto batch = drawing->multiSelected;
@@ -3820,9 +3948,7 @@ bool WinPin::getImagePixels(std::vector<BYTE>& pixels, D2D1_SIZE_U& size)
 		D2D1::RectF((float)o.x, (float)o.y, (float)o.x + (float)imgSize.width, (float)o.y + (float)imgSize.height));
 	for (auto& shape : drawing->history->shapes)
 	{
-		if (!shape->isUndo) {
-			shape->paint(ctx);
-		}
+		shape->paint(ctx);
 	}
 	hr = ctx->EndDraw();
 	// 变换收回单位阵再解绑：这个 deviceContext 是全程共用的，留着上面那个平移会带到别处的绘制上

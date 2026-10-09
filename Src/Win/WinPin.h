@@ -86,7 +86,7 @@ public:
 	Ling::TextBox* getTextBox() override;
 	// ShapeText / ShapeNumber 进入 / 退出编辑时登记自己。传 nullptr 表示没有元素在编辑。
 	void setEditingShape(ShapeBase* shape) override;
-	// ---- CanvasHost：Canvas 与 Shape 层只认这十件事（清单见 Canvas.h），这里把它们接到窗口 ----
+	// ---- CanvasHost：Canvas 与 Shape 层只认这几件事（清单见 Canvas.h），这里把它们接到窗口 ----
 	// getTextBox / setEditingShape 就落在这上面两条，签名已经对得上 CanvasHost，不再重复声明
 	float dpiValue() const override { return dpi; }
 	float scaleValue() const override { return scale; }
@@ -96,6 +96,9 @@ public:
 	ToolMain* getToolMain() override { return toolMain.get(); }
 	ToolSub* getToolSub() override { return toolSub.get(); }
 	void requestRefresh() override;
+	// 换掉整张底图的像素（撤销 / 重做到"搬过画面"的那一步）。定义在 cpp 里：
+	// 它要做的不只是写位图，还得把认过的词一并作废重认
+	void replaceBasePixels(const std::vector<BYTE>& px, int w, int h) override;
 	// 标注图层本身（undo / redo、元素枚举）住在 Canvas 里，窗口只转发这一条给
 	// ToolMain 的撤销/重做快捷键和 ToolSub 算最大序号用。定义在 cpp 里：
 	// 头文件只认得 History 的前置声明，拿不到 drawing->history 的完整类型
@@ -106,10 +109,18 @@ public:
 	// styleEnumChanged = 触发这次改动的是"档位"按钮（箭头样式 / 线条类型 / 端点 / 线型）——
 	// 只有这种时候才该把档位也套到选中那一笔上，颜色 / 粗细 / 填充这些不该顺手换掉形状
 	void onToolStyleChanged(bool styleEnumChanged = false);
+	// 工具条上拖滑块调样式（粗细 / 字号 / 半径 / 不透明度）走这一条。
+	// 与 onToolStyleChanged 的区别只在于撤销点怎么记：滑块拖一趟会连着来几十次值变化，
+	// 而它没有"松手"事件，所以交给 History 按"同一趟"合并成一步
+	void onSliderStyleChanged();
+	// 样式改动记一步撤销。拖滑块那条连续的走 markStyle（一趟合一步），
+	// 点颜色 / 开填充 / 选档位这些离散的走 mark —— 两条路都在 onToolStyleChanged 里汇合，
+	// 所以判据（sliderAdjusting）只在这一处
+	void markStyleChange();
 	// 「应用到全部」：把工具条当前样式套到图上同工具的所有标注
 	void applyStyleToAllShapes();
 	// 一键清除图上所有水印（水印面板上的「清除」）。走 History::undoShapes，
-	// 只打撤销标记不真删 —— 清完还能 Ctrl+Y 找回来
+	// 整批收成一步撤销 —— 清完 Ctrl+Z 一下全回来
 	void clearWatermark();
 	// ---- 贴图属性（ToolSub 的 pin 面板驱动，各项独立生效，见各自实现里的注释）----
 	void setOpacity(float v);
@@ -147,6 +158,18 @@ public:
 	// 本次按下之后光标有没有真的移动过。判"按下马上弹起"只认这个，
 	// 不去看各 shape 的几何 —— 那些成员的初值状态不一，不可靠
 	bool hasDragged{ false };
+	// 本次按下"抓住已有元素拖动"（单拖动 / 批拖 / 批转）时置上：按下那一刻在撤销栈里
+	// 存过一份底（见 onDown 各分支），抬手时若一步没挪就把它撤掉 —— 点一下图形、没拖，
+	// 不该在撤销栈里留下一步"按了没反应"的空档。
+	// 每次按下开头一律复位：它只对同一次按放有效
+	bool shapeEditMarked{ false };
+	// 正在处理一次"滚轮调尺寸"。撤销点已经挂在滚轮那一层了（见 onWheel 入口），
+	// onToolStyleChanged 看到它就不要再记一份 —— 滑块 onValueChanged 会转调那里，
+	// 两边都记会压出两份内容完全相同的快照
+	bool wheelAdjusting{ false };
+	// 正在处理一次"拖滑块调样式"（见 onSliderStyleChanged）。同上：撤销点由
+	// History 按"同一趟连续手势"合并（markStyle），onToolStyleChanged 不再记离散的一份
+	bool sliderAdjusting{ false };
 	// 「选择画布」模式（工具条最前那枚按钮按下的状态，原「选择器」）。它作用在**底图像素**上
 	// （拉选区 / 搬画面），所以在它里面画布上的点击不参与对象选择。
 	// 对象选择（点中元素 + Ctrl 加减选 + Ctrl 框选）**不再需要模式**，见 selecting()
@@ -280,8 +303,8 @@ private:
 	void updateNumberPreview(const POINT& imgPos);
 	void hideNumberPreview();
 	// 这一下够不够得着"选中元素下方那条迷你条"。
-	// 重叠时它压在别的元素身上 —— 那一格归元素，不归按钮（删掉是不可撤销的，
-	// 误点的代价全在这一枚上）。判据与 onMove 里"压在按钮上就不预览下一个编号"同源，
+	// 重叠时它压在别的元素身上 —— 那一格归元素，不归按钮（删错了虽然撤得回来，
+	// 但也得白跑一趟，误点的代价全在这一枚上）。判据与 onMove 里"压在按钮上就不预览下一个编号"同源，
 	// 改一处要连另一处一起改。
 	// 传的是底图坐标：除了看 shapeHover，还要再看一眼"别的外接框有没有扣住这一格" ——
 	// 未填充的矩形 / 圆的内部根本不是命中区，光标压在它肚子上时 shapeHover 是空的，

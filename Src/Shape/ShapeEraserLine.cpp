@@ -18,6 +18,15 @@ ShapeEraserLine::~ShapeEraserLine()
 
 }
 
+// 橡皮不可复制（copyable 为假），但**必须能存底** —— 撤销栈存的是整份标注图层，
+// 少一种就等于"撤销一下这块橡皮凭空消失"。bgBrush 是拿窗口底图做的画刷，
+// 拷贝构造直接把 ComPtr 拷过来共用一支：底图没换时它照样指着对的位图，
+// 而快照是冻结的、不会有人再去改它
+std::unique_ptr<ShapeBase> ShapeEraserLine::snapshot() const
+{
+	return snapshotSelf(*this);
+}
+
 // strokeWidth 直接就是涂抹擦除的笔宽，paint 里描边、盖底两处都用它
 void ShapeEraserLine::applyStyle()
 {

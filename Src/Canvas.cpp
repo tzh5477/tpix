@@ -63,6 +63,11 @@ void Canvas::setEditingShape(ShapeBase* shape)
 	host->setEditingShape(shape);
 }
 
+void Canvas::replaceBasePixels(const std::vector<BYTE>& px, int w, int h)
+{
+	host->replaceBasePixels(px, w, h);
+}
+
 void Canvas::dropFromMultiSelect(ShapeBase* shape)
 {
 	for (auto it = multiSelected.begin(); it != multiSelected.end(); ++it) {

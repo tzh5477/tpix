@@ -20,6 +20,7 @@ public:
 	// 复制（见 ShapeBase::clone）
 	bool copyable() const override { return true; }
 	std::unique_ptr<ShapeBase> clone(const float dx, const float dy, Canvas* target = nullptr) const override;
+	std::unique_ptr<ShapeBase> snapshot() const override;
 protected:
 	void fixupCopy() override;
 	void translate(const float dx, const float dy) override;

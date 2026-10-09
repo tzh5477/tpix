@@ -7,7 +7,7 @@ class ToolMain;
 class ToolSub;
 
 // 画布宿主：窗口侧那点状态（尺寸、DPI、当前工具、文本框、刷新）的唯一出口。
-// Canvas 与 Shape 层只认这十件事，不认 WinPin —— 将来要给别的窗口（图片编辑器之类）
+// Canvas 与 Shape 层只认这十来件事，不认 WinPin —— 将来要给别的窗口（图片编辑器之类）
 // 挂同一套标注能力，实现一个 CanvasHost 就够了，Shape 那层一行都不用动。
 class CanvasHost
 {
@@ -26,6 +26,10 @@ public:
 	virtual Ling::TextBox* getTextBox() = 0;
 	virtual void setEditingShape(ShapeBase* shape) = 0;
 	virtual void requestRefresh() = 0;
+	// 换掉整张底图的像素。「选择画布」搬画面 / 删内容改的是底图本体，撤销要退回去 ——
+	// 拍一份全屏底图 8 MB，不能每步都塞进 shape 快照里，于是只有真动过底图的那几步
+	// 带着像素（见 History::Step），回写这一下交给宿主（它才认识底图位图与 OCR 缓存）
+	virtual void replaceBasePixels(const std::vector<BYTE>& px, int w, int h) = 0;
 };
 
 // 一块画布：底图 + 标注图层（shapes / undo）+ 悬停与正在画的那个元素。
@@ -62,7 +66,7 @@ public:
 	// 建立单选之前必须先清掉它（否则 Delete 会连上一轮框选的一起删），
 	// 元素被撤销或被真删时由 dropFromMultiSelect 摘掉
 	std::vector<ShapeBase*> multiSelected;
-	// 把 shape 从框选那一批里摘掉。它被撤销、或者马上就要被真删（removeUndoShape）时调用 ——
+	// 把 shape 从框选那一批里摘掉。它马上要被真删时调用 ——
 	// 漏一处，那一批里就留下一个已经析构的指针。单选的两个指针不在这儿管：
 	// 调用处（History）对它们有别的语义，见各自的实现
 	void dropFromMultiSelect(ShapeBase* shape);
@@ -81,6 +85,8 @@ public:
 	// 编辑中文字由这个文本框画，位置与样式由 shape 自己指定
 	Ling::TextBox* getTextBox() const;
 	void setEditingShape(ShapeBase* shape);
+	// 换掉整张底图的像素，转发给宿主（见 CanvasHost::replaceBasePixels）
+	void replaceBasePixels(const std::vector<BYTE>& px, int w, int h);
 	// 底图的像素尺寸，也就是导出图的尺寸
 	D2D1_SIZE_U getImgSize() const;
 private:

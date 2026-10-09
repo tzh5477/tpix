@@ -37,6 +37,11 @@ std::unique_ptr<ShapeBase> ShapeText::clone(const float dx, const float dy, Canv
 	return cloneSelf(*this, dx, dy, target);
 }
 
+std::unique_ptr<ShapeBase> ShapeText::snapshot() const
+{
+	return snapshotSelf(*this);
+}
+
 void ShapeText::fixupCopy()
 {
 	// 同标号：复制出来的一份不在编辑态（挂在共用 TextBox 上的那两个订阅不能照抄）
@@ -218,14 +223,14 @@ void ShapeText::mouseMove(const float x, const float y)
 }
 // 滚轮调字号。只在光标停在文字上时收得到（WinPin 把滚轮转给 shapeHover），
 // 与矩形/序号那几个"滚轮调尺寸"是同一套用法
-void ShapeText::mouseWheel(const float x, const float y, const short delta)
+bool ShapeText::mouseWheel(const float x, const float y, const short delta)
 {
 	// 一格走两个逻辑像素：字号值域是 10~60，一格的步子太小得滚很多下
 	auto step{ 2.f * win->getDpi() };
 	auto next = fontSize + (delta < 0 ? -step : step);
 	// 夹到滑块的値域里，返回的就是最终生效的字号（物理像素）；顶到头了直接返回
 	auto applied = win->getToolSub()->setShapeSliderVal(L"text", next);
-	if (applied == fontSize) return;
+	if (applied == fontSize) return false;
 	fontSize = applied;
 	if (isEditing) {
 		// 编辑中文字由 TextBox 画，它收逻辑像素，中间隔着缩放与 dpi 两个换算
@@ -236,6 +241,7 @@ void ShapeText::mouseWheel(const float x, const float y, const short delta)
 		fitRectToText();
 	}
 	win->refresh();
+	return true;
 }
 
 void ShapeText::setCursor()
@@ -258,6 +264,11 @@ void ShapeText::startEdit()
 {
 	if (isEditing) return;
 	isEditing = true;
+	// 这一段编辑在撤销栈里收成**一步**：动手之前先存一份底，收工时按"有没有真改动"
+	// 决定留不留（见 finishEdit）。打字多少次都只算一次改动，撤销一下回到点进来之前
+	editText0 = text;
+	editFontSize0 = fontSize;
+	win->history->mark();
 	// 每次进入编辑都重新拉一遍样式：改了颜色/字号再点已有文本，就是要按新样式改。
 	// 取的是「文本」那一组（见 setAttr），不是"当前拿着哪个工具"那一组
 	setAttr();
@@ -327,12 +338,21 @@ void ShapeText::finishEdit()
 	// 收工时以 layout 的度量为准重算一次，虚线框与命中判定才和画出来的文字严格对齐
 	fitRectToText();
 	win->refresh();
+	// startEdit 存过一份底（那是这次编辑动手之前的样子），收工按结果决定留不留：
+	//   · 一个字没改、字号也没动          → 撤掉，别留一格"按了没反应"的空档
+	//   · 文本为空且原本就是空的（刚点出来就 Esc）→ 这一下净效果为零，同样撤掉
+	//   · 其余（改了字 / 改了字号 / 把原有文字删光）→ 留着，这就是这次编辑的那一步
+	const bool unchanged = (text == editText0 && fontSize == editFontSize0);
 	if (text.empty()) {
+		if (editText0.empty()) win->history->dropMark();
 		// 空文本不留痕：点一下没输入就走开，不该在 history 里攒一堆看不见的 shape。
 		// 不能在这儿直接删 —— 本函数是从 shape 自己的事件回调里调进来的，删了后面还要用 this。
 		Ling::App::get()->dq.TryEnqueue([w = win, self = this]() {
 			w->history->removeShape(self);
 		});
+	}
+	else if (unchanged) {
+		win->history->dropMark();
 	}
 }
 

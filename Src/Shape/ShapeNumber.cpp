@@ -89,6 +89,11 @@ std::unique_ptr<ShapeBase> ShapeNumber::clone(const float dx, const float dy, Ca
 	return cloneSelf(*this, dx, dy, target);
 }
 
+std::unique_ptr<ShapeBase> ShapeNumber::snapshot() const
+{
+	return snapshotSelf(*this);
+}
+
 void ShapeNumber::fixupCopy()
 {
 	// 复制出来的一份永远不在编辑态。那两个订阅句柄是挂在 Canvas 那个共用 TextBox 上的，
@@ -377,11 +382,13 @@ void ShapeNumber::bumpVal(int delta)
 {
 	auto next = val + delta;
 	if (next < 1) return;
+	// 改的是编号，还可能带着后面那一串一起顺移，一步撤销。按一下 ± 就是一步
+	win->history->mark();
 	auto from = val;
 	for (auto& shape : win->history->shapes)
 	{
 		auto number = dynamic_cast<ShapeNumber*>(shape.get());
-		if (!number || number->isUndo) continue;
+		if (!number) continue;
 		if (number == this) number->val = next;
 		else if (number->val > from) number->val += delta;
 		// 编号变了，文字跟着重排（后面的编号在这个循环里也是一个个就地改完再排的）
@@ -562,20 +569,23 @@ void ShapeNumber::mouseMove(const float x, const float y)
 	}
 }
 
-void ShapeNumber::mouseWheel(const float x, const float y, const short delta)
+bool ShapeNumber::mouseWheel(const float x, const float y, const short delta)
 {
 	isWheel = true;
+	const auto before = r;
 	if (delta < 0) {
-		if (r <= 6.f * win->getDpi()) return;
+		if (r <= 6.f * win->getDpi()) return false;
 		r--;
 	}
 	else {
 		r++;
 	}
 	r = win->getToolSub()->setShapeSliderVal(L"number", r);
+	if (r == before) return false;   //夹回原值（已经顶到值域的头）→ 什么都没变
 	makePath();
 	makeTextLayout();
 	win->refresh();
+	return true;
 }
 
 void ShapeNumber::setCursor()
@@ -706,6 +716,10 @@ void ShapeNumber::startEdit()
 {
 	if (isEditing) return;
 	isEditing = true;
+	// 同 ShapeText::startEdit：这一段编辑收成**一步**撤销，动手之前先存一份底
+	editText0 = customText;
+	editR0 = r;
+	win->history->mark();
 	auto tb = win->getTextBox();
 	auto d = win->getDpi();
 	auto s = win->getScale();
@@ -759,5 +773,8 @@ void ShapeNumber::finishEdit()
 	tb->hide();
 	win->setEditingShape(nullptr);
 	makeTextLayout();
+	// 一个字没改、半径也没动过 → 把 startEdit 存的那一步撤掉。半径那条路走 mouseWheel，
+	// 而编辑期间 onToolStyleChanged 刻意不另存底（见那里的说明），所以要在这里一起比
+	if (customText == editText0 && r == editR0) win->history->dropMark();
 	win->refresh();
 }

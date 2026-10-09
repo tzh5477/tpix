@@ -24,3 +24,8 @@ std::unique_ptr<ShapeBase> ShapeEllipse::clone(const float dx, const float dy, C
 {
 	return cloneSelf(*this, dx, dy, target);
 }
+
+std::unique_ptr<ShapeBase> ShapeEllipse::snapshot() const
+{
+	return snapshotSelf(*this);
+}

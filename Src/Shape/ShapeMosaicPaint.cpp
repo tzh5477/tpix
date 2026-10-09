@@ -128,9 +128,7 @@ bool ShapeMosaicPaint::renderBackground(const D2D1_RECT_F bounds, const int expa
 	{
 		auto cur = shape.get();
 		if (cur == self) break;
-		if (!cur->isUndo) {
-			cur->paint(ctx);
-		}
+		cur->paint(ctx);
 	}
 	hr = ctx->EndDraw();
 	ctx->SetTransform(D2D1::Matrix3x2F::Identity());

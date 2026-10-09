@@ -20,7 +20,7 @@ public:
 	void mouseDown(const float x, const float y) override;
 	void mouseMove(const float x, const float y) override;
 	// 滚轮改字号（光标停在文字上时才收得到），改完回写工具条的滑块
-	void mouseWheel(const float x, const float y, const short delta) override;
+	bool mouseWheel(const float x, const float y, const short delta) override;
 	void setCursor() override;
 	// 单击进编辑态，留不留由 finishEdit 按文本是否为空决定，这里不能提前删
 	bool isValidWithoutDrag() override { return true; };
@@ -45,6 +45,7 @@ public:
 	// 复制（见 ShapeBase::clone）
 	bool copyable() const override { return true; }
 	std::unique_ptr<ShapeBase> clone(const float dx, const float dy, Canvas* target = nullptr) const override;
+	std::unique_ptr<ShapeBase> snapshot() const override;
 protected:
 	void fixupCopy() override;
 	void translate(const float dx, const float dy) override;
@@ -83,6 +84,10 @@ private:
 	Microsoft::WRL::ComPtr<ID2D1StrokeStyle> dashedStrokeStyle;
 	// 文字到虚线框的间距。取 TextBox 默认的 setPadding(6.f)，两边画出来才对得上
 	float borderPadding;
+	// 进编辑那一刻的文本与字号。收工时拿它俩比对：都没变就说明这次编辑什么都没改，
+	// 那一步撤销（startEdit 里存的底）要撤掉，免得用户按 Ctrl+Z 看着像没反应
+	std::wstring editText0;
+	float editFontSize0{ 0.f };
 	float pressX{ 0.f }, pressY{ 0.f };
 	// 编辑期间挂在 TextBox 上的两个订阅。TextBox 是共用的，退出编辑必须摘掉，
 	// 否则下一个 ShapeText 编辑时会把文字写进已经结束的那个里。

@@ -12,7 +12,7 @@ public:
 	void mouseDown(const float x, const float y) override;
 	void mouseUp(const float x, const float y) override;
 	void mouseMove(const float x, const float y) override;
-	void mouseWheel(const float x, const float y, const short delta) override;
+	bool mouseWheel(const float x, const float y, const short delta) override;
 	void setCursor() override;
 	void applyStyle() override;
 	void applyToolStyle() override;
@@ -31,6 +31,7 @@ public:
 	// 复制（见 ShapeBase::clone）
 	bool copyable() const override { return true; }
 	std::unique_ptr<ShapeBase> clone(const float dx, const float dy, Canvas* target = nullptr) const override;
+	std::unique_ptr<ShapeBase> snapshot() const override;
 protected:
 	void fixupCopy() override;
 	void translate(const float dx, const float dy) override;

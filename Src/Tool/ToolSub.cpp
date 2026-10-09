@@ -435,7 +435,7 @@ int ToolSub::getNumberSampleVal()
 	int maxVal{ 0 };
 	for (auto& shape : win->getHistory()->shapes) {
 		auto number = dynamic_cast<ShapeNumber*>(shape.get());
-		if (number && !number->isUndo && number->val > maxVal) {
+		if (number && number->val > maxVal) {
 			maxVal = number->val;
 		}
 	}
@@ -641,7 +641,7 @@ void ToolSub::syncNumberVal()
 	int maxVal{ 0 };
 	for (auto& shape : win->getHistory()->shapes) {
 		auto number = dynamic_cast<ShapeNumber*>(shape.get());
-		if (number && !number->isUndo && number->val > maxVal) maxVal = number->val;
+		if (number && number->val > maxVal) maxVal = number->val;
 	}
 	setNumberVal(maxVal + 1);
 }
@@ -1203,6 +1203,10 @@ Ling::Button* ToolSub::makeSelectBtn(const std::wstring& tipKey, const std::wstr
 		tip->hide();
 		SelectPopup::show(this, btn, items, *index,
 			[this, index, cfgKey, switchTo, onPicked, refreshNumbers](int picked) {
+				// 选中的还是原来那一档：什么都没换。不早退的话下面会白写一次配置、
+				// 白重排一遍图上的序号 —— 而序号那一步是记撤销的，白记一格会让
+				// 用户按 Ctrl+Z 看到"什么都没发生"
+				if (picked == *index) return;
 				*index = picked;
 				Setting::get()->setToolNum(curToolId, cfgKey, (float)picked);
 				switchTo(picked);
@@ -1399,7 +1403,7 @@ void ToolSub::showWatermarkTools()
 	// 「清除」：一键撤掉图上所有水印。挂在最后：前面四枚管"长什么样"，它管"不要了"。
 	// 字号比「样式」小一号 —— 这一格是 flexGrow 分下来的固定余量，
 	// 而 en/id/ru 的词（Clear / Hapus / Убрать）比「样式」两个字宽，13 号会顶破格子。
-	// 走 History::undoShapes，只打撤销标记不真删，清完还能 Ctrl+Y 找回来
+	// 走 History::undoShapes，整批合成一步撤销 —— 清完 Ctrl+Z 一下全回来
 	{
 		auto btn = contentNode->makeChild<Ling::Button>();
 		watermarkClearBtn = btn;
@@ -1481,8 +1485,10 @@ void ToolSub::initSlider()
 	slider = makeSlider(sliderMin, sliderMax, sliderVal, [this](float val) {
 		sliderVal = val;
 		Setting::get()->setToolNum(curToolId, curSliderKey, val);
-		// 正在编辑的文本要立刻跟着变字号，不然得点完再看效果
-		win->onToolStyleChanged();
+		// 正在编辑的文本要立刻跟着变字号，不然得点完再看效果。
+		// 走 onSliderStyleChanged 而不是 onToolStyleChanged：滑块拖一趟会连着来几十次
+		// 值变化，撤销点得以"一趟一步"记（见那个函数的说明）
+		win->onSliderStyleChanged();
 		});
 }
 

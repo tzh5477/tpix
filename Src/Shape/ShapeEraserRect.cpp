@@ -21,6 +21,12 @@ ShapeEraserRect::~ShapeEraserRect()
 
 }
 
+// 理由同 ShapeEraserLine::snapshot：不可复制，但撤销栈必须存得住它
+std::unique_ptr<ShapeBase> ShapeEraserRect::snapshot() const
+{
+	return snapshotSelf(*this);
+}
+
 void ShapeEraserRect::paint(ID2D1DeviceContext* ctx)
 {
 	// 旋转由基类统一叠，画完要把变换还回去 —— 后面还有别的东西要画

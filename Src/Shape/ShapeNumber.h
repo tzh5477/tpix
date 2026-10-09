@@ -20,7 +20,7 @@ public:
 	void mouseDown(const float x, const float y) override;
 	void mouseUp(const float x, const float y) override;
 	void mouseMove(const float x, const float y) override;
-	void mouseWheel(const float x, const float y, const short delta) override;
+	bool mouseWheel(const float x, const float y, const short delta) override;
 	void setCursor() override;
 	// 选中态下的按键：+/- 改编号并顺移，F2 编辑追加的描述文本
 	void onKey(UINT key) override;
@@ -45,6 +45,7 @@ public:
 	// 复制（见 ShapeBase::clone）。复制出来的是同一个编号 —— 作者要的是"一模一样的一份"
 	bool copyable() const override { return true; }
 	std::unique_ptr<ShapeBase> clone(const float dx, const float dy, Canvas* target = nullptr) const override;
+	std::unique_ptr<ShapeBase> snapshot() const override;
 protected:
 	void fixupCopy() override;
 	void translate(const float dx, const float dy) override;
@@ -128,6 +129,10 @@ private:
 	bool isFill{ false }, isWheel{ false };
 	// 追加在圆圈右侧的描述文本。空串表示没有
 	std::wstring customText;
+	// 进编辑那一刻的描述文本与半径。收工时比对，都没变就把 startEdit 存的那一步撤掉
+	//（理由同 ShapeText::editText0）
+	std::wstring editText0;
+	float editR0{ 0.f };
 	// 当前颜色 RGBA 原值。Ling::Color 没有从 D2D1_COLOR_F 构造的口子，TextBox::setColor 得用它
 	UINT32 colorValue{ 0xFF000000 };
 	NumStyle numStyle{ NumStyle::Arabic };

@@ -23,6 +23,11 @@ std::unique_ptr<ShapeBase> ShapeMosaicLine::clone(const float dx, const float dy
 	return cloneSelf(*this, dx, dy, target);
 }
 
+std::unique_ptr<ShapeBase> ShapeMosaicLine::snapshot() const
+{
+	return snapshotSelf(*this);
+}
+
 void ShapeMosaicLine::fixupCopy()
 {
 	ShapeLineBase::fixupCopy();

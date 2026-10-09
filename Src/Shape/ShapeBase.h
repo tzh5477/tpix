@@ -13,7 +13,11 @@ public:
 	virtual void mouseDrag(const float x, const float y) {};
 	virtual void mouseDown(const float x, const float y) {};
 	virtual void mouseUp(const float x, const float y) {};
-	virtual void mouseWheel(const float x, const float y, const short delta) {};
+	// 滚轮调尺寸（线宽 / 字号 / 半径 / 箭头大小 / 马赛克块）。返回值 = 这一下有没有真改到：
+	// 已经顶到值域头、或者这一样根本不响应滚轮（图片 / 水印走的就是这个默认实现）都是 false。
+	// 调用方（WinPin 的滚轮入口）靠它决定"这一下要不要在撤销栈里留一步" ——
+	// 不留的话，光标停在一张图片上随手滚两下也会在栈里攒出一串空档
+	virtual bool mouseWheel(const float x, const float y, const short delta) { return false; };
 	virtual void setCursor() {};
 	// 选中态下的按键。目前只有序号用它（+/- 改编号、F2 编辑追加的描述文本）
 	virtual void onKey(UINT key) {};
@@ -72,6 +76,15 @@ public:
 	// 马赛克那几支的善后（以及 translate 里的重算）要按宿主回读画面，
 	// 宿主还指着已经关掉的那个窗口就是访问违例
 	virtual std::unique_ptr<ShapeBase> clone(const float dx, const float dy, Canvas* target = nullptr) const { return nullptr; }
+	// 冻结一份自己的状态，给 History 的撤销栈存底。与 clone 是两件事，别混：
+	// clone 是"复制一份给用户接着编辑"（要换宿主、重建画刷、整块挪开），
+	// snapshot 只要求"把此刻每个字段原样留住"（位置一分不动、不进 history、不改宿主）。
+	// 所以它既不要求可复制（擦除 / 水印也得能存底），也不该带 clone 那几样副作用。
+	// 全量快照式撤销之所以可行，就在于隐式拷贝构造已经把"一个 shape 的全部状态"
+	// 变成了一行拷贝 —— 派生类写一行 `return snapshotSelf(*this);` 就够。
+	// 纯虚而不是给个默认 nullptr（对比 clone）：新增一种 shape 时编译器会逼着补上，
+	// 漏一个就是"撤销时它凭空消失"，这种错不该留给运行期
+	virtual std::unique_ptr<ShapeBase> snapshot() const = 0;
 	// 批量移动：整块挪 (dx, dy)。translate 是 protected，而 WinPin 的"批量拖动多选那一批"
 	// 是从外面逐个调的，得有一个口子
 	void moveBy(const float dx, const float dy) { translate(dx, dy); }
@@ -121,10 +134,24 @@ protected:
 		ShapeBase& base = *c;
 		// 换宿主必须排在 fixupCopy / translate 之前：那两个都要按画布算（见 clone 的说明）
 		if (target) base.win = target;
-		base.isUndo = false;
 		base.hoverDraggerIndex = -1;
 		base.fixupCopy();
 		base.translate(dx, dy);
+		return c;
+	}
+	// 快照的公共骨架：拷一份 → 摘掉"正悬停在哪枚手柄上"这个运行态 → fixupCopy 补善后。
+	// 与 cloneSelf 的差别只在**不换宿主、不 translate**：快照要的就是"原位原样"，
+	// 而马赛克那几支的 translate 会顺手重算马赛克（要回读底图像素），
+	// 只为存个底就跑一趟那个代价太大。fixupCopy 照跑，那两样非做不可的善后全在它里面：
+	// 马赛克要借它把 mosaicPaint 里"我是哪一个 shape"改指新的一份（指着原件就是野指针），
+	// 文本 / 序号要借它清掉挂在共用 TextBox 上的编辑态订阅
+	template <class T>
+	static std::unique_ptr<ShapeBase> snapshotSelf(const T& src)
+	{
+		auto c = std::make_unique<T>(src);
+		ShapeBase& base = *c;
+		base.hoverDraggerIndex = -1;
+		base.fixupCopy();
 		return c;
 	}
 	// 复制之后的善后，默认什么都不做。派生类按需补三样：
@@ -138,7 +165,6 @@ public:
 	// 所属画布。窗口尺寸、DPI、底图、工具条样式、刷新全从这里出 ——
 	// shape 不认识窗口，换一个画布宿主这层照旧能挂上去
 	Canvas* win;
-	bool isUndo{ false };
 	int hoverDraggerIndex{ -1 };
 	// 建这一笔时的工具 id，由 History::createShape 填。
 	// 「应用到全部」拿它筛同类 —— ToolSub 的颜色是每个工具各存一份的，

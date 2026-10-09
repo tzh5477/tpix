@@ -30,7 +30,7 @@ public:
 	void mouseDrag(const float x, const float y) override;
 	void mouseUp(const float x, const float y) override;
 	// 光标停在这条线上滚滚轮 = 调线宽
-	void mouseWheel(const float x, const float y, const short delta) override;
+	bool mouseWheel(const float x, const float y, const short delta) override;
 	// ---- 工具条上那两个下拉里的一格预览 ----
 	// 与真正画线的那几条路共用同一份几何与比例（paintMark / dashOf / 波浪那组常数）。
 	// 预览要是自己另画一套，等哪天照 FSCapture 再调一次箭头形状，
@@ -44,6 +44,7 @@ public:
 	// 复制（见 ShapeBase::clone）
 	bool copyable() const override { return true; }
 	std::unique_ptr<ShapeBase> clone(const float dx, const float dy, Canvas* target = nullptr) const override;
+	std::unique_ptr<ShapeBase> snapshot() const override;
 private:
 	bool isOrtho() const;
 	// 把这次拖拽的鼠标轨迹压成一条横平竖直的折线

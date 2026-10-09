@@ -255,6 +255,11 @@ std::unique_ptr<ShapeBase> ShapeLine::clone(const float dx, const float dy, Canv
 	return cloneSelf(*this, dx, dy, target);
 }
 
+std::unique_ptr<ShapeBase> ShapeLine::snapshot() const
+{
+	return snapshotSelf(*this);
+}
+
 // 外观：颜色、半透明、线宽。滚轮调粗细也走这里，所以它不能顺手改档位
 //（档位在 applyToolStyle 里，理由见 ShapeBase::applyToolStyle）
 void ShapeLine::applyStyle()
@@ -570,13 +575,14 @@ void ShapeLine::paintStyleSample(ID2D1DeviceContext* ctx, const D2D1_RECT_F& rec
 
 // 滚滚轮 = 调线宽，与矩形 / 箭头那边是同一回事（Canvas 只在光标停在图形身上时才把滚轮转过来）。
 // 一格一个逻辑像素，上下限交给 ToolSub 那张滑块值域表夹 —— 线宽与工具条滑块因此永远是同一个数
-void ShapeLine::mouseWheel(const float x, const float y, const short delta)
+bool ShapeLine::mouseWheel(const float x, const float y, const short delta)
 {
 	auto next = strokeWidth + (delta < 0 ? -win->getDpi() : win->getDpi());
 	auto applied = win->getToolSub()->setShapeSliderVal(L"line", next);
-	if (applied == strokeWidth) return;   //已经顶到值域的头了，不用重画
+	if (applied == strokeWidth) return false;   //已经顶到值域的头了，不用重画
 	strokeWidth = applied;
 	// 缩进的基准是线宽（见 shaftPoints），线粗了收进去的那一截也要跟着长
 	makePath();
 	win->refresh();
+	return true;
 }

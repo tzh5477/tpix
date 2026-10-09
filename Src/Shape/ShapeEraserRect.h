@@ -21,6 +21,7 @@ public:
 	// 基类默认就是 false，这里显式写出来：一是把"橡皮不可复制"这条意图钉在类头上，
 	// 二是别让后来的人顺手在基类把 copyable 放宽时把橡皮也带进去
 	bool copyable() const override { return false; }
+	std::unique_ptr<ShapeBase> snapshot() const override;
 private:
 	// 拿窗口底图做的画刷。底图与窗口同尺寸同坐标，所以画刷不需要平移就能对齐
 	Microsoft::WRL::ComPtr<ID2D1BitmapBrush> bgBrush;

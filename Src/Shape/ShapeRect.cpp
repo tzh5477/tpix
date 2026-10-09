@@ -25,3 +25,8 @@ std::unique_ptr<ShapeBase> ShapeRect::clone(const float dx, const float dy, Canv
 {
 	return cloneSelf(*this, dx, dy, target);
 }
+
+std::unique_ptr<ShapeBase> ShapeRect::snapshot() const
+{
+	return snapshotSelf(*this);
+}

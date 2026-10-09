@@ -26,7 +26,7 @@ public:
 	void mouseDown(const float x, const float y) override;
 	void mouseUp(const float x, const float y) override;
 	void mouseMove(const float x, const float y) override;
-	void mouseWheel(const float x, const float y, const short delta) override;
+	bool mouseWheel(const float x, const float y, const short delta) override;
 	void setCursor() override;
 	// 选中元素右上角的动作图标要用：矩形族的外接矩形（旋转过的那种）就是它
 	bool getShapeBounds(D2D1_RECT_F& out) const override;

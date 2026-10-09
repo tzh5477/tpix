@@ -83,6 +83,13 @@ ShapeWatermark::~ShapeWatermark()
 {
 }
 
+// 水印不可复制（copyable 为假），但撤销栈必须存得住它。样式是每次 paint 现从工具条读的，
+// 快照里要留住的只有"文字 / 时间戳 / 布局"这几样，隐式拷贝构造已经全带过来了
+std::unique_ptr<ShapeBase> ShapeWatermark::snapshot() const
+{
+	return snapshotSelf(*this);
+}
+
 void ShapeWatermark::setCursor()
 {
 	// 与序号一致：水印是"点一下就落"的元素，用系统箭头就够了

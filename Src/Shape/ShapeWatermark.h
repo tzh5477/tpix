@@ -34,6 +34,7 @@ public:
 	// 单击就是它的正常用法：落一个水印层，不需要拖动
 	bool isValidWithoutDrag() override { return true; };
 	void setCursor() override;
+	std::unique_ptr<ShapeBase> snapshot() const override;
 	// 只有水印工具下才吃悬停：别的工具下它不是"图上某一块"，而是整张图的背景层，
 	// 一旦参与命中就会把其它工具的每一下点击都截胡（见 .cpp 里的说明）
 	void mouseMove(const float x, const float y) override;

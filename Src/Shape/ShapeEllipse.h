@@ -12,4 +12,5 @@ public:
 	// 复制（见 ShapeBase::clone）：与矩形同一套几何，只是 kind 不同
 	bool copyable() const override { return true; }
 	std::unique_ptr<ShapeBase> clone(const float dx, const float dy, Canvas* target = nullptr) const override;
+	std::unique_ptr<ShapeBase> snapshot() const override;
 };

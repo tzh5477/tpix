@@ -93,3 +93,8 @@ std::unique_ptr<ShapeBase> ShapeImage::clone(const float dx, const float dy, Can
 {
 	return cloneSelf(*this, dx, dy, target);
 }
+
+std::unique_ptr<ShapeBase> ShapeImage::snapshot() const
+{
+	return snapshotSelf(*this);
+}

@@ -28,6 +28,7 @@ public:
 	// 这一族没有圆角也没有扇区，基类那几枚内部手柄点画出来只会让人以为能调（见基类）
 	bool hasInnerHandles() const override { return false; }
 	std::unique_ptr<ShapeBase> clone(const float dx, const float dy, Canvas* target = nullptr) const override;
+	std::unique_ptr<ShapeBase> snapshot() const override;
 protected:
 	void fixupCopy() override;
 private:
