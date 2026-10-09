@@ -52,6 +52,9 @@ namespace {
 	constexpr const wchar_t* giAttach{ L"\ue901" };   // 剪贴板
 	constexpr const wchar_t* giSend{ L"\ue90a" };     // 箭头
 	constexpr const wchar_t* giStop{ L"\ue62d" };     // ✕（回答中 = 掐掉）
+	// 回答条上那两枚（Doc/tools/mkicons.py 里补进来的字形，见那里的说明）
+	constexpr const wchar_t* giRefresh{ L"\ue912" };  // 留口的圈 + 箭头 = 重新生成
+	constexpr const wchar_t* giFollowUp{ L"\ue913" }; // 气泡 + 加号 = 追问
 
 	// 毫秒时间戳 -> 本地时间文本。传 DWrite 那套 strftime 格式串。
 	// 消息落款要精确到秒，会话列表只要年月日，分组表头只要年-月
@@ -1034,7 +1037,12 @@ Ling::Node* WinAiChat::addItem(const AiService::Role role, const std::wstring& t
 		stamp->setColor(0xAAAAAAFF);
 		stamp->setMarginRight(4.f);
 		stamp->setText(fmtTime(time, L"%Y-%m-%d %H:%M:%S"));
+		// 复制 / 重新生成 / 追问。后两枚是作者要的（见 regen / followUp）：
+		// 一版答案往往不够用，要在它旁边就能"再来一份"或者"顺着它接着问"，
+		// 而不是把答案抄一遍再自己拼进输入框
 		makeIcon(giCopy, Lang::get(L"ai.copy"), 0.f)->onClick.add([this, index](Ling::Button*) { copyMsg(index); });
+		makeIcon(giRefresh, Lang::get(L"ai.regen"), 4.f)->onClick.add([this, index](Ling::Button*) { regen(index); });
+		makeIcon(giFollowUp, Lang::get(L"ai.followup"), 4.f)->onClick.add([this, index](Ling::Button*) { followUp(index); });
 	}
 	return bubble;
 }
@@ -1320,7 +1328,12 @@ void WinAiChat::send()
 	// 代价是每轮都要重编一次 base64 —— 认一次几十毫秒，比答错划算
 	msgs.push_back(std::move(user));
 	if (AiHistory::get()) AiHistory::get()->append(curId, msgs.back());
+	// 上下文就是整个会话 —— 每次全发一遍，兼容接口是无状态的（见文件头的说明）
+	startChat(msgs);
+}
 
+void WinAiChat::startChat(const std::vector<AiService::Msg>& ctx)
+{
 	tailText.clear();
 	streaming.clear();
 	setBusy(true);
@@ -1329,7 +1342,7 @@ void WinAiChat::send()
 
 	const auto gen = ++sendGen;
 	auto aliveFlag = alive;
-	task = AiService::chat(std::wstring{ AiScenario::chat }, msgs,
+	task = AiService::chat(std::wstring{ AiScenario::chat }, ctx,
 		[this, aliveFlag, gen](const std::wstring& delta) {
 			if (!*aliveFlag || gen != sendGen || !streamingBubble) return;
 			streaming += delta;
@@ -1371,4 +1384,58 @@ void WinAiChat::send()
 			refreshSessions();
 		});
 	msgScroller->scrollTo(msgScroller->getMaxScrollY());
+}
+
+// 「重新生成」：同一条问题再要一份答案，**上一次的结果留着**（作者点名要的：两版摆在一起
+// 才好挑），新的一份追加在它后面。
+//
+// 所以这里不动 msgs、只把"要发出去的上下文"截到那条问题为止 —— 模型看不到先前那一版，
+// 等于从头再答一次，而不是"接着自己刚才的话往下说"。截断只影响本次请求：msgs 里那一份
+// 旧答案照常留着、界面照常显示、历史照常存。
+//
+// 代价：下次正常发问时上下文里会出现两条连续的 assistant。OpenAI 兼容接口不校验
+// role 交替，照发没问题；比"把旧答案从 msgs 里删掉"划算得多（那等于没保留）
+void WinAiChat::regen(const size_t index)
+{
+	if (index >= msgs.size()) return;
+	if (msgs[index].role != AiService::Role::Assistant) return;
+	if (!AiService::ready(std::wstring{ AiScenario::chat })) {
+		tailText = Lang::get(L"ai.noKey");
+		renderMsgs();
+		return;
+	}
+	// 往前找这条回答对应的那个问题。正常结构是 问-答-问-答，所以"最近的那条 User"就是它；
+	// 生成过好几版时（问-答-答-答）也仍然成立。一条 User 都找不到说明历史里只剩回答，
+	// 那种情况没有"同一条问题"可言，直接不管
+	size_t userIdx{ 0 };
+	bool found{ false };
+	for (size_t i = index; i > 0; --i) {
+		if (msgs[i - 1].role == AiService::Role::User) { userIdx = i - 1; found = true; break; }
+	}
+	if (!found) return;
+	// 上一次的结果要在界面上留着，所以**不**在这里推新消息 —— 新答案由收尾回调推进 msgs
+	// （那条回调本来就负责 push + append，两条路共用）
+	abortTask();
+	startChat(std::vector<AiService::Msg>(msgs.begin(),
+		msgs.begin() + static_cast<std::ptrdiff_t>(userIdx) + 1));
+}
+
+// 「追问」：把这条回答作为引用放进输入框，光标停在引用之后，用户接着写自己的问题再按发送。
+// 刻意不代发 —— 用户点了这枚按钮之后要写的是"针对这段的提问"，替他发出去只会多花一次钱
+void WinAiChat::followUp(const size_t index)
+{
+	if (index >= msgs.size()) return;
+	if (msgs[index].role != AiService::Role::Assistant) return;
+	if (!input) return;
+	const std::wstring quote = Lang::get(L"ai.quoteTag") + L"\n" + msgs[index].content + L"\n\n";
+	// ⚠️ Ling 的 TextBox 没有公开的"把光标放到末尾"（moveCaret / resetCaretPos 都是私有的），
+	// 而 setText 只把 caretIndex 夹进新串长度、不会挪到末尾 —— 直接 setText 的话光标停在
+	// 引用**开头**，用户敲的字会跑到引用前面去。绕法：先用一段同长的填充把 caretIndex 顶到
+	// 不小于引用的长度，selectAll() 再把它钉在"当前长度"上，最后 setText(引用) 一夹，
+	// 正好落在引用末尾。三步都在同一个消息里跑完，中间那两帧不会被看到
+	input->setText(std::wstring(quote.size(), L' '));
+	input->selectAll();
+	input->setText(quote);
+	// 焦点一并交过去：点了「追问」就是要马上写，不该再让用户点一下输入框
+	input->focus();
 }

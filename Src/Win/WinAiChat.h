@@ -50,7 +50,16 @@ private:
 	// 往气泡容器里填内容：用户条是一段普通文字，回答条按 markdown 分块渲染。
 	// 流式输出每收到一段就重跑一次这个（整条重画，不做增量维护）
 	void fillBubble(Ling::Node* bubble, bool isUser, const std::wstring& text);
+	// 把这次问答真正发出去。ctx 是**要发给模型的上下文** —— 它不一定等于 msgs：
+	// 「重新生成」发的是"截到那条问题为止"的一段（见 regen）。send 与 regen 共用这一整段
+	// 收尾（忙碌态 / 重画 / 流式追加 / 收尾落历史），差别只在"往 msgs 里推什么"
+	void startChat(const std::vector<AiService::Msg>& ctx);
 	void send();
+	// 回答条上那两枚（见 addItem 的说明）：
+	// 重新生成：同一条问题再要一份答案。**上一次的结果留着**（作者点名要的），新的追加其后
+	void regen(size_t index);
+	// 追问：把这条回答当引用放进输入框，用户在它后面写自己的问题再按发送
+	void followUp(size_t index);
 	// 掐掉在飞的那次请求（换会话 / 删掉正在回答的那一轮之前必须先做）
 	void abortTask();
 	void loadIntoInput(size_t index);
