@@ -768,6 +768,10 @@ void WinPin::paintSelection(ID2D1DeviceContext* ctx)
 			ctx->DrawRectangle(box, borderBrush.Get(), dpi);
 		}
 	}
+	// 整批底部那条悬浮条（复制 / 删除）与右下角那枚旋转手柄。挂在整组外接框上、
+	// 与上面那圈蓝线同一个坐标系 —— 因此跟着 Ctrl+滚轮缩放 / 剪裁走。
+	// 画在框线之后：两者重叠时条压在线上，条是能点的那个
+	paintBatchUI(ctx);
 }
 
 // ---- 多选那一批的批量操作 ----
@@ -794,91 +798,138 @@ D2D1_POINT_2F WinPin::multiSelectCenter() const
 	return D2D1::Point2F((all.left + all.right) / 2.f, (all.top + all.bottom) / 2.f);
 }
 
-// 画布右上角那三枚批量按钮。位置取**窗口坐标**（画在 setTransform(Identity) 之后那一层，
-// 与剪裁采样点同一个坐标系）—— 它们属于"这扇窗"而不是底图，Ctrl+滚轮放大缩小时不该跟着跑
-D2D1_RECT_F WinPin::batchBtnRect(const int i) const
+// 多选那一批的整组外接框 = 各人外接框的并集。挂批量条与旋转手柄都按它算 ——
+// 用"并集"而不是"框选那一刻的选框"：用户接着拖走 / 删掉一两个之后，选框早就对不上了，
+// 而这一批现在真正占的那块地方永远是对的
+D2D1_RECT_F WinPin::multiSelectBounds() const
 {
-	const float size{ 26.f * dpi }, gap{ 6.f * dpi }, margin{ 8.f * dpi };
-	const float left0{ w - margin - (size * 3 + gap * 2) };
-	const float left{ left0 + i * (size + gap) };
-	return D2D1::RectF(left, margin, left + size, margin + size);
+	D2D1_RECT_F all{};
+	bool has{ false };
+	for (auto* shape : drawing->multiSelected) {
+		D2D1_RECT_F b{};
+		if (!shape->getShapeBounds(b)) continue;   // 水印铺满整张图，本来也不参与框选
+		// 让开各自 selectionGap 那一圈，与那圈蓝提示线同一个让位（见 paintSelection）——
+		// 条挂在"能看见的那一圈"外面，贴边的元素才不会把条压在描边上
+		const float inset{ shape->selectionGap() + dpi };
+		b.left -= inset; b.top -= inset; b.right += inset; b.bottom += inset;
+		if (!has) { all = b; has = true; }
+		else {
+			all.left = std::min(all.left, b.left);
+			all.top = std::min(all.top, b.top);
+			all.right = std::max(all.right, b.right);
+			all.bottom = std::max(all.bottom, b.bottom);
+		}
+	}
+	return has ? all : D2D1::RectF(0.f, 0.f, 0.f, 0.f);
 }
 
-int WinPin::batchBtnAt(const POINT pos) const
+// 多选底部那条批量迷你条。格数固定 2：左起第 0 格复制、第 1 格删除 —— 与单选那条
+// （派生类动作图标 → 复制 → 删除）同一个右端顺序，两处的"删除永远在最右"才对得上
+D2D1_RECT_F WinPin::batchBarRect() const
+{
+	auto b = multiSelectBounds();
+	if (b.right <= b.left) return D2D1::RectF(0.f, 0.f, 0.f, 0.f);
+	// draggerSize 传 6*dpi：单选那几条用的就是它（ShapeBase 构造函数里的 6*getDpi），
+	// 传别的值两处的格宽就对不齐了
+	return ShapeBase::barRectFor(b, getImgSize(), 6.f * dpi, 2);
+}
+
+D2D1_RECT_F WinPin::batchCellRect(const int i) const
+{
+	if (i < 0 || i > 1) return D2D1::RectF(0.f, 0.f, 0.f, 0.f);
+	auto bar = batchBarRect();
+	if (bar.right <= bar.left) return D2D1::RectF(0.f, 0.f, 0.f, 0.f);
+	return ShapeBase::barCellRect(bar, i, 6.f * dpi);
+}
+
+int WinPin::batchBtnAt(const POINT& imgPos) const
 {
 	if (drawing->multiSelected.empty()) return -1;
-	for (int i = 0; i < 3; ++i) {
-		auto b = batchBtnRect(i);
-		if ((float)pos.x > b.left && (float)pos.x < b.right
-			&& (float)pos.y > b.top && (float)pos.y < b.bottom) return i;
+	for (int i = 0; i < 2; ++i) {
+		auto b = batchCellRect(i);
+		if (b.right <= b.left) continue;
+		if ((float)imgPos.x > b.left && (float)imgPos.x < b.right
+			&& (float)imgPos.y > b.top && (float)imgPos.y < b.bottom) return i;
 	}
 	return -1;
 }
 
-void WinPin::paintBatchButtons(ID2D1DeviceContext* ctx)
+// 那枚旋转手柄：整组外接框右下角外侧，与单选那条挂的是同一段距离（draggerSize*3）——
+// 单选 / 多选两处"转"的图标由 ShapeBase::paintRotateIcon 出同一份几何，位置也就不该两样。
+// 贴到画布下边缘 / 右边缘就翻到框内侧，否则被裁在画布外、鼠标够不着（同 ShapeRectBase::makeRotateHint）
+D2D1_RECT_F WinPin::batchRotateRect() const
 {
-	if (drawing->multiSelected.empty() || !borderBrush || !brushSelWhite) return;
-	for (int i = 0; i < 3; ++i) {
-		auto box = batchBtnRect(i);
+	auto b = multiSelectBounds();
+	if (b.right <= b.left) return D2D1::RectF(0.f, 0.f, 0.f, 0.f);
+	auto ds{ 6.f * dpi };
+	auto rad{ ds * 0.9f };
+	auto gap{ ds * 3.f };
+	auto cx{ b.right + gap }, cy{ b.bottom + gap };
+	auto img = getImgSize();
+	if (img.width > 0 && cx + rad > (float)img.width) cx = b.right - gap;
+	if (img.height > 0 && cy + rad > (float)img.height) cy = b.bottom - gap;
+	return D2D1::RectF(cx - rad, cy - rad, cx + rad, cy + rad);
+}
+
+bool WinPin::batchRotateHit(const POINT& imgPos) const
+{
+	auto r = batchRotateRect();
+	if (r.right <= r.left) return false;
+	return (float)imgPos.x > r.left && (float)imgPos.x < r.right
+		&& (float)imgPos.y > r.top && (float)imgPos.y < r.bottom;
+}
+
+// 批量条 / 旋转手柄压在别的元素身上时让位。判据与 canHitActionBtn 同源：
+// 光标底下没东西、或者底下的东西本来就在这一批里，才认按钮。
+// 批量条挂在整组外接框下方，底下很可能压着别的标注 —— 不让位的话想点那个元素却按成了"删整批"
+bool WinPin::canHitBatchUI(const POINT& imgPos) const
+{
+	if (!drawing->shapeHover) return true;
+	return std::find(drawing->multiSelected.begin(), drawing->multiSelected.end(), drawing->shapeHover)
+		!= drawing->multiSelected.end();
+}
+
+void WinPin::paintBatchUI(ID2D1DeviceContext* ctx)
+{
+	if (drawing->multiSelected.empty()) return;
+	if (!borderBrush || !brushSelWhite || !brushBatchBorder) return;
+	const float ds{ 6.f * dpi };
+	// 条身与单选那条共用一份（含格间竖分隔线），观感才对得齐
+	ShapeBase::paintBarFrame(ctx, batchBarRect(), 2, ds, dpi,
+		brushSelWhite.Get(), brushBatchBorder.Get(), brushBatchShadow.Get());
+	for (int i = 0; i < 2; ++i) {
+		auto box = batchCellRect(i);
+		if (box.right <= box.left) continue;
 		auto c = D2D1::Point2F((box.left + box.right) / 2.f, (box.top + box.bottom) / 2.f);
 		auto rad{ (box.right - box.left) / 2.f };
-		// 停在"拖拽旋转"态时旋转那枚反白（蓝底 + 白图标），一眼看得出还开着
-		const bool active{ i == 2 && batchRotateOn };
-		auto bg = active ? borderBrush.Get() : brushSelWhite.Get();
-		auto fg = active ? brushSelWhite.Get() : borderBrush.Get();
-		ctx->FillRectangle(box, bg);
-		ctx->DrawRectangle(box, borderBrush.Get(), dpi);
-		const float strokeW{ dpi };
+		// 白描边衬底 + 原色两遍，与 ShapeBase::paintActionBtns 里那两枚图标同一套画法
+		auto haloed = [&](ID2D1Brush* fg, const float strokeW, const auto& paintOne) {
+			paintOne(brushSelWhite.Get(), strokeW + ds * 0.27f);
+			paintOne(fg, strokeW);
+		};
 		if (i == 0) {
-			// 垃圾桶：盖子一横 + 提手 + 桶身 + 一道竖棱。与「选择画布」那枚删除同一套几何
-			auto k{ rad * 0.52f };
-			ctx->DrawLine({ c.x - k, c.y - k * 0.52f }, { c.x + k, c.y - k * 0.52f }, fg, strokeW);
-			ctx->DrawLine({ c.x - k * 0.42f, c.y - k * 0.86f }, { c.x + k * 0.42f, c.y - k * 0.86f }, fg, strokeW);
-			ctx->DrawLine({ c.x - k * 0.76f, c.y - k * 0.18f }, { c.x - k * 0.56f, c.y + k * 0.86f }, fg, strokeW);
-			ctx->DrawLine({ c.x - k * 0.56f, c.y + k * 0.86f }, { c.x + k * 0.56f, c.y + k * 0.86f }, fg, strokeW);
-			ctx->DrawLine({ c.x + k * 0.56f, c.y + k * 0.86f }, { c.x + k * 0.76f, c.y - k * 0.18f }, fg, strokeW);
-			ctx->DrawLine({ c.x, c.y - k * 0.1f }, { c.x, c.y + k * 0.7f }, fg, strokeW);
-		}
-		else if (i == 1) {
-			// 复制：两枚叠着的方框，都只描边
-			auto k{ rad * 0.42f }, off{ rad * 0.3f };
-			ctx->DrawRectangle(D2D1::RectF(c.x - k - off, c.y - k - off, c.x + k - off, c.y + k - off), fg, strokeW);
-			ctx->DrawRectangle(D2D1::RectF(c.x - k + off, c.y - k + off, c.x + k + off, c.y + k + off), fg, strokeW);
+			// 复制（两枚叠着的方框，都只描边）：与单选那枚复制按钮同一份几何。
+			// 用本窗口那支选择蓝（0x1677ff）而不是条上的白 —— 白图标压在白底上等于没画
+			auto k{ rad * 0.46f }, off{ rad * 0.32f };
+			haloed(borderBrush.Get(), dpi, [&](ID2D1Brush* b, float w) {
+				ctx->DrawRectangle(D2D1::RectF(c.x - k - off, c.y - k - off, c.x + k - off, c.y + k - off), b, w);
+				ctx->DrawRectangle(D2D1::RectF(c.x - k + off, c.y - k + off, c.x + k + off, c.y + k + off), b, w);
+			});
 		}
 		else {
-			// 旋转：一段留口的圆弧 + 末端一支箭头（与单选那枚旋转手柄同一个意思）。
-			// 圆弧用折线近似 —— 2D 的 AddArc 要把超过 180 度的弧拆段，不如折线直接
-			const float r{ rad * 0.56f };
-			auto pt = [&](float deg) {
-				auto rd = deg * 3.14159265358979323846f / 180.f;
-				return D2D1::Point2F(c.x + r * cosf(rd), c.y - r * sinf(rd));
-			};
-			const float a0{ -50.f }, sweep{ 285.f };
-			ComPtr<ID2D1PathGeometry> arc;
-			Ling::D2D::get()->d2dFactory->CreatePathGeometry(arc.GetAddressOf());
-			ComPtr<ID2D1GeometrySink> sk;
-			if (arc && SUCCEEDED(arc->Open(sk.GetAddressOf()))) {
-				const int steps{ 24 };
-				sk->BeginFigure(pt(a0), D2D1_FIGURE_BEGIN_HOLLOW);
-				for (int k = 1; k <= steps; ++k) sk->AddLine(pt(a0 + sweep * k / steps));
-				sk->EndFigure(D2D1_FIGURE_END_OPEN);
-				// 末端箭头：沿该点的切向指出去，两腰落在切向的法向上。
-				// 与圆弧共用一次 BeginDraw —— D2D 不支持嵌套，必须先把弧收进同一个 sink
-				{
-					auto rd = (a0 + sweep) * 3.14159265358979323846f / 180.f;
-					auto bx = c.x + r * cosf(rd), by = c.y - r * sinf(rd);
-					auto tx{ -sinf(rd) }, ty{ -cosf(rd) };
-					auto nx{ -ty }, ny{ tx };
-					auto h{ rad * 0.34f };
-					sk->BeginFigure(D2D1::Point2F(bx + nx * h * 0.6f, by + ny * h * 0.6f), D2D1_FIGURE_BEGIN_FILLED);
-					sk->AddLine(D2D1::Point2F(bx + tx * h, by + ty * h));
-					sk->AddLine(D2D1::Point2F(bx - nx * h * 0.6f, by - ny * h * 0.6f));
-					sk->EndFigure(D2D1_FIGURE_END_CLOSED);
-				}
-				sk->Close();
-				ctx->DrawGeometry(arc.Get(), fg, strokeW);
-			}
+			// 删除（红 ×）：与单选那条末尾那枚同一个意思、同一个颜色
+			auto k{ rad * 0.42f };
+			haloed(brushBatchDelete.Get(), ds * 0.18f, [&](ID2D1Brush* b, float w) {
+				ctx->DrawLine({ c.x - k, c.y - k }, { c.x + k, c.y + k }, b, w);
+				ctx->DrawLine({ c.x + k, c.y - k }, { c.x - k, c.y + k }, b, w);
+			});
 		}
+	}
+	// 旋转手柄：整批绕整组中心转的入口。正拖着时不出别的提示 —— 图标本身就是"抓着它转"
+	auto rr = batchRotateRect();
+	if (rr.right > rr.left) {
+		ShapeBase::paintRotateIcon(ctx, D2D1::Point2F((rr.left + rr.right) / 2.f, (rr.top + rr.bottom) / 2.f),
+			ds, dpi, borderBrush.Get(), brushSelWhite.Get(), ds * 0.27f);
 	}
 }
 
@@ -919,18 +970,10 @@ void WinPin::batchCopyShapes()
 	refresh();
 }
 
-void WinPin::toggleBatchRotate()
-{
-	batchRotateOn = !batchRotateOn;
-	batchRotating = false;
-	refresh();
-}
-
 void WinPin::clearBatchState()
 {
 	batchMoving = false;
 	batchRotating = false;
-	batchRotateOn = false;
 }
 
 // ---- 「选择画布」（「选择器」的第二个子模式）----
@@ -1976,6 +2019,11 @@ void WinPin::onCreated()
     canvas->setSizePercent(100.f, 100.f);
     d2d->deviceContext->CreateSolidColorBrush(D2D1::ColorF(0x1677ff), borderBrush.GetAddressOf());
     d2d->deviceContext->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::White), brushSelWhite.GetAddressOf());
+    // 多选那条批量迷你条的三个配角，取色与 ShapeBase 构造函数里那三支完全一致（见那里的说明）——
+    // 条身走的是同一份 paintBarFrame，颜色不一样就会露馅
+    d2d->deviceContext->CreateSolidColorBrush(D2D1::ColorF(0xDCDFE4), brushBatchBorder.GetAddressOf());
+    d2d->deviceContext->CreateSolidColorBrush(D2D1::ColorF(0x000000, 0.08f), brushBatchShadow.GetAddressOf());
+    d2d->deviceContext->CreateSolidColorBrush(D2D1::ColorF(0xE24B4A), brushBatchDelete.GetAddressOf());
     // 「选择画布」选区的虚线笔型：2 实 2 虚（虚线长度按笔宽算，这里是 dpi），
     // 与 ShapeText 那圈虚线框同一套观感
     {
@@ -2058,8 +2106,8 @@ void WinPin::layout()
 	ctx->DrawRectangle(D2D1::RectF(0.f, 0.f, w, h), borderBrush.Get(), 2*dpi);
 	// 剪裁采样点压在边框上，任何时候都能拖（缩略图 / 细条 / 藏起来时除外，见 paintCropHandles）
 	paintCropHandles(ctx);
-	// 多选时画布右上角那三枚批量按钮（删除 / 复制 / 旋转）。同属窗口装饰，不进导出图
-	paintBatchButtons(ctx);
+	// 多选那条批量条（复制 / 删除）与旋转手柄已经并进 paintSelection 了 ——
+	// 它们挂在"整组外接框"上，属于标注坐标系，不该在这层按窗口坐标画
 	paintTitle(ctx);
 	paintScaleTip(ctx);
 	paintToast(ctx);
@@ -2104,32 +2152,36 @@ void WinPin::onDown(POINT pos, BOOL isRight)
 	// 而且点不到（命中测试落在底图上）。layoutTools 里那次 raiseTools 只在重叠状态**变化**时跑，
 	// 管不到"激活导致的重排"，所以每次点到图上都补一次
 	raiseTools();
-	// 多选那一批的三枚批量按钮（画在画布右上角，窗口坐标）。必须排在所有分支之前 ——
+	// 多选那一批底部的批量条（复制 / 删除）与右下角那枚旋转手柄。必须排在所有分支之前 ——
 	// 它们盖在图上，不先拦的话这一下会被当成"点空白"，反手把整批选中收掉
 	if (!isRight && !drawing->multiSelected.empty()) {
-		if (auto idx = batchBtnAt(pos); idx >= 0) {
-			batchBtnClicked = true;
-			if (idx == 0) batchDeleteShapes();
-			else if (idx == 1) batchCopyShapes();
-			else toggleBatchRotate();
-			return;
-		}
-		// 「拖拽旋转」态里，画布上按下就是"开始转"：中心在按下时按整组外接框定一次，
-		// 拖动期间不再重算。与别的拖拽同一套收尾 —— SetCapture + isMouseDown，
-		// 抬手那一下由 onUp 收（见那里的 batchRotating）
-		if (batchRotateOn) {
-			isMouseDown = true;
-			hasDragged = false;
-			SetCapture(hwnd);
-			// 存底：转的是已有那一批，这一下要可撤销（抬手时没真转过就撤掉，见 onUp）
-			drawing->history->mark();
-			shapeEditMarked = true;
-			batchRotating = true;
-			batchRotateCenter = multiSelectCenter();
-			auto ip = toImgPos(pos);
-			batchRotatePrevAngle = atan2f((float)ip.y - batchRotateCenter.y, (float)ip.x - batchRotateCenter.x)
-				* 180.f / 3.14159265358979323846f;
-			return;
+		auto ip = toImgPos(pos);
+		// 压在别的元素身上时让位（见 canHitBatchUI）：条挂在整组外接框下方，
+		// 底下很可能压着别的标注，那一格该归元素
+		if (canHitBatchUI(ip)) {
+			if (auto idx = batchBtnAt(ip); idx >= 0) {
+				batchBtnClicked = true;
+				if (idx == 0) batchCopyShapes();
+				else batchDeleteShapes();
+				return;
+			}
+			// 抓着旋转手柄拖 = 整批绕组中心转。中心在按下时按整组外接框定一次，
+			// 拖动期间不再重算。与别的拖拽同一套收尾 —— SetCapture + isMouseDown，
+			// 抬手那一下由 onUp 收（见那里的 batchRotating）。
+			// 刻意**不置 batchBtnClicked**：那一条在 onUp 里早退，batchRotating 就没人收了
+			if (batchRotateHit(ip)) {
+				isMouseDown = true;
+				hasDragged = false;
+				SetCapture(hwnd);
+				// 存底：转的是已有那一批，这一下要可撤销（抬手时没真转过就撤掉，见 onUp）
+				drawing->history->mark();
+				shapeEditMarked = true;
+				batchRotating = true;
+				batchRotateCenter = multiSelectCenter();
+				batchRotatePrevAngle = atan2f((float)ip.y - batchRotateCenter.y, (float)ip.x - batchRotateCenter.x)
+					* 180.f / 3.14159265358979323846f;
+				return;
+			}
 		}
 	}
 	// 剪裁采样点：压在图的边界上，落在它上面就是"改这张图保留原图的哪一块"，不是画画也不是
@@ -3625,13 +3677,6 @@ bool WinPin::stepBack()
 		refresh();
 		return true;
 	}
-	// 「拖拽旋转」态排在框选那一批之前：整批还选着，用户要退的是"别转了这个模式"，
-	// 而不是把选中一起放掉 —— 退完还能接着拖位置 / 改样式
-	if (batchRotateOn) {
-		clearBatchState();
-		refresh();
-		return true;
-	}
 	// 框选那一批排在最前：它比"收画笔"更近一层 —— 用户刚框出来的是那些元素，
 	// 想退掉的第一件事就是"别选它们了"，而不是把整个「选择对象」工具也放掉
 	if (drawing && !drawing->multiSelected.empty()) {
@@ -4006,18 +4051,22 @@ BOOL WinPin::setCursor()
 		SetCursor(LoadCursor(nullptr, (selDrag == 2 || inSel) ? IDC_SIZEALL : IDC_CROSS));
 		return TRUE;
 	}
-	// 多选那一批的批量 UI：压在三枚按钮上给手型，处在拖拽旋转态里给十字。
-	// 排在剪裁采样点之前 —— 按钮压在采样点内侧，两者一般不会重叠，但按钮是更靠上的那层
+	// 多选那一批的批量 UI：压在条上的两格给手型、压在旋转手柄上给十字；
+	// 正抓着转的时候全程保持十字（光标早跑出手柄了）。
+	// 排在剪裁采样点之前 —— 条与手柄都在图内侧，两者一般不会重叠，但批量 UI 是更靠上的那层
 	if (!drawing->multiSelected.empty()) {
 		POINT pos{};
 		GetCursorPos(&pos);
 		ScreenToClient(hwnd, &pos);
-		if (batchBtnAt(pos) >= 0) {
-			SetCursor(LoadCursor(nullptr, IDC_HAND));
+		auto ip = toImgPos(pos);
+		// 旋转手柄给十字 —— 与单选那枚（ShapeRectBase::setCursor 的 HitRotate）同一套提示。
+		// 手柄与那两格都要先过 canHitBatchUI：压在别的元素身上时那一下归元素，光标也就不该变成手
+		if (batchRotating || (canHitBatchUI(ip) && batchRotateHit(ip))) {
+			SetCursor(LoadCursor(nullptr, IDC_CROSS));
 			return TRUE;
 		}
-		if (batchRotateOn) {
-			SetCursor(LoadCursor(nullptr, IDC_CROSS));
+		if (canHitBatchUI(ip) && batchBtnAt(ip) >= 0) {
+			SetCursor(LoadCursor(nullptr, IDC_HAND));
 			return TRUE;
 		}
 	}

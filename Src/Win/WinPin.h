@@ -285,18 +285,34 @@ private:
 	// ---- 多选那一批的批量操作（块选的"加选 / 批量移动 / 批量改样式 / 批量增删转"）----
 	// 整组的外接框中心。批量旋转绕它转；一个都没有外接框时退回画布中心
 	D2D1_POINT_2F multiSelectCenter() const;
-	// 多选时画在画布右上角那三枚按钮的方框（**窗口坐标**，不跟底图缩放走）。
-	// i：0 删除、1 复制、2 旋转
-	D2D1_RECT_F batchBtnRect(const int i) const;
-	// 命中的是第几枚批量按钮，没命中返回 -1（pos 是窗口客户区坐标）
-	int batchBtnAt(const POINT pos) const;
-	void paintBatchButtons(ID2D1DeviceContext* ctx);
-	// 三枚按钮的动作：整批撤销（可 Ctrl+Y 找回）/ 整批复制一份（偏移错开）/ 进入拖拽旋转态
+	// 多选那一批的**整组外接框**（底图坐标）= 各人 getShapeBounds 的并集，再让出
+	// 各自 selectionGap 那一圈（与那圈蓝提示线同一份让位）。底部那条批量迷你条与
+	// 右下角那枚旋转手柄都挂在它上面 —— 两者必须是同一份几何，否则条与手柄各飘各的。
+	// 一个都没选 / 选中的全没有外接框（水印）时返回空框（right <= left）
+	D2D1_RECT_F multiSelectBounds() const;
+	// 多选底部那条批量迷你条的方框（**底图坐标**）。与单选那条共用 ShapeBase::barRectFor，
+	// 所以格宽、格间距、两端内边距、圆角逐像素一致 —— 两处各写一份迟早走样
+	D2D1_RECT_F batchBarRect() const;
+	// 条里第 i 格（0 复制 / 1 删除）的图标方框（底图坐标）
+	D2D1_RECT_F batchCellRect(const int i) const;
+	// 命中的是第几格，没命中返回 -1（imgPos 是底图坐标）
+	int batchBtnAt(const POINT& imgPos) const;
+	// 那一批右下角外侧那枚旋转手柄的方框（底图坐标）。拖动它就是整批绕整组中心转，
+	// 与单选那枚手柄同一套手感（原来那个"先点旋转按钮进入旋转态、再到图上拖"的模式已撤掉：
+	// 一个看得见、直接拖得动的手柄比一个模态开关好认）
+	D2D1_RECT_F batchRotateRect() const;
+	bool batchRotateHit(const POINT& imgPos) const;
+	// 这一下够不够得着批量条 / 旋转手柄。判据与 canHitActionBtn 同源：压在**别的**元素身上时
+	// 那一格归元素，不归按钮 —— 批量条挂在整组外接框下方，底下很可能压着别的标注
+	bool canHitBatchUI(const POINT& imgPos) const;
+	// 画批量条（条身 + 复制 / 删除两格）与那枚旋转手柄。调用方仍在标注坐标系的变换里，
+	// 所以它们跟着 Ctrl+滚轮缩放 / 剪裁走 —— 与单选那条迷你条同一层
+	void paintBatchUI(ID2D1DeviceContext* ctx);
+	// 两条按钮的动作：整批复制一份（偏移错开）/ 整批撤销（可 Ctrl+Y 找回）
 	void batchDeleteShapes();
 	void batchCopyShapes();
-	void toggleBatchRotate();
-	// 把多选的拖动 / 旋转态收掉。退出选择态（换工具、ESC、右键收工具条）时调，
-	// 与 multiSelected 一起清 —— 留着的话下一次进选择模式还停在上次的旋转态里
+	// 把多选那一批的拖动 / 旋转态收掉。退出选择态（换工具、ESC、右键收工具条）时调，
+	// 与 multiSelected 一起清 —— 留着的话下一批一进选择模式就停在上次的拖动态里
 	void clearBatchState();
 	// 标号工具的 hover 预览。鼠标还停在图上时，先在光标处画一个"将要落下的编号"，
 	// 落笔之前就看得见号是多少（参考 pixpin）。预览实例不进 history、也不占号
@@ -469,16 +485,16 @@ private:
 	// ---- 多选那一批的批量移动 / 批量旋转（见 onDown / onMove / onUp）----
 	// 正拖着多选那一批：按在其中一个已选元素上（没按 Ctrl），整批跟着挪
 	bool batchMoving{ false };
-	// 这一下按的是画布右上角那三枚批量按钮（见 onDown）。它不 SetCapture、也不拖任何东西，
+	// 这一下按的是多选那条批量迷你条上的两格（见 onDown）。它不 SetCapture、也不拖任何东西，
 	// 抬手那一下得靠这个标志截住 —— 否则 onUp 会照常走"选中光标底下那个元素"那条路，
-	// 刚点完「删除」就会反手选中一个（甚至把整批删掉之后又建立起一个单选）
+	// 刚点完「删除」就会反手选中一个（甚至把整批删掉之后又建立起一个单选）。
+	// 旋转手柄那条路**不走这个标志**：它要 SetCapture、要拖，抬手归 batchRotating 收
 	bool batchBtnClicked{ false };
 	// 上一次拖动的落点（底图像素）。逐次求差就是这一帧要挪的量 ——
 	// 记绝对落点而不是"按下时的落点"，光标离窗口或坐标被夹回来时也不会累积误差
 	POINT batchMoveLast{ 0, 0 };
-	// 「旋转」按钮进入的拖拽旋转态。为真时在画布上按下并拖动 = 整批绕组中心转
-	bool batchRotateOn{ false };
-	// 旋转态里正按着。与 batchRotateOn 分开：模式可以一直开着，一次拖完还能接着拖
+	// 正抓着右下角那枚旋转手柄拖。按下时判中手柄置位，抬手收掉 ——
+	// 一次拖完还能再抓一次，没有"模式"可言（原来的 batchRotateOn 已撤掉）
 	bool batchRotating{ false };
 	// 旋转中心（底图像素）与上一次的鼠标方向角（度）。中心在每次按下时重算一次、
 	// 拖动期间固定 —— 跟着走的话转起来会自己漂。逐帧比"新方向角 - 上次方向角"就是这一帧要转的量
@@ -553,6 +569,10 @@ private:
 	// 「选择画布」选区那圈虚线用的笔型（作者要的是 fasCapture 那种虚线框，而不是实线）。
 	// 与 ShapeText 的那条一样是自定义虚线，建一次够用一辈子
 	Microsoft::WRL::ComPtr<ID2D1StrokeStyle> selDashStyle;
+	// 多选那条批量迷你条的配角：淡灰边框 + 极淡投影，取色与 ShapeBase 那两个一致
+	//（0xDCDFE4 / 黑 8%），删除那格的红直接复用 ShapeBase 那一套观感写在这里。
+	// 条身与单选那条共用 ShapeBase::paintBarFrame，所以这几支笔的色值必须跟它对齐
+	Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brushBatchBorder, brushBatchShadow, brushBatchDelete;
 	// 右上角的倍数提示。非空即显示，缩放停手一会儿由定时器清掉
 	Microsoft::WRL::ComPtr<IDWriteTextLayout> scaleTip;
 	Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brushTipBg, brushTipText;
