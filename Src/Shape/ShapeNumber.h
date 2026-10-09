@@ -44,6 +44,9 @@ public:
 	static std::wstring serializeVal(const int val, const NumStyle style);
 	// 复制（见 ShapeBase::clone）。复制出来的是同一个编号 —— 作者要的是"一模一样的一份"
 	bool copyable() const override { return true; }
+	// 迷你条上只要复制那一格，不要删除：标号自己身上就有一枚删除按钮（右上角那枚 ×，
+	// 见 OpBtn::Remove / makeOpBtns），条上再摆一个"删掉它"是同一条命给两个入口
+	bool barHasDelete() const override { return false; }
 	std::unique_ptr<ShapeBase> clone(const float dx, const float dy, Canvas* target = nullptr) const override;
 	std::unique_ptr<ShapeBase> snapshot() const override;
 protected:

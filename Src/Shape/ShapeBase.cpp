@@ -27,20 +27,29 @@ bool ShapeBase::isInRect(const D2D1_RECT_F rect, const float x, const float y) c
 	return (x > rect.left && x<rect.right && y>rect.top && y < rect.bottom);
 }
 
+// 迷你条的两套间距。rad 是每格图标的半径、pad 是条两端的内边距，
+// cellGap 是**格与格之间**的净空 —— 它刻意比 pad 大：两枚图标本身各有半宽，
+// 原来两格中心只隔 (rad*2 + pad)，看着就是"挤在一起两个方块"（作者：太挤了，拉开一点）
+static float barRad(const float draggerSize) { return draggerSize * 0.9f; }
+static float barPad(const float draggerSize) { return draggerSize * 0.42f; }
+static float barCellGap(const float draggerSize) { return draggerSize * 1.05f; }
+
 // 复制与 × 并成的一条迷你条：挂在选中框下方居中（放不下就翻到框顶上），横向夹在图内。
 // 原来这两枚分居左上 / 右上两个角，与八向手柄挤在同一圈窄带里，重叠时点错一枚就是误删
 //（见 WinPin::canHitActionBtn）。摆到下方居中之后离四个角的手柄都远，而且整条是一块
 // 连续的热区 —— 比两个散在角上的点好认，也好躲开
-D2D1_RECT_F ShapeBase::actionBarRect() const
+//
+// 几何抽成静态的 barRectFor / barCellRect：多选那一批的批量条（WinPin::batchBarRect）
+// 走的是同一份 —— 两处的格宽、间距、内边距必须一致，否则"单选一条、多选一条"看着像两家人
+D2D1_RECT_F ShapeBase::barRectFor(const D2D1_RECT_F& b, const D2D1_SIZE_U& img,
+	const float draggerSize, const int cells)
 {
-	D2D1_RECT_F b{};
-	if (!getShapeBounds(b)) return D2D1::RectF(0.f, 0.f, 0.f, 0.f);
-	auto rad{ draggerSize * 0.9f };
-	auto pad{ draggerSize * 0.42f };
-	auto count{ copyable() ? 2 : 1 };
-	auto barW{ count * rad * 2.f + (count + 1) * pad };
+	if (cells <= 0) return D2D1::RectF(0.f, 0.f, 0.f, 0.f);
+	auto rad{ barRad(draggerSize) };
+	auto pad{ barPad(draggerSize) };
+	auto gap{ barCellGap(draggerSize) };
+	auto barW{ cells * rad * 2.f + pad * 2.f + (cells - 1) * gap };
 	auto barH{ rad * 2.f + pad };
-	auto img = win->getImgSize();
 	auto cx{ (b.left + b.right) / 2.f };
 	if (img.width > 0) {
 		// 夹进图里：元素贴着图边时整条都得看得见、点得到。
@@ -58,20 +67,55 @@ D2D1_RECT_F ShapeBase::actionBarRect() const
 	return D2D1::RectF(cx - barW / 2.f, cy - barH / 2.f, cx + barW / 2.f, cy + barH / 2.f);
 }
 
+D2D1_RECT_F ShapeBase::barCellRect(const D2D1_RECT_F& bar, const int i, const float draggerSize)
+{
+	auto rad{ barRad(draggerSize) };
+	auto pad{ barPad(draggerSize) };
+	auto bx{ bar.left + pad + rad + i * (rad * 2.f + barCellGap(draggerSize)) };
+	auto cy{ (bar.top + bar.bottom) / 2.f };
+	return D2D1::RectF(bx - rad, cy - rad, bx + rad, cy + rad);
+}
+
+void ShapeBase::paintBarFrame(ID2D1DeviceContext* ctx, const D2D1_RECT_F& bar, const int cells,
+	const float draggerSize, const float dpi,
+	ID2D1Brush* fill, ID2D1Brush* border, ID2D1Brush* shadow)
+{
+	if (!ctx || !fill || !border) return;
+	if (bar.right <= bar.left) return;
+	// 白底 + 淡灰边 + 一层往下偏 1px 的极淡投影。之前只描了一圈浅蓝边，
+	// 压在浅色画面上边界糊成一团，看着就像两个图标飘在白块上 —— 加投影之后
+	// 整条才"浮"得起来，圆角取固定 6 逻辑像素（与取色面板一致），不随条高缩放
+	auto r{ 6.f * dpi };
+	if (shadow) {
+		auto sh = D2D1::RectF(bar.left, bar.top + dpi, bar.right, bar.bottom + dpi);
+		ctx->FillRoundedRectangle(D2D1::RoundedRect(sh, r, r), shadow);
+	}
+	ctx->FillRoundedRectangle(D2D1::RoundedRect(bar, r, r), fill);
+	ctx->DrawRoundedRectangle(D2D1::RoundedRect(bar, r, r), border, dpi);
+	// 格与格之间一条竖分隔线。位置取相邻两格图标框之间的正中间 ——
+	// 别拿 bar 的中点算：两格的净空与两端的内边距并不相等，拿中点那根线就偏出去了
+	for (int i = 1; i < cells; i++) {
+		auto a = barCellRect(bar, i - 1, draggerSize);
+		auto b = barCellRect(bar, i, draggerSize);
+		auto mx{ (a.right + b.left) / 2.f };
+		ctx->DrawLine(D2D1::Point2F(mx, bar.top + dpi * 3.f),
+			D2D1::Point2F(mx, bar.bottom - dpi * 3.f), border, dpi);
+	}
+}
+
+D2D1_RECT_F ShapeBase::actionBarRect() const
+{
+	D2D1_RECT_F b{};
+	if (!getShapeBounds(b)) return D2D1::RectF(0.f, 0.f, 0.f, 0.f);
+	return barRectFor(b, win->getImgSize(), draggerSize, actionBtnTotal());
+}
+
 D2D1_RECT_F ShapeBase::actionBtnRect(const int i) const
 {
 	if (i < 0 || i >= actionBtnTotal()) return D2D1::RectF(0.f, 0.f, 0.f, 0.f);
 	auto bar = actionBarRect();
 	if (bar.right <= bar.left) return D2D1::RectF(0.f, 0.f, 0.f, 0.f);
-	const bool hasCopy{ copyable() };
-	const int last{ actionBtnTotal() - 1 };
-	auto rad{ draggerSize * 0.9f };
-	auto pad{ draggerSize * 0.42f };
-	// 条内第几格：× 恒在最右，复制在它左边（只有一枚时就它自己）
-	int slot{ i == last ? (hasCopy ? 1 : 0) : 0 };
-	auto bx{ bar.left + pad + rad + slot * (rad * 2.f + pad) };
-	auto cy{ (bar.top + bar.bottom) / 2.f };
-	return D2D1::RectF(bx - rad, cy - rad, bx + rad, cy + rad);
+	return barCellRect(bar, i, draggerSize);
 }
 
 int ShapeBase::hitActionBtn(const float x, const float y) const
@@ -84,26 +128,12 @@ int ShapeBase::hitActionBtn(const float x, const float y) const
 
 void ShapeBase::paintActionBtns(ID2D1DeviceContext* ctx)
 {
-	const int last{ actionBtnTotal() - 1 };
+	const bool hasDel{ barHasDelete() };
 	const bool hasCopy{ copyable() };
-	// 条身：白底 + 淡灰边 + 一层往下偏 1px 的极淡投影。之前只描了一圈浅蓝边，
-	// 压在浅色画面上边界糊成一团，看着就像两个图标飘在白块上 —— 加投影之后
-	// 整条才"浮"得起来，圆角取固定 6 逻辑像素（与取色面板一致），不随条高缩放
-	auto bar = actionBarRect();
-	if (bar.right > bar.left) {
-		auto r{ 6.f * win->getDpi() };
-		auto dpi{ win->getDpi() };
-		auto shadow = D2D1::RectF(bar.left, bar.top + dpi, bar.right, bar.bottom + dpi);
-		ctx->FillRoundedRectangle(D2D1::RoundedRect(shadow, r, r), brushBarShadow.Get());
-		ctx->FillRoundedRectangle(D2D1::RoundedRect(bar, r, r), brushDraggerFill.Get());
-		ctx->DrawRoundedRectangle(D2D1::RoundedRect(bar, r, r), brushBarBorder.Get(), dpi);
-		// 两格之间一条竖分隔线（只有复制 + 删除两格时才有）
-		if (hasCopy) {
-			auto mx{ (bar.left + bar.right) / 2.f };
-			ctx->DrawLine(D2D1::Point2F(mx, bar.top + dpi * 3.f),
-				D2D1::Point2F(mx, bar.bottom - dpi * 3.f), brushBarBorder.Get(), dpi);
-		}
-	}
+	const int last{ actionBtnTotal() - 1 };
+	// 条身交给共用的那一份（多选那一批的批量条走的是同一个函数，观感才对得齐）
+	paintBarFrame(ctx, actionBarRect(), actionBtnTotal(), draggerSize, win->getDpi(),
+		brushDraggerFill.Get(), brushBarBorder.Get(), brushBarShadow.Get());
 	for (int i = 0; i < actionBtnTotal(); i++) {
 		auto box = actionBtnRect(i);
 		if (box.right <= box.left) continue;
@@ -111,7 +141,7 @@ void ShapeBase::paintActionBtns(ID2D1DeviceContext* ctx)
 		auto rad{ (box.right - box.left) / 2.f };
 		// 不再垫白色圆底、也不再描那个圆框（作者：只保留圆圈内部的小图标）。
 		// 图标统一走"白描边 + 原色"两遍（paintIconHaloed），压在任意底图上都读得出来
-		if (i == last) {
+		if (hasDel && i == last) {
 			// × 是删除，红色 —— 危险操作得在颜色上就跟复制那枚分开
 			auto k{ rad * 0.42f };
 			auto stroke{ draggerSize * 0.18f };
@@ -144,7 +174,7 @@ void ShapeBase::paintActionBtns(ID2D1DeviceContext* ctx)
 void ShapeBase::onActionBtn(const int i)
 {
 	if (i < 0 || i >= actionBtnTotal()) return;
-	if (i == actionBtnTotal() - 1) {
+	if (barHasDelete() && i == actionBtnTotal() - 1) {
 		// 走 History 的统一删除口子：它会先把可能开着的编辑器收尾，再删、再刷新
 		win->history->removeActiveShape();
 		return;

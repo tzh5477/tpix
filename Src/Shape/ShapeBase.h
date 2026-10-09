@@ -91,17 +91,32 @@ public:
 	// 批量旋转：绕世界坐标 center 刚体转 deg 度（顺时针为正）。有"角度"这个概念的元素覆写
 	//（矩形族 / 文本）；线条、箭头、序号没有这一项，留空 —— 批量旋转直接跳过它们
 	virtual void rotateBy(const float deg, const D2D1_POINT_2F& center) {}
-	// 整排图标的枚数（含末尾那枚 × 与左上角那枚复制）
-	int actionBtnTotal() const { return actionCount() + (copyable() ? 2 : 1); }
-	// 第 i 枚图标的方框（底图坐标）。末尾那枚是右上角的 ×，actionCount() 那枚是左上角的
-	// 复制（不可复制时它正好等于末尾那枚，两条分支都先认 ×），其余派生类的动作图标在左下角。
-	// 没有外接矩形、或 i 越界时返回空框
+	// 迷你条上还要不要那枚「删除」。默认要。只有"自己身上本来就有一枚删除按钮"的元素
+	// 才覆写成 false —— 标号的右上角那枚小 × 就是删自己（见 ShapeNumber::makeOpBtns），
+	// 同一条条上再摆一个"删掉它"纯属重复，作者要求只留复制
+	virtual bool barHasDelete() const { return true; }
+	// 整排图标的枚数 = 派生类动作图标 + 复制（可复制时）+ 删除（barHasDelete 时）
+	int actionBtnTotal() const { return actionCount() + (copyable() ? 1 : 0) + (barHasDelete() ? 1 : 0); }
+	// 第 i 枚图标的方框（底图坐标）。下标顺序 = 派生类动作图标 → 复制 → 删除，
+	// 正好就是条里从左到右的格序（见 actionBtnTotal）。没有外接矩形、或 i 越界时返回空框
 	D2D1_RECT_F actionBtnRect(const int i) const;
 	// 命中的是第几枚图标，没命中返回 -1
 	int hitActionBtn(const float x, const float y) const;
 	// 装这几枚图标的那条迷你条的方框（底图坐标）。挂在选中框下方居中，翻到顶上时也由它定，
 	// actionBtnRect 按它往里分格 —— 两处必须是同一份几何，条与图标才对得齐
 	D2D1_RECT_F actionBarRect() const;
+	// 条身几何：挂在 b 下方居中（放不下翻到框顶、横向夹进图内），cells 是格数。
+	// 单选的迷你条与多选的批量条**共用这一份** —— 两处的间距与观感必须逐像素一致，
+	// 各写一份迟早走样。img 传 getImgSize()、draggerSize 传 6*dpi
+	static D2D1_RECT_F barRectFor(const D2D1_RECT_F& b, const D2D1_SIZE_U& img,
+		const float draggerSize, const int cells);
+	// 条里第 i 格（左起）的图标方框。与 barRectFor 用同一套 pad/gap，两处才对得齐
+	static D2D1_RECT_F barCellRect(const D2D1_RECT_F& bar, const int i, const float draggerSize);
+	// 条身本身：白底 + 淡灰边 + 往下偏一点的投影 + 格与格之间的竖分隔线。
+	// 调用方只负责往 barCellRect 给的格子里画图标；shadow 传 nullptr 就不画投影
+	static void paintBarFrame(ID2D1DeviceContext* ctx, const D2D1_RECT_F& bar, const int cells,
+		const float draggerSize, const float dpi,
+		ID2D1Brush* fill, ID2D1Brush* border, ID2D1Brush* shadow);
 	// 画整排图标：只有图标本身，不再垫白色圆底
 	void paintActionBtns(ID2D1DeviceContext* ctx);
 	// 动作图标的统一画法：先把同一份几何用白笔加粗描一遍当衬底，再用原色笔画上去。
