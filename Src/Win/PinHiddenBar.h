@@ -28,9 +28,13 @@ private:
 	PinHiddenBar(WinPin::BarEdge edge);
 	void onCreated() override;
 	void onMinMaxInfo(MINMAXINFO* mmi) override;
-	// 鼠标在条上移动：认出手指底下是第几条，把那张露出来。
+	// 鼠标在条上移动：认出手指底下是第几条，先弹它的缩略预览，停满 peekDelayMs 再把整张露出来。
 	// Ling 把"离开窗口"也报进这条事件（坐标给的是 INT_MAX，见 WinBase::mouseLeave）
 	void onMove(POINT pos);
+	// 第 index 格的悬停小预览 —— hover 的第一级回应，第二级是整窗 peek，中间隔 peekDelayMs。
+	// 真正负责画的是 PinHoverPreview 那扇窗（整进程一枚，两条边共用）
+	void showPreview(int index, WinPin* pin);
+	void hidePreview();
 	// 鼠标按下：左键 = 把手指底下那一条放回桌面；右键 = 弹上下文菜单（放回 / 复制 / 另存为 /
 	// 整组放回 / 关闭）。名字不用 onMouseDown 是为了与 WinBase 上的事件成员区分开
 	void handleDown(POINT pos, bool isRight);
@@ -66,6 +70,10 @@ private:
 	// 复核间隔：露出来之后每隔这么久看一眼鼠标还在不在；离开判定见 onTimerCB（连续离开满 800ms 才收）
 	static constexpr UINT tickMs{ 250 };
 	static constexpr UINT tickId{ 100 };
+	// hover 一格到"整窗 peek"之间的延迟。先把小预览弹给人看（这是安静的一步），
+	// 停满这么久才升级成整窗 —— 于是顺着条扫过去只带走几张小图的闪，不再是一串整屏闪
+	static constexpr UINT peekDelayMs{ 220 };
+	static constexpr UINT dwellId{ 101 };
 	// 离开宽限：第一次发现鼠标离开后，连续这么久仍不在场才收回去（spec 第 4 节）
 	static constexpr UINT peekGraceMs{ 800 };
 	// 「用户把这张图从条上拖出来了」的判定阈值（物理像素）：回显的摆位是 reveal 时记下的
@@ -83,6 +91,9 @@ private:
 	// 本次 peek 的摆位（物理像素）。收回时拿它跟当前位置比，判定"用户拖过没有"。
 	// 必须在 reveal 时存下来：conceal 时条序号可能已因增删重建而对不上
 	int peekX{ 0 }, peekY{ 0 };
+	// 手指底下的那一格（hover 到哪一格了）。-1 = 不在任何一格上。
+	// 同一格内移动不重复起定时器 —— 换格才从头计一遍 dwell
+	int hoverIdx{ -1 };
 	// 条落在哪。建窗口时就要用，所以缓存下来（见构造函数里那两条边的落点）
 	int barX{ 0 }, barY{ 0 };
 	WinPin::BarEdge edge;

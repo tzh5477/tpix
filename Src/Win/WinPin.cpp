@@ -407,6 +407,27 @@ D2D1_SIZE_U WinPin::getImgSize() const
 	return drawing->screenImg->GetPixelSize();
 }
 
+ID2D1Bitmap1* WinPin::getScreenImg() const
+{
+	return drawing ? drawing->screenImg.Get() : nullptr;
+}
+
+void WinPin::armDefaultTool()
+{
+	if (isClosed || !toolMain) return;
+	// 缩略图 / 贴边细条这两种收法本来就没给工具条留位置，先还原再谈显示
+	if (isThumb) setThumbMode(false);
+	if (isMinimized) setMinimized(false);
+	toolMain->show();
+	setSideBarVisible(true);
+	// 由它带着跑 layoutTools，位置一并摆好。预选矩形这一手照抄空格那条路 ——
+	// 从书签条把一张图点回来，本意就是接着动它，来回落在同一个起点上。
+	// 已经在用别的画笔时也会换成矩形：这是"请回来"的固定终点，不是"恢复上次状态"
+	toolMain->selectTool(L"geom");
+	// selectTool 重建过 ToolSub，工具条可能被重新排在整套窗口里 ≠ 一定在最前，补一次
+	raiseTools();
+}
+
 void WinPin::applyWinSize()
 {
 	auto sz = getImgSize();

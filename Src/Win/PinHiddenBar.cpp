@@ -5,6 +5,7 @@
 #include "../Tool/ToolSub.h"
 #include "../Lang.h"
 #include "PinHiddenBar.h"
+#include "PinHoverPreview.h"
 
 namespace {
 	// 左、上各一扇窗。两边各算各的：贴图归哪条边是拖到哪儿松手决定的，
@@ -19,6 +20,15 @@ namespace {
 		0xE53935ff, 0xFF8F00ff, 0xFDD835ff, 0x43A047ff,
 		0x00ACC1ff, 0x1E88E5ff, 0x8E24AAff, 0xD81B60ff,
 	};
+
+	// hover 预览浮层整进程只有一枚，两条边共用 —— 鼠标只有一只，不存在"两边同时 hover"；
+	// 少一扇窗也少一个可能被人忘掉的句柄
+	std::unique_ptr<PinHoverPreview> hoverPreview;
+	PinHoverPreview* ensurePreview()
+	{
+		if (!hoverPreview) hoverPreview = std::make_unique<PinHoverPreview>();
+		return hoverPreview.get();
+	}
 }
 
 PinHiddenBar::PinHiddenBar(WinPin::BarEdge edge) : Ling::WinBase(), edge(edge)
@@ -88,6 +98,7 @@ void PinHiddenBar::dispose()
 		if (b) b->close();
 		b.reset();
 	}
+	hoverPreview.reset();
 }
 
 void PinHiddenBar::rebuild()
@@ -100,6 +111,10 @@ void PinHiddenBar::rebuild()
 		peek = nullptr;
 		killTimer(tickId);
 	}
+	// 条数要重排了，悬记着的那一格不再可靠：待 peek 与浮层预览一并收掉，下次 hover 从头来
+	hoverIdx = -1;
+	killTimer(dwellId);
+	hidePreview();
 	body->removeAllChildren();
 	bars.clear();
 	if (pins.empty()) {
@@ -156,11 +171,46 @@ int PinHiddenBar::barIndexAt(POINT pos) const
 
 void PinHiddenBar::onMove(POINT pos)
 {
-	// Ling 把"离开窗口"也报进这条事件，坐标给的是 INT_MAX。这会儿什么都不做：
-	// 收不收回去看的是"鼠标还在不在那张图 / 两条工具条上"，由复核定时器判，见 onTimerCB
-	if (pos.x == INT_MAX) return;
+	// Ling 把"离开窗口"也报进这条事件，坐标给的是 INT_MAX。这会儿把预览收掉、待 peek 那一格
+	// 忘掉 —— 已经露出来的整窗不管：收不收回去看的是"鼠标还在不在那张图 / 两条工具条上"，
+	// 由那条 250ms 的复核定时器判（见 onTimerCB）
+	if (pos.x == INT_MAX) {
+		hoverIdx = -1;
+		killTimer(dwellId);
+		hidePreview();
+		return;
+	}
 	auto idx = barIndexAt(pos);
-	if (idx >= 0) reveal(idx);
+	if (idx < 0) return;
+	// 还停在同一格就什么都不做：整窗 peek 由 dwell 定时器负责，图已经露着时也由它自己那条路维持
+	if (idx == hoverIdx) return;
+	hoverIdx = idx;
+	killTimer(dwellId);
+	auto pins = WinPin::getHiddenPins(edge);
+	if (idx >= (int)pins.size()) return;
+	// 已经有整窗露着了 —— 顺着条换格就该立刻换图，不必再走一遍延迟：
+	// 否则这一会儿屏幕上是一张旧的大图 + 一张新的小预览，比不预览还吵
+	if (peek) {
+		hidePreview();
+		reveal(idx);
+		return;
+	}
+	// hover 一格：先弹这格的缩略预览（安静），停满 peekDelayMs 之后定时器才把它升级成整窗 peek。
+	// 落点复用 calcPeekPos —— 预览与回显摆的是同一个位置，升级时图不会跳
+	showPreview(idx, pins[(size_t)idx]);
+	setTimer(peekDelayMs, dwellId);
+}
+
+// hover 一格时先给出的那个安静的小预览。见 PinHoverPreview 上的说明
+void PinHiddenBar::showPreview(int index, WinPin* pin)
+{
+	ensurePreview()->showPreview(pin, calcPeekPos(index), dpi);
+}
+
+void PinHiddenBar::hidePreview()
+{
+	// 没建过就别建 —— ensurePreview 会凭空造出一扇窗，而这里只是要"如果没有就啥也不做"
+	if (hoverPreview) hoverPreview->hidePreview();
 }
 
 // 左键点某一条 = 把那一张放回桌面（落回藏之前的位置）；右键 = 上下文菜单。
@@ -174,12 +224,21 @@ void PinHiddenBar::handleDown(POINT pos, bool isRight)
 	if (idx >= (int)pins.size()) return;
 	auto target = pins[(size_t)idx];
 	if (!isRight) {
+		// 预览 / 待 peek 都先收掉：图马上要回到桌面上了，角上不该留着一张悬空的小图
+		killTimer(dwellId);
+		hidePreview();
+		hoverIdx = -1;
 		// 它正被 hover 露着的话，先让 conceal 把它挪回原位再放回 —— 于是"点一下就回到原来的地方"；
 		// 没露着就直接放回（它这会儿的 x/y 本来就是藏之前那一份）
 		if (peek == target) conceal();
 		target->setHidden(false);
+		// 点回来 = 要接着动这张图：工具条一并请回来，并默认选中矩形工具
+		target->armDefaultTool();
 		return;
 	}
+	killTimer(dwellId);
+	hidePreview();
+	hoverIdx = -1;
 	enum : UINT { R_RESTORE = 1, R_COPY, R_SAVE, R_GROUP_SHOW, R_CLOSE };
 	auto menu = CreatePopupMenu();
 	AppendMenu(menu, MF_STRING, R_RESTORE, Lang::get(L"tool.barMenuRestore").data());
@@ -197,6 +256,7 @@ void PinHiddenBar::handleDown(POINT pos, bool isRight)
 	case R_RESTORE:
 		if (peek == target) conceal();
 		target->setHidden(false);
+		target->armDefaultTool();
 		break;
 	case R_COPY: target->copyImageToClipboard(); break;
 	case R_SAVE: target->saveToFile(); break;      // 成功即关窗
@@ -266,6 +326,11 @@ void PinHiddenBar::reveal(int index)
 
 void PinHiddenBar::conceal()
 {
+	// 收回 = 这一轮 hover 结束：待 peek 清零，浮层预览一并收掉。
+	// 不清的话，紧接着回到同一格会被"还停在同一格"那条早退挡掉，图再也 peeek 不出来
+	killTimer(dwellId);
+	hoverIdx = -1;
+	hidePreview();
 	killTimer(tickId);
 	if (peek) {
 		// 先藏后挪：可见态挪窗口会让原位在两步之间闪一帧（DWM 合成间隙），
@@ -294,6 +359,14 @@ bool PinHiddenBar::isOverPeek() const
 
 void PinHiddenBar::onTimerCB(UINT id)
 {
+	if (id == dwellId) {
+		// 停满 peekDelayMs 了 —— 把预览升级成原来那套整窗 peek。
+		// reveal 内部会 conceal 掉上一次露出的那张（这里多半是"没有"），并自己起 tickId 那条复核
+		killTimer(dwellId);
+		hidePreview();
+		if (hoverIdx >= 0) reveal(hoverIdx);
+		return;
+	}
 	if (id != tickId) return;
 	if (!peek) {
 		killTimer(tickId);
