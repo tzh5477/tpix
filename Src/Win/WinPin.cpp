@@ -226,6 +226,9 @@ void WinPin::onClosed()
 	// 防止 close() 被走两遍（比如按钮和快捷键先后触发）时排两次销毁
 	if (isClosed) return;
 	isClosed = true;
+	// 它可能正躺在"待编组"那一批里 —— 那张表存的是裸指针，先摘出去，
+	// 否则编组或画高亮时会解引用一个已经析构的对象
+	std::erase(groupPicked, this);
 	// 后台识别线程可能还在跑（贴图刚建起来就被关掉是常事），先让它认的结果作废：
 	// 它拿到的是裸 this，回填时不能再碰这个对象
 	if (ocrAlive) *ocrAlive = false;
@@ -477,6 +480,112 @@ void WinPin::toggleGroupAll()
 	}
 	auto id = nextGroupId++;
 	for (auto& pin : winPins) pin->groupId = id;
+}
+
+// 「Ctrl+单击」挑出来、准备编成一组的那一批。跨窗口共享，所以是静态的
+std::vector<WinPin*> WinPin::groupPicked;
+
+void WinPin::clearGroupPicks()
+{
+	if (groupPicked.empty()) return;
+	auto old = groupPicked;
+	groupPicked.clear();
+	for (auto* p : old) { if (p && !p->isClosed) p->refresh(); }
+}
+
+bool WinPin::isGroupPicked() const
+{
+	return std::find(groupPicked.begin(), groupPicked.end(), this) != groupPicked.end();
+}
+
+void WinPin::groupPickedPins()
+{
+	// 只认还在 winPins 里、且确实被挑中的那些（关掉的窗口在 onClosed 里已经摘过，这里再对一次账）
+	std::vector<WinPin*> picked;
+	for (auto& pin : winPins) {
+		if (std::find(groupPicked.begin(), groupPicked.end(), pin.get()) != groupPicked.end()) {
+			picked.push_back(pin.get());
+		}
+	}
+	groupPicked.clear();
+	if (picked.size() < 2) {
+		for (auto* p : picked) p->refresh();
+		return;
+	}
+	auto id = nextGroupId++;
+	for (auto* p : picked) p->groupId = id;
+	for (auto* p : picked) p->refresh();
+}
+
+// 把本图所在整组（groupId 相同的全部成员）收进书签条 / 放回。
+// 单张仍是单张书签格，不把一组并成一格 —— 一格代表一组，点下去该放谁就成了歧义
+void WinPin::setGroupHidden(bool on)
+{
+	if (groupId == 0) return;
+	for (auto& pin : winPins) {
+		if (pin->groupId == groupId) pin->setHidden(on, pin->getBarEdge());
+	}
+}
+
+void WinPin::showPinMenu()
+{
+	// 命令 id 只要在本菜单内唯一即可；popupMenu 用 TrackPopupMenuEx 的 RETURNCMD 直接返回它
+	enum : UINT {
+		M_COPY = 1, M_COPY_CLOSE, M_SAVE, M_HIDE, M_THUMB, M_MIN, M_TOOLS,
+		M_GROUP, M_UNGROUP, M_LEAVE_GROUP, M_GROUP_HIDE, M_CLOSE,
+	};
+	auto menu = CreatePopupMenu();
+	AppendMenu(menu, MF_STRING, M_COPY, Lang::get(L"tool.copy").data());
+	AppendMenu(menu, MF_STRING, M_COPY_CLOSE, Lang::get(L"tool.pinMenuCopyClose").data());
+	AppendMenu(menu, MF_STRING, M_SAVE, Lang::get(L"tool.pinMenuSave").data());
+	AppendMenu(menu, MF_SEPARATOR, 0, nullptr);
+	AppendMenu(menu, MF_STRING, M_HIDE, Lang::get(L"tool.pinMenuHide").data());
+	AppendMenu(menu, MF_STRING, M_THUMB,
+		Lang::get(isThumb ? L"tool.pinMenuThumbOff" : L"tool.pinMenuThumb").data());
+	// 动图的窗口尺寸钉死在第一帧上，收成一条贴边的细条没有意义（与 canCrop 那条判据同源）
+	if (!hasAnim()) {
+		AppendMenu(menu, MF_STRING, M_MIN,
+			Lang::get(isMinimized ? L"tool.pinMenuMinOff" : L"tool.pinMenuMin").data());
+	}
+	AppendMenu(menu, MF_STRING, M_TOOLS,
+		Lang::get(isToolsVisible() ? L"tool.pinMenuToolsHide" : L"tool.pinMenuToolsShow").data());
+	// 分组那一组：手里挑着 ≥2 张就给「编成一组」；否则按本图是否已在组里给"移出 / 解散 / 整组收起"。
+	// 一项都没有时那一段整段不出现（分隔线也不画）—— 否则会连着两条横线，看着像漏了一节
+	if (groupPicked.size() >= 2) {
+		AppendMenu(menu, MF_SEPARATOR, 0, nullptr);
+		AppendMenu(menu, MF_STRING, M_GROUP, Lang::get(L"tool.pinGroup").data());
+	}
+	else if (groupId != 0) {
+		AppendMenu(menu, MF_SEPARATOR, 0, nullptr);
+		AppendMenu(menu, MF_STRING, M_LEAVE_GROUP, Lang::get(L"tool.pinMenuLeaveGroup").data());
+		AppendMenu(menu, MF_STRING, M_UNGROUP, Lang::get(L"tool.pinUngroup").data());
+		AppendMenu(menu, MF_STRING, M_GROUP_HIDE, Lang::get(L"tool.pinMenuGroupHide").data());
+	}
+	AppendMenu(menu, MF_SEPARATOR, 0, nullptr);
+	AppendMenu(menu, MF_STRING, M_CLOSE, Lang::get(L"tool.close").data());
+	auto cmd = Ling::App::get()->popupMenu(menu);
+	switch (cmd) {
+	case M_COPY:        copyImageToClipboard(); break;
+	case M_COPY_CLOSE:  copyToClipboard(); break;     // 成功即关窗
+	case M_SAVE:        saveToFile(); break;          // 成功即关窗（所以它排最后，弹菜单的那一下早结束了）
+	case M_HIDE:        setHidden(true); break;
+	case M_THUMB:       setThumbMode(!isThumb); break;
+	case M_MIN:         setMinimized(!isMinimized); break;
+	case M_TOOLS:       setToolsVisible(!isToolsVisible()); break;
+	case M_GROUP:       groupPickedPins(); break;
+	case M_LEAVE_GROUP: groupId = 0; refresh(); break;
+	case M_UNGROUP:
+	{
+		auto g = groupId;
+		for (auto& p : winPins) {
+			if (p->groupId == g) { p->groupId = 0; p->refresh(); }
+		}
+	}
+	break;
+	case M_GROUP_HIDE:  setGroupHidden(true); break;
+	case M_CLOSE:       close(); break;
+	default: break;
+	}
 }
 
 // 缩略图模式：窗口缩成一枚小图，位置不变。与 Ctrl+M 那条贴边细条是两种收法，
@@ -2018,6 +2127,8 @@ void WinPin::onCreated()
     canvas->enableSwapChain();
     canvas->setSizePercent(100.f, 100.f);
     d2d->deviceContext->CreateSolidColorBrush(D2D1::ColorF(0x1677ff), borderBrush.GetAddressOf());
+    // 「待编组」那圈高亮。用与蓝边框区分得开的暖色（橙），粗一倍
+    d2d->deviceContext->CreateSolidColorBrush(D2D1::ColorF(0xFF8F00), brushPick.GetAddressOf());
     d2d->deviceContext->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::White), brushSelWhite.GetAddressOf());
     // 多选那条批量迷你条的三个配角，取色与 ShapeBase 构造函数里那三支完全一致（见那里的说明）——
     // 条身走的是同一份 paintBarFrame，颜色不一样就会露馅
@@ -2104,6 +2215,10 @@ void WinPin::layout()
 	// 边框也因此从"底图矩形"改成"窗口矩形"，任何倍数下都是 2*dpi 粗
 	ctx->SetTransform(D2D1::Matrix3x2F::Identity());
 	ctx->DrawRectangle(D2D1::RectF(0.f, 0.f, w, h), borderBrush.Get(), 2*dpi);
+	// 「待编组」高亮：比常规边框粗一倍、换成暖色压上去 —— 一眼看出这张正被挑出来准备编组
+	if (brushPick && isGroupPicked()) {
+		ctx->DrawRectangle(D2D1::RectF(0.f, 0.f, w, h), brushPick.Get(), 4*dpi);
+	}
 	// 剪裁采样点压在边框上，任何时候都能拖（缩略图 / 细条 / 藏起来时除外，见 paintCropHandles）
 	paintCropHandles(ctx);
 	// 多选那条批量条（复制 / 删除）与旋转手柄已经并进 paintSelection 了 ——
@@ -2169,9 +2284,11 @@ void WinPin::onDown(POINT pos, BOOL isRight)
 	// Ctrl 的 WM_KEYDOWN（自动重复），只清 ctrlTapArmed 的话下一条重复键就把它立回去了
 	//（见 onKey 里那段说明）
 	ctrlUsedAsModifier = true;
-	// 同 ctrlToggling：上一次按的是批量按钮、抬手又没落在窗口里（没 SetCapture），
+	// 上一次按的是批量按钮、抬手又没落在窗口里（没 SetCapture），
 	// 标志就会留着 —— 在这里一并复位，免得吃掉下一次抬手
 	batchBtnClicked = false;
+	// 同 ctrlToggling：Ctrl+挑"待编组"那一支也不 SetCapture，抬手收不回来就留着了 —— 一并复位
+	ctrlPicking = false;
 	// 点上一下就把本窗口激活了（WM_MOUSEACTIVATE -> SetForegroundWindow），而激活会把这个
 	// topmost 窗口提到同类的最前面 —— 于是它压住了自己的两条工具条。工具条通常落在窗口外面，
 	// 看不出来；全屏贴图的 overlay 模式下工具条整条盖在底图里头，一点图就"工具条没了"，
@@ -2251,8 +2368,9 @@ void WinPin::onDown(POINT pos, BOOL isRight)
 	// 全拦了的话锁死的贴图就只能靠任务栏找回工具条
 	if (isLocked && !isRight) return;
 	// 缩略图上点一下就还原。放在所有分支之前：这一下是"把图放回来"，
-	// 不是画画也不是拖窗。lastDownTime 清零是免得紧接着的第二下被认成双击（双击 = 复制关窗）
-	if (isThumb) {
+	// 不是画画也不是拖窗。lastDownTime 清零是免得紧接着的第二下被认成双击（双击 = 复制关窗）。
+	// 右键除外 —— 缩略图也要能弹菜单（见下面的 isRight 分支）
+	if (isThumb && !isRight) {
 		setThumbMode(false);   // 工具条由 setThumbMode 自己按"是不是它收的"请回来
 		lastDownTime = 0;
 		return;
@@ -2279,26 +2397,12 @@ void WinPin::onDown(POINT pos, BOOL isRight)
 		return;
 	}
 	if (isRight) {
-		// 右键在"有工具条"和"只剩图"这两个状态之间来回切。
-		// 藏着的时候（上一次右键收起来的）就把它请回来。位置先重排一遍：
-		// 藏着的这段时间里窗口可能被 Ctrl+滚轮缩放过，工具条的落点跟着变了
-		if (!isToolsVisible()) {
-			layoutTools();
-			toolMain->refreshToolSub();
-			toolMain->show();
-			setSideBarVisible(true);
-			return;
-		}
-		// 显示着：清掉画笔选中态，把两条工具条一起收起来，只剩图本身。
-		// cancelSelect 里已经顺手隐藏了 ToolSub 并重排整组，但它在 curId 本来就空时会提前返回，
-		// 所以 ToolSub 这一下自己再收一次，右键的效果与当时选没选画笔无关。
-		// 左键点一下（抬手时，见 onUp）也能把 ToolMain 请回来。
-		// 空格键也收放这一组，区别只在于它两边各多一步：收的时候放掉画笔、
-		// 请回来的时候预选矩形工具（见 setToolsVisible）
-		toolMain->cancelSelect();
-		toolMain->hide();
-		toolSub->hideTools();
-		setSideBarVisible(false);
+		// 右键 = 弹出贴图的上下文菜单（复制 / 另存为 / 隐藏到书签条 / 缩略图 / 分组 / 关闭…）。
+		// 原来这里是"在'有工具条'与'只剩图'这两个状态之间来回切"，那件事现在归 **空格**
+		//（它本来就是 setToolsVisible 的入口）。菜单里另留了「显示 / 隐藏工具条」一项 ——
+		// 锁定的贴图左键被全拦（见上面 isLocked 那句），右键是它唯一的找回入口，不能断。
+		// 折线续画（收尾）与文本态（取消选中）那两处右键已在上面的分支里处理掉了
+		showPinMenu();
 		return;
 	}
 	// 双击判定得自己做（Ling 的窗口类没带 CS_DBLCLKS，收不到 WM_LBUTTONDBLCLK）。
@@ -2358,6 +2462,18 @@ void WinPin::onDown(POINT pos, BOOL isRight)
 	// 收之前先记下它这会儿开着没有：拖到屏幕边线上会顺势把图藏起来，那一次"藏"发生在抬手时，
 	// 工具条已经被这次按下收掉了，事后再问 isToolsVisible 一律是关 —— 记下的是"拖动之前"
 	if (!hasDrawTool()) {
+		// 没有画笔时的 Ctrl+单击 = 把这张贴图加入 / 移出"待编组"那一批（见 WinPin::groupPicked）。
+		// 为什么落在这一格：有画笔时 Ctrl+单击归"画布对象加减选"（见下面那条），而没有画笔时
+		// 左键本就归"拖窗口"，此刻 Ctrl 是空着的 —— 正好拿来挑"要把哪几张编成一组"。
+		// 与画布那套同一种写法：当场切换、不 SetCapture 拖动，靠 ctrlPicking 让 onMove / onUp 让路
+		if (GetKeyState(VK_CONTROL) & 0x8000) {
+			auto it = std::find(groupPicked.begin(), groupPicked.end(), this);
+			if (it != groupPicked.end()) groupPicked.erase(it);
+			else groupPicked.push_back(this);
+			ctrlPicking = true;
+			refresh();
+			return;
+		}
 		toolsWereVisible = isToolsVisible();
 		winDragging = true;
 		toolMain->hide();
@@ -2500,6 +2616,8 @@ void WinPin::onMove(POINT pos)
 		// 而下面那条 mouseDrag 拿的是元素上一次留下的 grab 偏移 —— 光标随手一动就会
 		// 拿那个陈旧偏移把图形拖走。这正是"Ctrl 追加选中之后，被追加的那个位置下移了"
 		if (ctrlToggling) return;
+		// 同上：Ctrl+单击挑"待编组"那一下也不拖动任何东西（见 onDown）
+		if (ctrlPicking) return;
 		// 批量拖动多选那一批。从按下点算增量而不是从"每个元素的起点"算 ——
 		// 全是平移，逐帧增量叠起来与一次到位等价
 		if (batchMoving) {
@@ -2667,6 +2785,12 @@ void WinPin::onUp(POINT pos, BOOL isRight)
 	// 也没有新建元素要收尾，抬手不该往下走（下面那条路会把 selected 换成它一个）
 	if (ctrlToggling) {
 		ctrlToggling = false;
+		return;
+	}
+	// Ctrl+单击挑"待编组"（见 onDown）：只改了那一批，抬手不往下走 ——
+	// 尤其不能落到下面 !hasDrawTool 那条去（那会把工具条请出来）
+	if (ctrlPicking) {
+		ctrlPicking = false;
 		return;
 	}
 	// 框选：抬手把选框里那批收下。没有新建的元素要收尾，也没有"空笔"要判定
@@ -3375,6 +3499,12 @@ void WinPin::onKey(UINT key)
 	// 否则这一下会被当成"ESC 退一步 / 关窗"
 	if (key == VK_ESCAPE && buildingShape()) {
 		finishBuildingShape(false);
+		return;
+	}
+	// 挑着"待编组"的那几张时按 Esc：整批放掉。比逐个 Ctrl+点回去省事，
+	// 也排在全局那条"ESC 退一步 / 关窗"之前 —— 否则这一下会顺手把窗口关了
+	if (key == VK_ESCAPE && !groupPicked.empty()) {
+		clearGroupPicks();
 		return;
 	}
 	// 这里原来有一条"按下 Ctrl 就切到「选择器-选择对象」"。那套模式已经撤掉：对象选择

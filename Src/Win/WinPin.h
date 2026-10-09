@@ -37,6 +37,16 @@ public:
 	// 把所有贴图并为一组 / 全部解组。成组后拖动与 Ctrl+滚轮缩放会带着整组一起动
 	static void toggleGroupAll();
 	int getGroupId() const { return groupId; }
+	// ---- 「Ctrl+左键单击」多选出来、准备编成一组的那一批（见 onDown）----
+	// 跨窗口共享 ⇒ 静态。每张图自己画不画高亮，看它在不在这张表里
+	static std::vector<WinPin*> groupPicked;
+	// 清空这一批（ESC / 点空白 / 编组完成后调）
+	static void clearGroupPicks();
+	bool isGroupPicked() const;
+	// 把 groupPicked 里还活着的成员编成一个新组（≥2 个才生效），并清空这一批
+	static void groupPickedPins();
+	// 把本图所在整组（groupId 相同）收进书签条 / 放回。on 为假时不动组号
+	void setGroupHidden(bool on);
 	// 缩略图模式：窗口缩成一枚小图摆在原位，点一下或 Ctrl+T 还原（缩的是窗口，不是底图）
 	void setThumbMode(bool on);
 	// 当前屏幕上还有没有贴图窗口。用完即走模式靠它判断"活干完了没"：
@@ -212,6 +222,9 @@ private:
 	void onDown(POINT pos, BOOL isRight);
 	void onMove(POINT pos);
 	void onUp(POINT pos, BOOL isRight);
+	// 贴图本体的右键上下文菜单（见 onDown 的 isRight 分支）。菜单关闭前不返回；
+	// 它不设置任何拖动状态，所以调用方拿到控制权后直接 return 即可
+	void showPinMenu();
 	void onKey(UINT key);
 	// 正在"续画"的那条折线（没有就返回 nullptr）。WinPin 靠它把后续的点击 / 移动接着派给
 	// 同一个元素，而不是当成点空白又新建一个（见 ShapeLine::isBuilding）
@@ -484,6 +497,10 @@ private:
 	// 那些重复的 WM_KEYDOWN 会紧跟在 onDown 之后到达，不压着就会把 ctrlTapArmed 又立回去，
 	// 于是"放开 Ctrl 就把刚框中的一批收掉"（见 onKey 里的说明）
 	bool ctrlUsedAsModifier{ false };
+	// 这一下是"没有画笔时 Ctrl+单击"挑"待编组"那几张（见 onDown / WinPin::groupPicked）。
+	// 同 ctrlToggling：当场切换、不拖动；onMove / onUp 见它为真就让路，抬手复位。
+	// 每次按下开头也要复位（与 ctrlToggling 同一条理由）
+	bool ctrlPicking{ false };
 	// 正在拉的那个选框。两个点都在标注坐标系里，与 shape 同一套（toImgPos 换算过）。
 	// 抬手就清 —— 它只在一次拖拽期间有效
 	bool marqueeOn{ false };
@@ -569,6 +586,8 @@ private:
 	// 那是再开一张贴图，这里是把内容编进正在编辑的这一张
 	void pasteFromSystemClipboard();
 	Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> borderBrush;
+	// 「待编组」高亮边框。用暖色与常规蓝边框区分：一眼看出"这几种正在被挑出来编组"
+	Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brushPick;
 	// 「选择画布」的采样点填充与图标白描边用的白色。单独一支：别的白刷各有各的用途，
 	// 哪天改了色不该把选区一起带偏
 	Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brushSelWhite;
