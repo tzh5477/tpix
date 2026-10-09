@@ -31,6 +31,9 @@ private:
 	// 鼠标在条上移动：认出手指底下是第几条，把那张露出来。
 	// Ling 把"离开窗口"也报进这条事件（坐标给的是 INT_MAX，见 WinBase::mouseLeave）
 	void onMove(POINT pos);
+	// 鼠标按下：左键 = 把手指底下那一条放回桌面；右键 = 弹上下文菜单（放回 / 复制 / 另存为 /
+	// 整组放回 / 关闭）。名字不用 onMouseDown 是为了与 WinBase 上的事件成员区分开
+	void handleDown(POINT pos, bool isRight);
 	void onTimerCB(UINT id);
 	// 按当前藏在这条边上的贴图重建：条数、颜色、窗口尺寸
 	void rebuild();

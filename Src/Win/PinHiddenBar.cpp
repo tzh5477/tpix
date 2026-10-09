@@ -3,6 +3,7 @@
 #include "WinPin.h"
 #include "../Tool/ToolMain.h"
 #include "../Tool/ToolSub.h"
+#include "../Lang.h"
 #include "PinHiddenBar.h"
 
 namespace {
@@ -56,6 +57,8 @@ void PinHiddenBar::onCreated()
 	body->setAlignItems(Ling::Align::Center);
 	body->setPadding(pad);
 	onMouseMove.add([this](POINT pos) { this->onMove(pos); });
+	// 点某一条 = 放回桌面 / 弹菜单。条本身只有 4 像素厚，命中取"最近的那一条"（见 barIndexAt）
+	onMouseDown.add([this](POINT pos, bool isRight) { this->handleDown(pos, isRight); });
 	onTimer.add([this](UINT id) { this->onTimerCB(id); });
 	// 条数由 rebuild 定，这里不 show —— 一条都没有的时候不该在屏幕角上留一扇空窗
 }
@@ -159,6 +162,63 @@ void PinHiddenBar::onMove(POINT pos)
 	auto idx = barIndexAt(pos);
 	if (idx >= 0) reveal(idx);
 }
+
+// 左键点某一条 = 把那一张放回桌面（落回藏之前的位置）；右键 = 上下文菜单。
+// 这条是"隐藏/放回"里唯一一个"点一下就回来"的入口 —— 原来只有"hover 露出来再拖出去"，
+// 那个手感要求太高（拖到一半还会被 800ms 的复核定时器收回去）
+void PinHiddenBar::handleDown(POINT pos, bool isRight)
+{
+	auto idx = barIndexAt(pos);
+	if (idx < 0) return;
+	auto pins = WinPin::getHiddenPins(edge);
+	if (idx >= (int)pins.size()) return;
+	auto target = pins[(size_t)idx];
+	if (!isRight) {
+		// 它正被 hover 露着的话，先让 conceal 把它挪回原位再放回 —— 于是"点一下就回到原来的地方"；
+		// 没露着就直接放回（它这会儿的 x/y 本来就是藏之前那一份）
+		if (peek == target) conceal();
+		target->setHidden(false);
+		return;
+	}
+	enum : UINT { R_RESTORE = 1, R_COPY, R_SAVE, R_GROUP_SHOW, R_CLOSE };
+	auto menu = CreatePopupMenu();
+	AppendMenu(menu, MF_STRING, R_RESTORE, Lang::get(L"tool.barMenuRestore").data());
+	AppendMenu(menu, MF_STRING, R_COPY, Lang::get(L"tool.copy").data());
+	AppendMenu(menu, MF_STRING, R_SAVE, Lang::get(L"tool.pinMenuSave").data());
+	// 成组的贴图才有"整组放回"。单张仍是单张书签格 —— 一格代表一组，点下去该放谁就成了歧义
+	if (target->getGroupId() != 0) {
+		AppendMenu(menu, MF_SEPARATOR, 0, nullptr);
+		AppendMenu(menu, MF_STRING, R_GROUP_SHOW, Lang::get(L"tool.pinMenuGroupShow").data());
+	}
+	AppendMenu(menu, MF_SEPARATOR, 0, nullptr);
+	AppendMenu(menu, MF_STRING, R_CLOSE, Lang::get(L"tool.close").data());
+	auto cmd = Ling::App::get()->popupMenu(menu);
+	switch (cmd) {
+	case R_RESTORE:
+		if (peek == target) conceal();
+		target->setHidden(false);
+		break;
+	case R_COPY: target->copyImageToClipboard(); break;
+	case R_SAVE: target->saveToFile(); break;      // 成功即关窗
+	case R_GROUP_SHOW:
+	{
+		// 把同组、且散在两条边上的成员一起放回。先收进一个临时表再动 ——
+		// setHidden(false) 会走 PinHiddenBar::sync() 重建本窗口的 bars
+		auto g = target->getGroupId();
+		std::vector<WinPin*> same;
+		for (int i = 0; i < 2; ++i) {
+			for (auto* p : WinPin::getHiddenPins((WinPin::BarEdge)i)) {
+				if (p->getGroupId() == g) same.push_back(p);
+			}
+		}
+		for (auto* p : same) p->setHidden(false);
+	}
+	break;
+	case R_CLOSE: target->close(); break;
+	default: break;
+	}
+}
+
 
 // 摆位 = 贴着第 index 条线：左条图放线右侧、图顶对齐线顶；顶条图放线下方、图左对齐线左。
 // 缝 4 逻辑像素。
