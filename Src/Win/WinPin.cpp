@@ -3451,10 +3451,13 @@ void WinPin::onKey(UINT key)
 		}
 		else drawing->history->removeActiveShape();
 	}
-	else if (key == VK_PRIOR) {     // PageUp：往前翻历史截图（更早的那张）
+	// PageUp / 「,」往前翻历史截图（更早的那张），PageDown / 「.」往回翻（更新的那张）。
+	// 「,」「.」是 pixpin / FSCapture 里那一对的手感 —— 两个都在右手边，比去够
+	// PageUp / PageDown 顺手。它们不带修饰键，不会与 Ctrl+C / Ctrl+S 那批打架
+	else if (key == VK_PRIOR || key == VK_OEM_COMMA) {
 		previewHistory(1);
 	}
-	else if (key == VK_NEXT) {      // PageDown：往回翻（更新的那张）
+	else if (key == VK_NEXT || key == VK_OEM_PERIOD) {
 		previewHistory(-1);
 	}
 	else if (ctrl && key == 'M') {  // Ctrl+M：收成贴边细条 / 展开。悬停细条也会展开
