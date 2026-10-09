@@ -9,6 +9,7 @@
 #include "Shape/ShapeNumber.h"
 #include "Shape/ShapeWatermark.h"
 #include "Shape/ShapeLine.h"
+#include "Shape/ShapeBrush.h"
 #include "Shape/ShapeText.h"
 #include "Shape/ShapeMosaicRect.h"
 #include "Shape/ShapeMosaicLine.h"
@@ -198,6 +199,11 @@ ShapeBase* History::createShape(const std::wstring& state, const int& x, const i
 	}
 	else if (curId == L"line") {
 		shape = std::make_unique<ShapeLine>(canvas);
+	}
+	else if (curId == L"brush") {
+		// 画笔与荧光笔是同一个类（见 ShapeBrush）—— 画法与颜色 / 线宽一样从工具条现取，
+		// 所以这里不用像 mosaic 那样按模式挑子类
+		shape = std::make_unique<ShapeBrush>(canvas);
 	}
 	else if (curId == L"text") {
 		shape = std::make_unique<ShapeText>(canvas);

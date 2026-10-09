@@ -212,6 +212,26 @@ def icon_copy(pen):
     seg(pen, 672, 848, 672, 656, w)             # 后页右边一小段，末端悬空（离前页上沿留个缺口）
 
 
+def icon_brush(pen):
+    """斜着的一支笔：笔杆 + 尖笔头，笔尖朝左下 = 画笔 / 荧光笔。
+    图标字体里没有现成的"笔"，自绘一支最能说清这一格是干什么的；
+    斜放是因为正放会被读成一根柱子，17 像素下看不出是笔。"""
+    k = 0.70710678
+    dx, dy = k, -k                 # 笔尖 -> 笔尾（45 度朝右上）
+    nx, ny = k, k                  # 它的法向
+    tip = (168.0, 740.0)
+    hw = 86.0                      # 笔杆半宽
+    neck = (tip[0] + dx * 190.0, tip[1] + dy * 190.0)
+    tail = (tip[0] + dx * 880.0, tip[1] + dy * 880.0)
+
+    def off(p, s):
+        return (p[0] + nx * hw * s, p[1] + ny * hw * s)
+
+    # 笔杆（四边形）与笔尖（三角）只在前端相接，两者同向 => 非零环绕下并成一个整体
+    tri_wind(pen, [off(neck, 1), off(tail, 1), off(tail, -1), off(neck, -1)])
+    tri_wind(pen, [tip, off(neck, 1), off(neck, -1)])
+
+
 # ——— 悬浮球上换掉 / 新增的那几个 ———————————————————————————————
 # 换过的原因都写在 BallAction.cpp 的表旁边：要的是"一眼分得清谁是谁"，
 # 17 像素下轮廓比细节重要，所以每个都只留一两块大形状。
@@ -388,6 +408,8 @@ ICONS = [
     # AI 回答条上那两枚（见上面一段的说明）
     (0xE912, 'refresh', icon_refresh),
     (0xE913, 'chatPlus', icon_chat_plus),
+    # 工具条上的「画笔」（ToolMain 的 brush 那一格）
+    (0xE914, 'brush', icon_brush),
 ]
 
 

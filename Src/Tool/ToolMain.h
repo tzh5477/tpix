@@ -58,16 +58,18 @@ private:
 	// 类别小图标定（见 ToolSub::makeGeomKindBtns），主工具条上不再各占一格 ——
 	// 两格并一格省出来的宽度正好够子面板多摆两枚类别图标。
 	// 尾部三枚的顺序：复制（不关窗）→ 保存 → 剪切板（复制后关窗）→ 关闭收尾
-	std::vector<std::wstring> btnIds = { L"selector",L"geom",L"arrow",L"number",L"line",L"text",L"mosaic", L"eraser",L"watermark",L"pin",L"|",L"undo",L"redo",L"|",L"pinHide",L"textSelect",L"copy",L"save",L"clipboard",L"close" };
+	std::vector<std::wstring> btnIds = { L"selector",L"geom",L"arrow",L"number",L"line",L"brush",L"text",L"mosaic", L"eraser",L"watermark",L"pin",L"|",L"undo",L"redo",L"|",L"pinHide",L"textSelect",L"copy",L"save",L"clipboard",L"close" };
 	// 「选文」（textSelect）与「选择对象」一样是空串：那两枚都不写字，自己画。
 	// textSelect 原来借的是「文字识别」那枚 \ue67b —— 编辑界面右边缘那条竖排
 	//（ToolPinSide）上正好也有一枚 \ue67b，同一个屏里撞脸。图标字体只有 41 个码位
 	// 且全部有主（见工作区笔记），没有现成的 I 形文本光标，于是照「选择对象」那套自绘：
 	// 一支文本光标最能说清"在这儿选字"（另两个空闲的 E909 右箭头 / E97F 调色板都不合适）
 	// 「复制」那枚 \ue90b 是照 Doc/tools/mkicons.py 补进字体的两张错位的页
+	// 「画笔」那枚 \ue914 同样是 mkicons.py 补的（斜着一支笔 + 尖笔头）：原来没进字体的
+	// 都是这种自绘或补字形的做法，"画笔"在图标字体里没有现成码位
 	// geom 那枚的码位只是初值（矩形那一档）。真正显示什么由 syncGeomIcon 按当前类别定，
 	// 它会在窗口建好与每次换类别时重设一次
-	std::vector<std::wstring> btnCodes = { L"",L"\ue8e8",L"\ue603",L"\ue776",L"\ue601",L"\ue6ec",L"\ue82e",L"\ue6be",L"\ue607",L"\ue6a2",L"|",L"\ued85",L"\ued8a",L"|",L"\ue907",L"",L"\ue90b",L"\ue608",L"\ue6ad",L"\ue62d" };
+	std::vector<std::wstring> btnCodes = { L"",L"\ue8e8",L"\ue603",L"\ue776",L"\ue601",L"\ue914",L"\ue6ec",L"\ue82e",L"\ue6be",L"\ue607",L"\ue6a2",L"|",L"\ued85",L"\ued8a",L"|",L"\ue907",L"",L"\ue90b",L"\ue608",L"\ue6ad",L"\ue62d" };
 	std::vector<Ling::Button*> btns;
 	// 「几何图形」那一枚。换类别时要换它上面的图标，存下来省得每次去 btns 里按 id 找
 	Ling::Button* geomBtn{ nullptr };

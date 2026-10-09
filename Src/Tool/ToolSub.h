@@ -33,6 +33,8 @@ public:
 	void showArrowTools();
 	void showNumberTools();
 	void showLineTools();
+	// 画笔：类型（画笔 / 荧光笔）+ 线宽滑块 + 色板
+	void showBrushTools();
 	void showTextTools();
 	void showMosaicTools();
 	void showEraserTools();
@@ -129,9 +131,13 @@ public:
 	// 箭头样式：0 普通（平口尾、平底实心头）/ 1 尖尾 / 2 细箭头（开口 V）/ 3 凹口实心。
 	// 顺序即落盘值，同 ShapeArrow 的枚举。四档的顶点都是尖的，没有末端带圆头的那一档
 	int arrowStyle{ 0 };
-	// 线条类型：0 = 直角折线（默认，拖拽时按鼠标轨迹吸附成横平竖直），1 = 普通线条（自由画）。
-	// 同 ShapeLine::Kind 的枚举
+	// 线条类型：0 = 直角折线（默认，拖拽时按鼠标轨迹吸附成横平竖直），1 = 普通线条（自由画），
+	// 2 = 折线（点选式：点一下落一个节点、双击或右键结束）。同 ShapeLine::Kind 的枚举
 	int lineKind{ 0 };
+	// 画笔类型：0 = 画笔（不透明、圆头圆角），1 = 荧光笔（半透明、平口尖角）。
+	// 只有"画出来什么样"不同，几何与交互完全一样 —— 所以是同一个类里的一个标志，
+	// 而不是两个派生类（见 ShapeBrush 的说明）。落盘在 toolPin.brush.kind
+	int brushKind{ 0 };
 	// 线条两端的形状。0~9 对应 ShapeLine 里那张端点表（无 / 末端实心箭头 / 起点圆点+末端实心箭头 /
 	// 末端细箭头 / 起点圆点+末端细箭头 / 末端圆点 / 起点圆点 / 两端圆点 / 两端实心箭头 / 两端细箭头）
 	int lineEnd{ 0 };

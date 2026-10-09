@@ -2130,6 +2130,32 @@ void WinPin::onMinMaxInfo(MINMAXINFO* mmi)
 	mmi->ptMaxTrackSize.y = 20000;
 }
 
+// 正在续画的折线（见 ShapeBase::isBuilding）。从后往前找 —— 续画的那个必然是最新加进来的
+ShapeBase* WinPin::buildingShape()
+{
+	auto& shapes = drawing->history->shapes;
+	for (auto it = shapes.rbegin(); it != shapes.rend(); ++it) {
+		if ((*it)->isBuilding()) return it->get();
+	}
+	return nullptr;
+}
+
+// 折线收尾。commit 为假（Esc）或只落了一个节点：按"空笔"同一条处理 —— 撤掉按下时存的那份底
+// 再删掉，不在图上留一个看不见的空元素；commit 才定形并保持选中，接着能改样式 / 拖夹点
+void WinPin::finishBuildingShape(const bool commit)
+{
+	auto* s = buildingShape();
+	if (!s) return;
+	if (!commit || s->isEmptyStroke()) {
+		drawing->history->dropMark();
+		drawing->history->removeShape(s);   // 它顺手清掉 shapeHover / selected 并刷新
+		return;
+	}
+	s->finishBuild();
+	drawing->selected = s;
+	refresh();
+}
+
 void WinPin::onDown(POINT pos, BOOL isRight)
 {
 	// 上一按的残尾先清掉。Ctrl+单击那一支不 SetCapture（它不拖任何东西），
@@ -2237,6 +2263,21 @@ void WinPin::onDown(POINT pos, BOOL isRight)
 	// 图上有一下真实的点击了：预览的那个"将要落下的号"该让位给真的那一笔
 	// （右键收起工具条、双击导出也一样，这会儿图上不该再飘着一个影子）
 	hideNumberPreview();
+	// 折线续画期间：左键 = 再加一个节点（双击 = 收尾），右键 = 收尾。都要赶在下面那几条之前 ——
+	// 尤其右键那条本来是"收放工具条"，不能让收尾这一下顺手把工具条一起收了
+	if (auto* b = buildingShape()) {
+		if (isRight) {
+			finishBuildingShape(true);
+			return;
+		}
+		if (takeDoubleClick()) {
+			finishBuildingShape(true);
+			return;
+		}
+		auto ip = toImgPos(pos);
+		b->mouseDown((float)ip.x, (float)ip.y);
+		return;
+	}
 	if (isRight) {
 		// 右键在"有工具条"和"只剩图"这两个状态之间来回切。
 		// 藏着的时候（上一次右键收起来的）就把它请回来。位置先重排一遍：
@@ -2528,6 +2569,13 @@ void WinPin::onMove(POINT pos)
 	}
 	else
 	{
+		// 折线续画：光标划过时把"末节点 → 光标"那段橡皮筋重画一遍。整段鼠标都归它，
+		// 不再走下面的 hover 命中（否则光标一贴近折线就被认成"悬停在元素上"）
+		if (auto* b = buildingShape()) {
+			auto ip = toImgPos(pos);
+			b->movePreview((float)ip.x, (float)ip.y);
+			return;
+		}
 		if (!hasDrawTool()) {
 			// 画笔被收起来了（右键 / 关掉工具），预览也要跟着收
 			hideNumberPreview();
@@ -3323,6 +3371,12 @@ void WinPin::onKey(UINT key)
 	// 这一句必须排在派发之前 —— 序号拿到 F2 会去开它自己那份描述编辑框，而共用的那个
 	// TextBox 上还挂着当前这一个的订阅，两个编辑叠在一起就会把正在写的文字冲掉
 	if (editingShape) return;
+	// 折线续画中按 Esc：放弃这一笔（半成品直接删掉）。排在全局快捷键之前，
+	// 否则这一下会被当成"ESC 退一步 / 关窗"
+	if (key == VK_ESCAPE && buildingShape()) {
+		finishBuildingShape(false);
+		return;
+	}
 	// 这里原来有一条"按下 Ctrl 就切到「选择器-选择对象」"。那套模式已经撤掉：对象选择
 	// 现在是常驻的（见 selecting），Ctrl 的语义变成了"在选中批次上追加 / 剔除"以及
 	// "空白处拖动 = 框选"（见 onDown），不再需要按一下去切模式

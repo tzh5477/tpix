@@ -13,8 +13,10 @@
 class ShapeLine : public ShapeLineBase
 {
 public:
-	// 线条类型。顺序 = ToolSub::lineKind 的落盘值，不能随手调
-	enum class Kind { Ortho = 0, Free };
+	// 线条类型。顺序 = ToolSub::lineKind 的落盘值，不能随手调。
+	// Polyline 是后加的第三档（落盘值 2，老配置只会是 0 / 1，不动前面两档就不会串味）：
+	// 点选式折线 —— 点一下落一个节点、双击或右键结束，交互走 ShapeBase::isBuilding 那一套
+	enum class Kind { Ortho = 0, Free, Polyline };
 	// 线条样式。同上，顺序 = ToolSub::lineStyle 的落盘值
 	enum class Style { Solid = 0, Dash, Wave, Dot, DashDot, DashDotDot };
 	// 一端的形状。两种箭头都照 FSCapture 的端点预览定比例（见 .cpp 里的 paintEnd）：
@@ -45,8 +47,17 @@ public:
 	bool copyable() const override { return true; }
 	std::unique_ptr<ShapeBase> clone(const float dx, const float dy, Canvas* target = nullptr) const override;
 	std::unique_ptr<ShapeBase> snapshot() const override;
+	// ---- 折线（Kind::Polyline）的续画接口 ----
+	// WinPin 在光标划过时调 movePreview 画"末节点 → 光标"那段橡皮筋，
+	// 双击 / 右键时调 finishBuild 收尾；isBuilding 见 ShapeBase
+	bool isBuilding() const override;
+	void movePreview(const float x, const float y) override;
+	void finishBuild() override;
+	bool isValidWithoutDrag() override;
+	bool isEmptyStroke() const override;
 private:
 	bool isOrtho() const;
+	bool isPoly() const;
 	// 把这次拖拽的鼠标轨迹压成一条横平竖直的折线
 	void snapTrail();
 	// 已经画好的这一笔改成直角折线：拿它现有的顶点重吸附一遍（见 .cpp）
@@ -78,6 +89,10 @@ private:
 	// 一次拖拽期间的原始鼠标轨迹。只在"新建这一笔"时有值，抬手就清掉
 	std::vector<D2D1_POINT_2F> trail;
 	bool creating{ false };
+	// 折线续画态：见 isBuilding。preview 是"末节点 → 光标"那一段的落点，只画不记进 linePoints
+	bool building{ false };
+	bool hasPreview{ false };
+	D2D1_POINT_2F preview{};
 	Kind kind{ Kind::Ortho };
 	Style lineStyle{ Style::Solid };
 	int endIndex{ 0 };

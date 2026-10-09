@@ -403,6 +403,9 @@ void ToolMain::selectTool(const std::wstring& id)
 	else if (curId == L"line") {
 		win->toolSub->showLineTools();
 	}
+	else if (curId == L"brush") {
+		win->toolSub->showBrushTools();
+	}
 	else if (curId == L"text") {
 		win->toolSub->showTextTools();
 	}

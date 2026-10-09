@@ -281,6 +281,13 @@ void ShapeLine::applyToolStyle()
 	auto toolSub = win->getToolSub();
 	auto wasOrtho{ isOrtho() };
 	kind = (Kind)toolSub->lineKind;
+	// 续画中把档位切走（折线 → 直角折线 / 普通线条）：这一笔还是半成品，再挂着 building 的话
+	// WinPin::buildingShape 会一直把它认成"正在续画的折线"，之后每一次按下都被它接管，
+	// 用户再也点不出新的一笔。就地收尾 —— 已经落下的那几个节点照旧留着
+	if (!isPoly()) {
+		building = false;
+		hasPreview = false;
+	}
 	lineStyle = (Style)toolSub->lineStyle;
 	endIndex = toolSub->lineEnd;
 	makeStrokeStyle();
@@ -330,6 +337,23 @@ void ShapeLine::makeStrokeStyle()
 
 void ShapeLine::mouseDown(const float x, const float y)
 {
+	// 折线：每次左键落一个节点。第一下起头，之后每一下续一个；末节点到光标那段橡皮筋
+	// 由 movePreview 现画（它还不是真节点，不入 linePoints）。抬手不结束 —— 结束看双击 / 右键
+	if (isPoly()) {
+		if (!building) {
+			linePoints.assign(1, { x, y });
+			building = true;
+		}
+		else {
+			linePoints.push_back({ x, y });
+		}
+		hasPreview = false;
+		hoverDraggerIndex = -1;   // 续画期间不做 hover 命中：这一段鼠标都归这条折线
+		makePath();
+		makeDraggers();
+		win->refresh();
+		return;
+	}
 	// 直角折线的新建这一笔：起点先落下来，几何随后由鼠标轨迹现算（见 mouseDrag）。
 	// 基类那套"每个鼠标位置塞一个顶点"是自由画的记法，直角族不能用 —— 记下来的是斜的轨迹
 	if (isOrtho() && hoverDraggerIndex == -1) {
@@ -353,9 +377,45 @@ void ShapeLine::mouseDrag(const float x, const float y)
 
 void ShapeLine::mouseUp(const float x, const float y)
 {
+	// 折线抬手不结束（还要接着点下一个节点 / 双击 / 右键收尾），只把两个夹点摆到末节点上
+	if (isPoly()) {
+		makeDraggers();
+		return;
+	}
 	trail.clear();
 	creating = false;
 	ShapeLineBase::mouseUp(x, y);
+}
+
+bool ShapeLine::isPoly() const
+{
+	return kind == Kind::Polyline;
+}
+
+bool ShapeLine::isBuilding() const
+{
+	return isPoly() && building;
+}
+
+// 续画期间鼠标划过：把"末节点 → 光标"那段橡皮筋重画一遍（只画，不进 linePoints）
+void ShapeLine::movePreview(const float x, const float y)
+{
+	if (!isPoly() || !building) return;
+	preview = { x, y };
+	hasPreview = true;
+	makePath();
+	win->refresh();
+}
+
+// 收尾：把橡皮筋撤掉，这一笔就此定形（几何只到已经落下的那些节点为止）
+void ShapeLine::finishBuild()
+{
+	if (!isPoly()) return;
+	building = false;
+	hasPreview = false;
+	makePath();
+	makeDraggers();
+	win->refresh();
 }
 
 // 直角折线：把这次拖拽的鼠标轨迹压成一条横平竖直的折线。
@@ -473,7 +533,29 @@ std::vector<D2D1_POINT_2F> ShapeLine::shaftPoints() const
 
 void ShapeLine::makePath()
 {
+	// 续画中的折线：把"末节点 → 光标"那段橡皮筋并进来一起描。它还只是预览，
+	// 不参与端点缩进（shaftPoints 会照端点档位裁一截），所以直接 buildPath
+	if (isPoly() && building && hasPreview && !linePoints.empty()) {
+		auto pts = linePoints;
+		pts.push_back(preview);
+		buildPath(pts);
+		return;
+	}
 	buildPath(shaftPoints());
+}
+
+// 折线第一下点下去（还没拖、也没点第二个节点）时要能留在图上接着续画 ——
+// 按默认的"没拖就丢掉"会把它自己收掉，用户就永远点不出第二个节点
+bool ShapeLine::isValidWithoutDrag()
+{
+	return isPoly() && building;
+}
+
+// 只落了一个节点的折线等于什么都没画出来。WinPin 在收尾时把它直接丢掉，
+// 不留在图上当一个看不见的空元素
+bool ShapeLine::isEmptyStroke() const
+{
+	return isPoly() && linePoints.size() < 2;
 }
 
 // 折线族默认把笔画正中挖掉半个夹点宽（理由见 ShapeLineBase::hitTest：粗笔画整片能拖的话，

@@ -37,7 +37,19 @@ public:
 	virtual void applyToolStyle() {};
 	// 新建这一笔如果只是按下马上弹起（没有拖动），默认当成什么也没画，元素直接丢掉。
 	// 单击本身就是正常用法的元素（number 落徽章、text 进编辑）覆盖它返回 true
-	virtual bool isValidWithoutDrag() { return false; };
+	virtual bool isValidWithoutDrag() { return false; }
+	// 还在"续画"中的元素（折线：每点一下加一个顶点，双击 / 右键才结束）。WinPin 靠它把
+	// 后续的按下 / 移动继续派给同一个元素，而不是当成"点空白"又新建一个。其余元素都是
+	// 一次拖拽成形，留空
+	virtual bool isBuilding() const { return false; }
+	// 续画的另外两半（只有 isBuilding 为真的元素会收到）：把"末节点 → 光标"那段橡皮筋
+	// 重画一遍 / 收尾定形。同样放在 ShapeBase 上而不是让 WinPin 去 dynamic_cast ——
+	// WinPin 这一层只认 ShapeBase，认派生类就等于把那层抽象捅穿了
+	virtual void movePreview(const float x, const float y) {}
+	virtual void finishBuild() {}
+	// "这一笔其实什么都没画出来"（折线只落了一个节点）。收尾时这种半成品直接丢掉，
+	// 不留在图上当一个看不见的空元素。默认所有元素都画出了东西
+	virtual bool isEmptyStroke() const { return false; };
 	// 命中判定要能在 const 上下文里用（动作图标的 hitActionBtn 就是 const 的）
 	bool isInRect(const D2D1_RECT_F rect, const float x, const float y) const;
 	// 元素在底图坐标系里的外接矩形。用来摆右上角那排动作图标 ——

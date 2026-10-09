@@ -213,6 +213,12 @@ private:
 	void onMove(POINT pos);
 	void onUp(POINT pos, BOOL isRight);
 	void onKey(UINT key);
+	// 正在"续画"的那条折线（没有就返回 nullptr）。WinPin 靠它把后续的点击 / 移动接着派给
+	// 同一个元素，而不是当成点空白又新建一个（见 ShapeLine::isBuilding）
+	ShapeBase* buildingShape();
+	// 折线收尾：commit 为真按当前节点定形，为假（Esc）直接删掉；只落了一个节点的半成品
+	// 一律丢掉，不在图上留一个看不见的空元素
+	void finishBuildingShape(bool commit);
 	// Ctrl 的抬键。单独留一个是为了"再点一下 Ctrl 就取消框选"（见 onKey 开头那段）——
 	// 键盘消息只送到有焦点的窗口，ToolMain / ToolSub 会把它们的 keydown 转回来，
 	// keyup 也照转（那两处各一行）。

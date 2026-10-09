@@ -38,6 +38,9 @@ namespace {
 		{ L"arrow",   { L"width",     1.f, 16.f,  3.f } },
 		{ L"number",  { L"radius",    6.f, 86.f, 16.f } },
 		{ L"line",    { L"width",     1.f, 60.f, 12.f } },
+		// 画笔与荧光笔共用一条线宽：两者只差"画出来什么样"（见 ShapeBrush），
+		// 分成两条的话切一次类型滑块就得跟着换值域，而它俩的合理粗细本来也重叠
+		{ L"brush",   { L"width",     1.f, 60.f, 12.f } },
 		{ L"text",    { L"fontSize", 10.f, 60.f, 20.f } },
 		{ L"mosaic",  { L"width",    18.f, 68.f, 28.f } },
 		{ L"eraser",  { L"width",    18.f, 68.f, 28.f } },
@@ -68,10 +71,17 @@ namespace {
 		};
 		return items;
 	}
-	// 线条类型只有两项，按钮上写汉字，所以走语言包
+	// 线条类型三档：直角折线（默认）/ 普通线条 / 折线。按钮上写汉字，所以走语言包。
+	// 三档会自动变下拉（makeSelectBtn 只对两项的单击即切换，见那里的说明）——
+	// 正合意：档位一多，单击循环要连点好几下才转到想要的那个
 	std::vector<std::wstring> lineKindItems()
 	{
-		return { Lang::get(L"tool.lineKind0"), Lang::get(L"tool.lineKind1") };
+		return { Lang::get(L"tool.lineKind0"), Lang::get(L"tool.lineKind1"), Lang::get(L"tool.lineKind2") };
+	}
+	// 画笔类型只有两项（画笔 / 荧光笔），单选即切换
+	std::vector<std::wstring> brushKindItems()
+	{
+		return { Lang::get(L"tool.brushKind0"), Lang::get(L"tool.brushKind1") };
 	}
 	// 端点的十档，顺序 = config.json 里 line/end 的落盘值，就是 ShapeLine.cpp 里那张
 	// kEndTable 的顺序。按钮与列表里画的是真实的端点（ShapeLine::paintEndSample），
@@ -106,6 +116,9 @@ namespace {
 	// 写的是两个符号，都比一格按钮（btnSize）宽 —— 交给 flex 分会被压到放不下
 	constexpr float lineKindW{ 60.f };
 	constexpr float lineChoiceW{ 42.f };
+	// 画笔「类型」那个按钮的宽度。它写的是"荧光笔"三个汉字，比一格按钮（btnSize）宽，
+	// 交给 flex 分会被压到放不下
+	constexpr float brushKindW{ 56.f };
 	// 下拉里那条样例线的粗细（逻辑像素）。刻意不跟着当前线宽走 —— 线宽 20 的时候
 	// 下拉里就只剩一个箭头了。三个下拉共用这一个数，"端点 / 线型 / 箭头样式"三条线一样粗
 	constexpr float sampleLineW{ 2.f };
@@ -477,8 +490,9 @@ void ToolSub::showNumberTools()
 void ToolSub::showLineTools()
 {
 	beginTool(L"line");
-	// 三个下拉（线条类型 / 端点 / 线条样式）+ 半透明开关。线条类型只有两档，按两态约定
-	// 单击即切换、不弹列表；另外两个走下拉列表。
+	// 三个下拉（线条类型 / 端点 / 线条样式）+ 半透明开关。全走下拉列表 ——
+	// 线条类型原来是两档（单击即切换），加了「折线」变成三档，makeSelectBtn 自动改走列表
+	//（见那里的说明：只有两项的才单击即切换）
 	// 三个按钮的宽度差额从 extraW 里补给它们（initSize 只按按钮数算宽度）
 	initSize(4, true, false, lineKindW + lineChoiceW * 2 - btnSize * 3);
 	// 宽度写死，不让 flex 分：这三个放的是汉字与成对的符号，压到一格按钮宽就糊成一团
@@ -506,6 +520,26 @@ void ToolSub::showLineTools()
 	fixW(makeSelectBtn(L"tool.lineEnd", L"end", &lineEnd, lineEndItems(), applyNow, false, false, endPaint), lineChoiceW);
 	fixW(makeSelectBtn(L"tool.lineStyle", L"style", &lineStyle, lineStyleItems(), applyNow, false, false, stylePaint), lineChoiceW);
 	makeToggleBtn(L"\ue607", &isLineTransparent, L"tool.semiTransparent", L"semiTransparent");
+	initSlider();
+	initColorBtns();
+	makeApplyAllBtn();
+}
+
+void ToolSub::showBrushTools()
+{
+	beginTool(L"brush");
+	// 一个「类型」按钮 + 色板 + 线宽滑块 + 「全」。类型只有两项（画笔 / 荧光笔），
+	// 按两态约定单击即切换、不弹列表。按钮比一格宽，差额从 extraW 里补给它
+	//（initSize 只按按钮数算宽度）
+	initSize(2, true, false, brushKindW - btnSize);
+	auto btn = makeSelectBtn(L"tool.brushKind", L"kind", &brushKind, brushKindItems(),
+		// 传 true：换的是"画法"这一档，与颜色 / 线宽那些"外观"分流（见 WinPin::onToolStyleChanged）——
+		// 滚轮调粗细走的也是那个入口，带上档位就会把选中那一笔的画法一起换掉
+		[this]() { win->onToolStyleChanged(true); }, false, false);
+	// 宽度写死，不让 flex 分：两个汉字 + 一格「全」按等分摆会把这个挤成一条缝
+	btn->setFlexGrow(0.f);
+	btn->setFlexShrink(0.f);
+	btn->setWidth(brushKindW);
 	initSlider();
 	initColorBtns();
 	makeApplyAllBtn();
