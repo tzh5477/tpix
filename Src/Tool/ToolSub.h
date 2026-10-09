@@ -302,10 +302,9 @@ private:
 	// 悬停提示。要 hwnd，所以在 onCreated 里才建得起来
 	std::unique_ptr<Tip> tip;
 	static constexpr float btnSize{ 32.f };
-	// 色板行末尾那块「当前色 / 取色器入口」的宽度。刻意比别的格子宽 ——
-	// pixpin 里它就是"最大的那个颜色块"，宽度本身就是"这里能点开调色"的提示，
-	// 与旁边九个等宽的预设格子一眼分得开。宽度要从 initSize 里预留出来
-	static constexpr float colorMoreW{ 54.f };
+	// 色板行末尾那块「取色器入口 / 当前色」里的方块边长。与预设格子（也是 13）一样 ——
+	// 早先刻意做成 22×18 的"最大的那个颜色块"，现在按要求改成与别的格子等宽等大
+	static constexpr float colorMoreBlock{ 13.f };
 	// 自定义色最多留几个。取色器里那两排格子按 10 列排，18 个正好占满一排多、
 	// 不至于把弹窗撑高一截；再多的旧颜色就顶掉了 —— 按"最近用过"排序，被顶掉的都是最久没用的
 	static constexpr size_t maxCustomColors{ 18 };
@@ -383,11 +382,18 @@ private:
 	std::vector<UINT32> colors;
 	// colors 里预设占了几项。色板行画 presetCount_ 格预设 + 1 块当前色块
 	size_t presetCount_{ 0 };
-	// 色板行末尾那一块：底色永远是当前选中色，点它开取色器。
-	// 就是 pixpin 里"最大的那个颜色块"—— 预设只负责快选，任意颜色从这里进去调。
+	// 色板行末尾那一块：点它开取色器。两种态 ——
+	//   ① 当前色是行上的预设格（初始态、或用户在外面那排常用色卡里点了一个）
+	//      → 铺七彩渐变、不打勾：它是"能挑任意颜色"的入口，不假装自己是某个颜色；
+	//   ② 当前色是自定义色（只可能从取色器里挑出来）→ 回显那个颜色并打勾。
 	// 切工具时随 contentNode 一起销毁，beginTool 里必须置空
 	Ling::Button* colorMoreBtn{ nullptr };
-	// 上面那块里画的那个方块。换选中色时要改它的底色与对勾颜色（浅色底要用黑勾），
-	// 存下来省得每次去 children 里按下标摸
+	// 上面那块里画的那个方块。两种态直接换它的 visual 画刷（七彩渐变没法用 setBg 表达），
+	// 再加上 / 去掉对勾文字，所以存下来省得每次去 children 里按下标摸
 	Ling::Label* colorMoreLabel{ nullptr };
+	// 七彩渐变画刷。Composition 的线性渐变画刷默认按**包围盒相对**映射（0~1 就是整块），
+	// 与方块的实际像素尺寸无关，所以建一次就能一直用，不必等布局拿到尺寸
+	winrt::Windows::UI::Composition::CompositionLinearGradientBrush brushRainbow{ nullptr };
+	// 取那块渐变画刷，第一次调用时建
+	winrt::Windows::UI::Composition::CompositionLinearGradientBrush getRainbowBrush();
 };

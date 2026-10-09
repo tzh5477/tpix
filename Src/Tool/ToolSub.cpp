@@ -131,6 +131,13 @@ namespace {
 		return (0.299 * r + 0.587 * g + 0.114 * b) > 200;
 	}
 
+	// 色板行末尾那块取色器入口在"还没从取色器里挑过色"时铺的七彩渐变。七档色相绕一圈，
+	// 取的就是预设表里除黑白之外的那七个色 —— 与整个界面同源，不会冒出一个别处没有的颜色。
+	// 方块只有十几个像素宽，"多种颜色的混合彩色"才一眼认得出它是"能挑任意颜色"的入口
+	constexpr UINT32 rainbowStops[7]{
+		0XCF1322FF, 0XD48806FF, 0X389E0DFF, 0X13C2C2FF, 0X0958D9FF, 0X722ED1FF, 0XEB2F96FF
+	};
+
 	// 8 位十六进制（RRGGBBAA）→ 颜色。配置被手工改坏时**返回 false 而不是抛出 / 读半截值**：
 	// 半截值看着就是"某个颜色不对"，比缺一格难查得多
 	bool parseHex8(const std::wstring& s, UINT32& out)
@@ -926,11 +933,13 @@ void ToolSub::initColorBtns()
 		if (isLightColor(colors[i])) label->setBorder(1.f, 0xA8A8A8FF);
 	}
 
-	// 末尾这块：底色就是当前选中色，点它开取色器。宽度比预设格子大 ——
-	// 对齐 pixpin 的「最大的颜色块」，宽度本身就是"这里能点开调"的提示
+	// 末尾这块：取色器入口 + 当前色预览，点它开取色器。宽度与预设格子**一样** ——
+	// 早先刻意做宽一格（54 对 32）好与预设格一眼分开，现在改成等宽，靠七彩渐变区分
 	colorMoreBtn = contentNode->makeChild<Ling::Button>();
 	colorMoreBtn->setHeight(btnSize-2.5);
-	colorMoreBtn->setWidth(colorMoreW);
+	// 与预设格子一样交给 flex 均分。这里**不能**写死宽度：写死就等于给了它一个更大的
+	// 基准尺寸，加完均分还是比旁边宽 —— 不写才会和它们一样宽
+	colorMoreBtn->setFlexGrow(1.f);
 	colorMoreBtn->setAlignItems(Ling::Align::Center);
 	colorMoreBtn->setJustifyContent(Ling::Justify::Center);
 	colorMoreBtn->setHoverBg(0XF2F2F2ff);
@@ -940,19 +949,18 @@ void ToolSub::initColorBtns()
 	colorMoreLabel = colorMoreBtn->makeChild<Ling::Label>();
 	colorMoreLabel->setAlignItems(Ling::Align::Center);
 	colorMoreLabel->setJustifyContent(Ling::Justify::Center);
-	// 比预设那 13 格大一圈：它既是入口，也是"当前到底用着哪个颜色"的唯一一处预览 ——
-	// 选中自定义色时预设行里没有任何一格能反映出来，只靠它
-	colorMoreLabel->setSize(22.f, 18.f);
+	// 尺寸 / 圆角 / 对勾字号都跟预设格一样，差只差在底色是怎么来的（见 syncColorBtns）
+	colorMoreLabel->setSize(colorMoreBlock, colorMoreBlock);
 	colorMoreLabel->setFontFamily(L"icon");
-	colorMoreLabel->setFontSize(10.f);
-	colorMoreLabel->setBorderRadius(3.f);
+	colorMoreLabel->setFontSize(8.f);
+	colorMoreLabel->setBorderRadius(2.f);
 	syncColorBtns();
 }
 
 void ToolSub::syncColorBtns()
 {
-	// 预设行：只有下标落在预设范围内时才有一格打勾。选中自定义色时一个都不打，
-	// 信息全在末尾那块当前色块上 —— 硬把勾打在某格预设上是错的（那格并不是当前色）
+	// 预设行：只有下标落在预设范围内时才有一格打勾。选中自定义色时一个都不打 ——
+	// 那个颜色本来就不在这一行上，勾打在哪儿都是错的（信息在末尾那块上）
 	for (size_t i = 0; i < colorBtns.size(); i++) {
 		// children[0] 是 Button 自己那个 Text（见 Ling::Button 构造里的 makeChild<Text>），
 		// 我们后加的那个色块标签在 [1]
@@ -963,12 +971,47 @@ void ToolSub::syncColorBtns()
 	}
 	if (!colorMoreLabel) return;
 	if (selectColorIndex >= colors.size()) selectColorIndex = 0;
+	// 两种态，判据是"这个颜色在不在行上"：
+	//   ① 预设色（初始态、以及用户在外面那排常用色卡里点的那些）→ 七彩渐变、不打勾。
+	//      预设色由它自己那一格打勾，这里再回显一遍就成了两个地方说同一件事；
+	//      而"这一块 = 挑任意颜色的入口"这个含义，只有一直铺七彩才立得住。
+	//   ② 自定义色（只可能从取色器里挑出来：拖 SV / 点自定义格 / 在常用色格里点了
+	//      一个不在这排上的色）→ 回显它并打勾。预设行里没有任何一格能反映它，
+	//      这里是唯一的预览。
+	// 两种态都直接换 visual 的画刷，而不是走 setBg —— 渐变没法用 setBg 表达，
+	// 两态走上同一条路才不至于下次改一处忘一处
+	if (selectColorIndex < presetCount_) {
+		colorMoreLabel->visual.Brush(getRainbowBrush());
+		colorMoreLabel->setText(L"");
+		colorMoreLabel->setBorder(0.f, 0);
+		return;
+	}
 	const auto cur = colors[selectColorIndex];
+	colorMoreLabel->visual.Brush(compositor.CreateColorBrush(Ling::Color(cur).getUIColor()));
 	colorMoreLabel->setText(L"\ue6ad");
-	colorMoreLabel->setBg(cur);
 	colorMoreLabel->setColor(checkInkOn(cur));
 	if (isLightColor(cur)) colorMoreLabel->setBorder(1.f, 0xA8A8A8FF);
 	else colorMoreLabel->setBorder(0.f, 0);
+}
+
+// 末尾那块在"还没从取色器里挑过色"时铺的七彩渐变画刷。
+// 起止点用 0~1：Composition 的线性渐变画刷默认就是按**包围盒相对**映射的
+// （CompositionMappingMode::Relative），所以"整块从左上到右下"这一句不关心方块多大，
+// 也就不必等布局拿到尺寸 —— 建一次一直用。斜着铺而不是横着铺：方块是正方形，
+// 斜渐变一眼看到的颜色更多
+winrt::Windows::UI::Composition::CompositionLinearGradientBrush ToolSub::getRainbowBrush()
+{
+	if (brushRainbow) return brushRainbow;
+	auto brush = compositor.CreateLinearGradientBrush();
+	brush.StartPoint({ 0.f, 0.f });
+	brush.EndPoint({ 1.f, 1.f });
+	auto stops = brush.ColorStops();
+	for (int i = 0; i < 7; i++) {
+		stops.Append(compositor.CreateColorGradientStop(
+			i / 6.f, Ling::Color(rainbowStops[i]).getUIColor()));
+	}
+	brushRainbow = brush;
+	return brush;
 }
 
 int ToolSub::presetCount() const
@@ -1519,11 +1562,13 @@ void ToolSub::initSize(int btnCount, bool withColors, bool centerOnBtn, float ex
 	// 0 是合法值：水印那三个滑块搬去了竖排浮层，工具条上一个都不留。
 	// 早先这里写的是 max(1, ...)，水印传 0 也会被按回 1，窗口凭空宽出一格滑块
 	sizeSliderCount = std::max(0, sliderCount);
-	// 色板行 = presetCount_ 格预设 + 末尾那块「当前色」。后者比别的格子宽，单独累加。
+	// 色板行 = presetCount_ 格预设 + 末尾那块取色器入口，**全按 btnSize 一格算**。
+	// 末尾那块早先比别的格子宽（54 对 32），宽度得单独累加；改成等宽之后它就是一格，
+	// 合进 count 里反而少一处会漏算的地方。
 	// 注意不能用 colors.size()：那是预设 + 自定义，自定义色不铺到行上（见 initColorBtns）
-	auto count = btnCount + (withColors ? static_cast<int>(presetCount_) : 0);
+	auto count = btnCount + (withColors ? static_cast<int>(presetCount_) + 1 : 0);
 	// 宽度只按内容算，边框画在内容之内（与 ToolMain 一致，那边宽度也只累加按钮）。
-	auto pxW = toPx(btnSize) * count + (withColors ? toPx(colorMoreW) : 0.f)
+	auto pxW = toPx(btnSize) * count
 		+ toPx(sliderSize) * sizeSliderCount
 		+ toPx(sliderMargin) * 2 * sizeSliderCount + toPx(extraW);
 	// setSize 收逻辑像素、内部再乘 dpi，所以这里把算好的物理宽高除回去
