@@ -1108,8 +1108,9 @@ bool WinPin::restoreCanvasUndo()
 	return true;
 }
 
-// 把选区那块画面从底图上取下来：CPU 一份（落回时用）+ GPU 一份（拖动期间预览），
-// 原位填白。抬手时 dropSelection 再把它落到新位置 —— 于是"拖出去"的观感是内容跟着鼠标走
+// 把选区那块画面从底图上取下来：CPU 一份（提交成位图标注时用）+ GPU 一份（拖动期间预览），
+// 原位填白。抬手时 canvasSelectUp 再把它提交成一个可分次编辑的位图标注 ——
+// 于是"拖出去 / 拉边线"的观感是内容跟着鼠标走
 void WinPin::pickUpSelection()
 {
 	if (!hasSel() || selFloat) return;
@@ -1127,6 +1128,12 @@ void WinPin::pickUpSelection()
 		CopyMemory(selBlockPx.data() + (size_t)row * sw * 4,
 			px.data() + ((size_t)(t + row) * w + l) * 4, (size_t)sw * 4);
 	}
+	// 底图是 GDI 抓来的、**alpha 通道全是 0**（它自己是 ALPHA_MODE_IGNORE，所以画在屏幕上
+	// 一点问题没有 —— 见 WinCap.cpp:951 那句注释）。可 ShapeImage 用的是 PREMULTIPLIED 位图，
+	// setImage 还会拿 alpha 乘一遍：alpha=0 ⇒ 整块被乘成全透明 ⇒ 提交出来的标注**有框有线、
+	// 内容隐形**（10-09 实测：对象建出来了、迷你条也在，拖它却"原位置 MAE 只有 1.26" —— 因为
+	// 它本来就没画出来）。这里统一按不透明补齐，预览与提交两边共用这一份像素
+	for (size_t i = 0; i + 3 < selBlockPx.size(); i += 4) selBlockPx[i + 3] = 0xFF;
 	D2D1_BITMAP_PROPERTIES1 props{};
 	props.pixelFormat = drawing->screenImg->GetPixelFormat();
 	props.dpiX = 96.0f;
@@ -1144,39 +1151,6 @@ void WinPin::pickUpSelection()
 		CopyMemory(px.data() + ((size_t)row * w + l) * 4, white.data(), white.size());
 	}
 	if (!writeScreenImg(px, w, h)) return;
-	refresh();
-}
-
-// 把抠下来的画面落回底图的当前位置。超出画布的部分裁掉（作者定的：允许拖出，超出不留）
-void WinPin::dropSelection()
-{
-	if (selBlockPx.empty() || selBlockW <= 0 || selBlockH <= 0) {
-		selFloat.Reset();
-		return;
-	}
-	std::vector<BYTE> px;
-	int w{}, h{};
-	if (!readBasePixels(px, w, h)) {
-		selFloat.Reset();
-		selBlockPx.clear();
-		selBlockW = selBlockH = 0;
-		return;
-	}
-	const int l = (int)selRect.left, t = (int)selRect.top;
-	// 目标矩形与画布求交，逐行把源块里对应那一段整段拷过去
-	const int x0 = std::max(0, l), x1 = std::min(w, l + selBlockW);
-	const int y0 = std::max(0, t), y1 = std::min(h, t + selBlockH);
-	if (x1 > x0 && y1 > y0) {
-		for (int dy = y0; dy < y1; ++dy) {
-			const int sx = x0 - l, sy = dy - t;
-			CopyMemory(px.data() + ((size_t)dy * w + x0) * 4,
-				selBlockPx.data() + ((size_t)sy * selBlockW + sx) * 4, (size_t)(x1 - x0) * 4);
-		}
-		if (!writeScreenImg(px, w, h)) return;
-	}
-	selFloat.Reset();
-	selBlockPx.clear();
-	selBlockW = selBlockH = 0;
 	refresh();
 }
 
@@ -1216,10 +1190,88 @@ void WinPin::copySelectionToClipboard()
 		CopyMemory(block.data() + (size_t)row * sw * 4,
 			px.data() + ((size_t)(t + row) * w + l) * 4, (size_t)sw * 4);
 	}
+	// 同上：底图的 alpha 全是 0，写剪贴板 / 建 ShapeImage 之前都得补齐成不透明，
+	// 否则复制出来的标注也是"有框没内容"
+	for (size_t i = 0; i + 3 < block.size(); i += 4) block[i + 3] = 0xFF;
+	// 系统剪贴板照旧写一份：作者原来那条"复制了能贴到别的程序里"不动
 	Util::saveToClipboard(sw, sh, block.data());
 	showToast(Lang::get(L"tool.canvasCopied"));
-	// 复制完退出「选择画布」，理由同 deleteSelection 末尾那条
+	// 复制 = 就地克隆一个可分次编辑的位图标注（作者要的"复制画布之后变成可分次编辑的对象"）。
+	// 源画面一个像素都不动 —— 这是"复制"不是"搬移"。落点错开一点：与原画面完全重合的话
+	// 看着像"什么都没发生"，也就没法接着把它拖出来
+	const float w0{ selRect.right - selRect.left }, h0{ selRect.bottom - selRect.top };
+	if (w0 > 1.f && h0 > 1.f) {
+		auto shape = std::make_unique<ShapeImage>(drawing.get());
+		if (shape->setImage(block, sw, sh)) {
+			const float off{ 10.f * dpi };
+			shape->placeAt(selRect.left + off, selRect.top + off, w0, h0);
+			adoptCanvasBlock(std::move(shape));
+			return;
+		}
+	}
+	// 退化（选区被拉成一条线之类）时没有可克隆的东西，按老路收尾
+	selDrag = 0;
 	setCanvasMode(false);
+}
+
+// 把一个新建好的画布块收下并交到用户手上：退出「选择画布」→ 手里换成几何图形工具 →
+// 选中它。搬移 / 拉伸 / 复制三条路共用 —— 作者要的"操作完变成可分次编辑的对象"。
+//
+// ⚠️ 为什么非切工具不可：对象选择挂在"手里拿着画笔"上（hasDrawTool），而退出「选择画布」
+// 会把 curId 清空；清空的后果是左键落进"拖窗口"那条路（见 onDown 的 !hasDrawTool 分支），
+// 块选上了也拖不动。
+// ⚠️ 为什么块的 toolId 也得设成 geom：layoutTools 里有一条"选中元素的 toolId 与当前工具
+// 不一致就把选中收掉"。两边设成同一个值才站得住。图片的 applyStyle 是早退的，
+// 挂在 geom 名下不会被样式面板改坏（见 onToolStyleChanged 里那句注释）
+ShapeBase* WinPin::adoptCanvasBlock(std::unique_ptr<ShapeBase> shape)
+{
+	if (!shape) return nullptr;
+	shape->toolId = L"geom";
+	auto* added = drawing->history->addShape(std::move(shape));
+	selDrag = 0;
+	selHandle = -1;
+	// selDrag 已归零，它才会顺手把选区状态清干净（见 setCanvasMode 里那个守卫）
+	setCanvasMode(false);
+	// 手里换成几何图形：对象选择要 hasDrawTool() 为真才生效，不换的话新块选上了也拖不动
+	if (toolMain) toolMain->selectTool(L"geom");
+	if (added) {
+		drawing->selected = added;
+		drawing->shapeHover = added;
+	}
+	refresh();
+	return added;
+}
+
+// 把提起的那块画面按当前 selRect 提交成一个位图标注。位图按**原始尺寸**存（selBlockPx），
+// 落位取当前 selRect —— 比原框宽就是横向拉伸、比原框窄就是压扁，靠的是 ShapeImage::paint
+// 那句"DrawBitmap(bitmap, rect, ..., 源矩形 = 整张图)"：它本来就是"把图画进自己的边界框"，
+// 于是"拖边线把内容拉长"这件事不用另写一行缩放代码
+ShapeBase* WinPin::commitCanvasBlock()
+{
+	// 这一趟拖拽到此为止（下面 setCanvasMode(false) 要凭这个归零才肯清选区状态）
+	selDrag = 0;
+	selHandle = -1;
+	if (!selFloat || selBlockPx.empty() || selBlockW <= 0 || selBlockH <= 0) {
+		setCanvasMode(false);
+		return nullptr;
+	}
+	const float w{ selRect.right - selRect.left }, h{ selRect.bottom - selRect.top };
+	std::unique_ptr<ShapeImage> shape;
+	if (w > 1.f && h > 1.f) {
+		auto s = std::make_unique<ShapeImage>(drawing.get());
+		if (s->setImage(selBlockPx, selBlockW, selBlockH)) {
+			s->placeAt(selRect.left, selRect.top, w, h);
+			shape = std::move(s);
+		}
+	}
+	if (!shape) {
+		// 退化（选区被拖成一条线 / 位图建不出来）：画面已经提起过、原位这会儿是白的，
+		// 把底图整个退回去，别在图上留一块白
+		restoreCanvasUndo();
+		setCanvasMode(false);
+		return nullptr;
+	}
+	return adoptCanvasBlock(std::move(shape));
 }
 
 void WinPin::canvasSelectDown(const POINT& imgPos)
@@ -1292,7 +1344,12 @@ void WinPin::canvasSelectMove(const POINT& imgPos)
 			std::max(selDown.x, cx), std::max(selDown.y, cy));
 	}
 	else if (selDrag == 3) {
-		// 改大小：把被拉的那条边 / 那个角挪到光标，归一化之后仍是个正经矩形（拖过头就翻面）
+		// 改大小 = **拉伸内容**（不再只是挪那条虚线框）：把被拉的那条边 / 那个角挪到光标，
+		// 归一化之后仍是个正经矩形（拖过头就翻面）。第一次真拖出变化时把这块画面提起来
+		//（原位填白、存一份撤销），拖动期间预览按新框拉伸着画（见 paintCanvasSelection），
+		// 松手由 canvasSelectUp 提交成一个位图标注。
+		// "没拖出变化就不提"这一条是必要的：只点一下手柄、一步没动的，不该把底图剪走
+		const auto before = selRect;
 		float l = selRect.left, t = selRect.top, r = selRect.right, b = selRect.bottom;
 		switch (selHandle) {
 		case 0: l = cx; t = cy; break;
@@ -1305,21 +1362,24 @@ void WinPin::canvasSelectMove(const POINT& imgPos)
 		case 7: l = cx; break;
 		default: break;
 		}
-		selRect = D2D1::RectF(std::min(l, r), std::min(t, b), std::max(l, r), std::max(t, b));
+		const auto next = D2D1::RectF(std::min(l, r), std::min(t, b), std::max(l, r), std::max(t, b));
+		if (next.left != before.left || next.top != before.top
+			|| next.right != before.right || next.bottom != before.bottom) {
+			if (!selFloat) pickUpSelection();
+			if (selFloat) selRect = next;
+		}
 	}
 	refreshNow();
 }
 
 void WinPin::canvasSelectUp()
 {
-	if (selDrag == 2) {
-		// 搬完了：把抠下来的画面落到新位置（选区跟着画面走，已经在那儿了）。
-		// 真搬过一趟就退出「选择画布」（作者定的）—— 只按了一下没拖动的不算，
-		// 那种情况下画面没动过，留在那个模式里等下一笔更顺手
-		if (selFloat) {
-			dropSelection();
-			setCanvasMode(false);
-		}
+	if (selDrag == 2 || selDrag == 3) {
+		// 搬完 / 拉伸完：把这块画面提交成一个可分次编辑的位图标注。原来是 dropSelection 把
+		// 像素烘回底图 —— 烘完就没得改了，而作者要的是"操作完还能反复拖拽 / 改大小 / 复制"。
+		// 只按了一下、没拖动的不算：那种情况下 selFloat 还是空的（抠图发生在第一次真拖动时，
+		// 见 canvasSelectMove），画面一个像素都没动，接着留在模式里等下一笔更顺手
+		if (selFloat) commitCanvasBlock();
 	}
 	else if (selDrag == 1) {
 		// 只点了一下、没拉出框的，当成"清掉选区"
@@ -3421,19 +3481,19 @@ bool WinPin::stepBack()
 {
 	// 「选择画布」的选区排在最前：它是最靠外的一层"当前正在做的事"
 	if (canvasSelecting() && hasSel()) {
-		// 正搬着画面的时候另说：那一刻框的坐标就是"这块画面现在在哪儿"，直接清成空框的话
-		// 紧接着的抬手会拿这个空框去落图（dropSelection），画面就糊到左上角去了。
-		// 这里的"退一步"是"不搬了"——把块放回出发的位置，再把选区收掉
-		if (selDrag == 2 && selFloat) {
-			selRect = D2D1::RectF(selBaseLT.x, selBaseLT.y,
-				selBaseLT.x + (float)selBlockW, selBaseLT.y + (float)selBlockH);
-			dropSelection();
-		}
-		// 拉框 / 改大小那些中途态本来就没动过画面，清掉就行。selDrag 一并归零：
+		// 正提着画面时（搬移中 / 拉伸预览中）按 ESC = 不做了：底图整个还原回去
+		//（提起那一刻存过一份，见 pickUpSelection），不留白块、也不产生对象。
+		// 原来是把块放回出发位置再落图 —— 那条路在"拉伸"上走不通：尺寸已经变了，
+		// "放回原处"该放回哪个尺寸没有答案
+		if (selFloat) restoreCanvasUndo();
+		// 拉框那些中途态本来就没动过画面，清掉就行。selDrag 一并归零：
 		// 抬手那一下不该再按老状态走一遍
 		selDrag = 0;
 		selHandle = -1;
 		selRect = D2D1::RectF(0.f, 0.f, 0.f, 0.f);
+		selFloat.Reset();
+		selBlockPx.clear();
+		selBlockW = selBlockH = 0;
 		refresh();
 		return true;
 	}

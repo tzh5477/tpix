@@ -475,7 +475,7 @@ private:
 	// 按下点与按下时选区的左上角（底图像素），搬移 / 改大小都按它们算绝对位置
 	D2D1_POINT_2F selDown{ 0.f, 0.f };
 	D2D1_POINT_2F selBaseLT{ 0.f, 0.f };
-	// 从底图上抠下来的那块画面：CPU 一份（抬手落回去用）、GPU 一份（拖动期间预览）。
+	// 从底图上抠下来的那块画面：CPU 一份（提交成位图标注时用）、GPU 一份（拖动期间预览）。
 	// 抠图发生在第一次真正拖动时（见 canvasSelectMove）—— 只在选区里点一下不该剪一刀
 	std::vector<BYTE> selBlockPx;
 	int selBlockW{ 0 }, selBlockH{ 0 };
@@ -492,10 +492,15 @@ private:
 	D2D1_RECT_F selActionRect(const int i) const;
 	// 把选区那块从底图上抠下来（原位填白），放进 selBlockPx / selFloat
 	void pickUpSelection();
-	// 把抠下来的画面落到底图的当前选区位置（超出画布的部分裁掉，作者定的）
-	void dropSelection();
+	// 把选区那块从底图上抹白（"删掉这块画面"）
 	void deleteSelection();
 	void copySelectionToClipboard();
+	// 把一个新建好的画布块收下并交到用户手上：退出「选择画布」→ 手里换成几何图形工具 →
+	// 选中它。搬移 / 拉伸 / 复制三条路都走这儿 —— 作者要的"操作完变成可分次编辑的对象"
+	ShapeBase* adoptCanvasBlock(std::unique_ptr<ShapeBase> shape);
+	// 把提起的那块画面按当前 selRect 提交成一个位图标注（位图按原始尺寸存、落位取 selRect，
+	// 于是"拖边线 = 内容跟着拉伸"）。返回提交出来的对象，没提交成就是空
+	ShapeBase* commitCanvasBlock();
 	// 底图整块像素替换。保留标注（不碰 history）—— 与 swapImage 那条"换整张图"的路不同
 	bool writeScreenImg(const std::vector<BYTE>& px, const int w, const int h);
 	// 底图的一级撤销：搬画面 / 删除都是一次性破坏性操作，留一步可退（见 onKey 的 Ctrl+Z）
