@@ -80,6 +80,91 @@ namespace {
 		return SUCCEEDED(encoder->Commit());
 	}
 
+	// 编一张最小单页 PDF：一页、一张图，页面尺寸 = 图像像素尺寸（1px = 1pt，页与截图一一对应）。
+	// 像素由 JPEG（DCTDecode）承载 —— 复用上面 encodeImage 的 JPEG 那条路，不另写无损压缩器：
+	// PDF 的 /FlateDecode 要 zlib deflate（Windows 没现成的），而裸 RGB 不压又太大。
+	bool encodePdfBytes(const int w, const int h, BYTE* data, std::vector<BYTE>& out,
+		const float quality)
+	{
+		if (w <= 0 || h <= 0 || !data) return false;
+		// 先编一份 JPEG 到内存，待会儿整段塞进 PDF 的图像流
+		std::vector<BYTE> jpeg;
+		{
+			ComPtr<IWICImagingFactory> factory;
+			if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER,
+				IID_PPV_ARGS(factory.GetAddressOf())))) return false;
+			ComPtr<IWICStream> stream;
+			if (FAILED(factory->CreateStream(stream.GetAddressOf()))) return false;
+			ComPtr<IStream> mem;
+			mem.Attach(SHCreateMemStream(nullptr, 0));
+			if (!mem) return false;
+			if (FAILED(stream->InitializeFromIStream(mem.Get()))) return false;
+			if (!encodeImage(stream.Get(), w, h, data, Util::ImgFormat::Jpeg, quality)) return false;
+			STATSTG st{};
+			if (FAILED(mem->Stat(&st, STATFLAG_NONAME))) return false;
+			jpeg.resize((size_t)st.cbSize.QuadPart);
+			LARGE_INTEGER zero{};
+			mem->Seek(zero, STREAM_SEEK_SET, nullptr);
+			ULONG read{ 0 };
+			if (FAILED(mem->Read(jpeg.data(), (ULONG)jpeg.size(), &read)) || read != jpeg.size()) return false;
+		}
+		// 内容流：把单位方块按页面尺寸铺开，再把图像画上去（cm 的 6 个数是矩阵 a b c d e f）
+		const auto content = std::format("q {} 0 0 {} 0 0 cm /Im0 Do Q", w, h);
+		std::string pdf;
+		size_t offsets[6]{};
+		// xref 要记每段对象开头的字节偏移，所以边拼边记，不能事后补
+		auto addObj = [&pdf, &offsets](const int id, const std::string& obj) {
+			offsets[id] = pdf.size();
+			pdf += std::to_string(id) + " 0 obj\n" + obj + "\nendobj\n";
+		};
+		// 第二行那几个 >127 的字节是 PDF 规范要求的"这是二进制文件"标记
+		pdf += "%PDF-1.4\n%\xE2\xE3\xCF\xD3\n";
+		addObj(1, "<< /Type /Catalog /Pages 2 0 R >>");
+		addObj(2, "<< /Type /Pages /Kids [3 0 R] /Count 1 >>");
+		addObj(3, std::format("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {} {}] "
+			"/Resources << /XObject << /Im0 4 0 R >> >> /Contents 5 0 R >>", w, h));
+		// 图像：DCTDecode 即 JPEG，/Length 是 JPEG 流的字节数（随后那个换行不算在内）
+		offsets[4] = pdf.size();
+		pdf += "4 0 obj\n<< /Type /XObject /Subtype /Image /Width " + std::to_string(w)
+			+ " /Height " + std::to_string(h)
+			+ " /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length "
+			+ std::to_string(jpeg.size()) + " >>\nstream\n";
+		pdf.append((const char*)jpeg.data(), jpeg.size());
+		pdf += "\nendstream\nendobj\n";
+		offsets[5] = pdf.size();
+		pdf += "5 0 obj\n<< /Length " + std::to_string(content.size()) + " >>\nstream\n"
+			+ content + "\nendstream\nendobj\n";
+		// 交叉引用表：每行严格 20 字节（10 位偏移 + 空格 + 5 位世代 + 空格 + 'n' + 空格 + 换行）
+		const auto xrefPos = pdf.size();
+		pdf += "xref\n0 6\n0000000000 65535 f \n";
+		for (int i = 1; i <= 5; ++i) pdf += std::format("{:010} 00000 n \n", offsets[i]);
+		pdf += "trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n"
+			+ std::to_string(xrefPos) + "\n%%EOF\n";
+		out.assign(pdf.begin(), pdf.end());
+		return true;
+	}
+
+	// 把一段字节整段落盘。PDF 走这里 —— WIC 的编码器流拿 PDF 没办法。
+	// 分块写是为了让大图也不至于要求一整块连续内存；中途出错就把句柄关掉返回 false
+	bool writeAllBytes(const std::wstring& path, const void* data, const size_t size)
+	{
+		HANDLE h = CreateFileW(path.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS,
+			FILE_ATTRIBUTE_NORMAL, nullptr);
+		if (h == INVALID_HANDLE_VALUE) return false;
+		auto p = (const BYTE*)data;
+		size_t left = size;
+		bool ok = true;
+		while (left > 0) {
+			DWORD written{ 0 };
+			auto chunk = (DWORD)std::min<size_t>(left, 1u << 20);
+			if (!WriteFile(h, p, chunk, &written, nullptr) || written == 0) { ok = false; break; }
+			p += written;
+			left -= written;
+		}
+		CloseHandle(h);
+		return ok;
+	}
+
 	// quirc 交出来的是裸字节流：BYTE 类型的二维码现实中基本都是 UTF-8（微信、支付宝
 	// 生成的都是），Kanji 类型按 ISO 18004 规定是 Shift-JIS。所以先按 UTF-8 严格解，
 	// 解不通再退回对应的本地代码页，避免把中文变成一堆问号
@@ -400,6 +485,12 @@ bool Util::saveToFile(const std::wstring& path, const int w, const int h, BYTE* 
 	const ImgFormat format, const float quality)
 {
 	if (path.empty() || w <= 0 || h <= 0 || !data) return false;
+	// PDF 不是 WIC 能编的东西：先编出整份 PDF 字节再落盘
+	if (format == ImgFormat::Pdf) {
+		std::vector<BYTE> bytes;
+		if (!encodePdfBytes(w, h, data, bytes, quality)) return false;
+		return writeAllBytes(path, bytes.data(), bytes.size());
+	}
 	ComPtr<IWICImagingFactory> factory;
 	auto hr = CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(factory.GetAddressOf()));
 	if (FAILED(hr)) return false;
@@ -415,6 +506,8 @@ bool Util::encodeImageBytes(const int w, const int h, const BYTE* data, std::vec
 	const ImgFormat format, const float quality)
 {
 	if (w <= 0 || h <= 0 || !data) return false;
+	// PDF 不是 WIC 能编的东西：直接编出整份 PDF 字节
+	if (format == ImgFormat::Pdf) return encodePdfBytes(w, h, const_cast<BYTE*>(data), out, quality);
 	ComPtr<IWICImagingFactory> factory;
 	auto hr = CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER,
 		IID_PPV_ARGS(factory.GetAddressOf()));
@@ -450,6 +543,7 @@ std::wstring Util::getExtOfFormat(const ImgFormat format)
 	{
 	case ImgFormat::Jpeg: return L"jpg";
 	case ImgFormat::WebP: return L"webp";
+	case ImgFormat::Pdf: return L"pdf";
 	default: return L"png";
 	}
 }
@@ -458,7 +552,7 @@ int Util::getSaveFormat()
 {
 	// 夹一遍值域：配置文件可能被手工改坏，而下面直接拿它当枚举用
 	auto val = Setting::get()->getSaveFormat();
-	if (val < 0 || val > (int)ImgFormat::WebP) return (int)ImgFormat::Png;
+	if (val < 0 || val > (int)ImgFormat::Pdf) return (int)ImgFormat::Png;
 	return val;
 }
 

@@ -325,7 +325,7 @@ void WinSettingCommon::initSaveCtrls()
 {
     // 保存格式：选项直接写扩展名（大写），比另起一套译名更不容易对不上
     std::vector<std::wstring> fmtItems;
-    for (int i = 0; i < 3; ++i) {
+    for (int i = 0; i < 4; ++i) {
         auto ext = Util::getExtOfFormat((Util::ImgFormat)i);
         for (auto& c : ext) if (c >= L'a' && c <= L'z') c -= 32;
         fmtItems.push_back(ext);

@@ -78,7 +78,7 @@ public:
 	std::wstring getToolStr(const std::wstring& tool, const std::wstring& key, const std::wstring& def);
 	void setToolStr(const std::wstring& tool, const std::wstring& key, const std::wstring& val);
 	// 输出与自动保存。存在 config.json 的 save 组里：
-	// format（0=PNG / 1=JPEG / 2=WebP）、auto（自动保存，不弹另存为）、
+	// format（0=PNG / 1=JPEG / 2=WebP / 3=PDF）、auto（自动保存，不弹另存为）、
 	// dir（自动保存目录，空串表示走每次弹窗时用户选的那个目录所在的数据目录）、
 	// nameTpl（文件名模板，见 Util::formatFileName）
 	int getSaveFormat();

@@ -13,8 +13,9 @@ public:
 	// 剪贴板当前内容的形态。图与文都有可能同时在剪贴板上，这里按"图优先"只报一种。
 	// 放在类里：调用方都用 Util::ClipContent 限定名取它
 	enum class ClipContent { None, Image, Text };
-	// 存盘格式。PNG 之外都是"有损/无 alpha"的格式，编码前按各格式的规矩处理像素
-	enum class ImgFormat { Png = 0, Jpeg, WebP };
+	// 存盘格式。PNG 之外都是"有损/无 alpha"的格式，编码前按各格式的规矩处理像素。
+	// Pdf 不是一种图像编码：它把图按 JPEG 先编一遍再裹成一张单页 PDF（见 .cpp 的 encodePdfBytes）
+	enum class ImgFormat { Png = 0, Jpeg, WebP, Pdf };
 	// 同时写入 CF_DIBV5（Office / 微信 / WPS 这类原生程序认）和 "PNG" 注册格式
 	//（浏览器 / Electron 程序认），两份都带 alpha
 	static void saveToClipboard(const int w, const int h, BYTE* data);
