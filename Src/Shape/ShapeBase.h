@@ -119,6 +119,13 @@ public:
 		ID2D1Brush* fill, ID2D1Brush* border, ID2D1Brush* shadow);
 	// 画整排图标：只有图标本身，不再垫白色圆底
 	void paintActionBtns(ID2D1DeviceContext* ctx);
+	// 在 c 处画一枚旋转图标（半弧 + 尾巴上那支箭头）。单选那枚手柄（paintRotateHandleAt）与
+	// **多选那一批的批量旋转手柄**（WinPin，它不是 ShapeBase、够不到 protected 的那个）
+	// 共用这一份几何 —— 同一个编辑器里两处"转"的图标不该长得不一样。
+	// halo 传 nullptr 就不描白衬底，haloExtra 是衬底比原色多出来的那圈笔宽
+	static void paintRotateIcon(ID2D1DeviceContext* ctx, const D2D1_POINT_2F& c,
+		const float draggerSize, const float dpi,
+		ID2D1Brush* fg, ID2D1Brush* halo, const float haloExtra);
 	// 动作图标的统一画法：先把同一份几何用白笔加粗描一遍当衬底，再用原色笔画上去。
 	// 去掉圆底之后浅蓝图标压在浅色底图上会读不出来，垫一圈白边就任何底图都看得清。
 	// 用模板而不是 std::function：每帧都要画几枚，省掉一层类型擦除开销
@@ -221,7 +228,7 @@ protected:
 	// 旋转手柄的方框（底图坐标），与它静止时所在的方向（度，顺时针为正、0 = 正上方）
 	D2D1_RECT_F rotateDragger{};
 	float rotateRestAngle{ 0.f };
-	// 手柄的两段几何：圆弧（描边）与两端的箭头（填充）。每帧重建，用 Release 拿地址
-	Microsoft::WRL::ComPtr<ID2D1PathGeometry> rotateArc, rotateArrows;
+	// 手柄那两段几何（圆弧 + 箭头）本来缓存在这里，现在由 paintRotateIcon 每次现建 ——
+	// 几何本来就是每帧重建的（见那里的 Release），留成成员只会多两处"谁改谁忘清"的隐患
 private:
 };

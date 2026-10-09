@@ -267,8 +267,17 @@ void ShapeBase::paintRotateHandle(ID2D1DeviceContext* ctx)
 
 void ShapeBase::paintRotateHandleAt(ID2D1DeviceContext* ctx, const D2D1_POINT_2F& c)
 {
+	// 几何与多选那条批量手柄共用一份（见 paintRotateIcon）—— 原来这两处各写一遍，
+	// 改了一处另一处就走样
+	paintRotateIcon(ctx, c, draggerSize, win->getDpi(), brushDragger.Get(), brushDraggerFill.Get(),
+		draggerSize * 0.27f);
+}
+
+void ShapeBase::paintRotateIcon(ID2D1DeviceContext* ctx, const D2D1_POINT_2F& c,
+	const float draggerSize, const float dpi, ID2D1Brush* fg, ID2D1Brush* halo, const float haloExtra)
+{
+	if (!ctx || !fg) return;
 	auto d2d = Ling::D2D::get();
-	auto dpi = win->getDpi();
 	// 不再垫白圆底（作者：只保留圆圈内部的小图标）。
 	// 图标：半弧 + 一支箭头（转圈的意思），与另外两个角标的画法一样用浅蓝。
 	// 弧从右下角起、越过顶部、停在左侧（正对屏幕左边），末端一支箭头顺着走向往下 ——
@@ -277,9 +286,11 @@ void ShapeBase::paintRotateHandleAt(ID2D1DeviceContext* ctx, const D2D1_POINT_2F
 	auto arrowSize{ draggerSize * 0.34f };
 	const float start = -25.f, sweep = 205.f;
 	const int steps = 28;
-	d2d->d2dFactory->CreatePathGeometry(rotateArc.ReleaseAndGetAddressOf());
+	ComPtr<ID2D1PathGeometry> rotateArc, rotateArrows;
+	d2d->d2dFactory->CreatePathGeometry(rotateArc.GetAddressOf());
+	if (!rotateArc) return;
 	ComPtr<ID2D1GeometrySink> arcSink;
-	rotateArc->Open(arcSink.GetAddressOf());
+	if (FAILED(rotateArc->Open(arcSink.GetAddressOf()))) return;
 	// 屏幕角度 -> 点：0 度朝右、逆时针为正（屏幕 y 向下，所以纵坐标取负）
 	auto pointAt = [&](float deg) {
 		auto rad = deg * 3.14159265358979323846f / 180.f;
@@ -292,9 +303,10 @@ void ShapeBase::paintRotateHandleAt(ID2D1DeviceContext* ctx, const D2D1_POINT_2F
 	arcSink->EndFigure(D2D1_FIGURE_END_OPEN);
 	arcSink->Close();
 	// 末端那一支箭头：沿圆弧该点的切向指出去，两腰落在切向的法向上
-	d2d->d2dFactory->CreatePathGeometry(rotateArrows.ReleaseAndGetAddressOf());
+	d2d->d2dFactory->CreatePathGeometry(rotateArrows.GetAddressOf());
+	if (!rotateArrows) return;
 	ComPtr<ID2D1GeometrySink> headSink;
-	rotateArrows->Open(headSink.GetAddressOf());
+	if (FAILED(rotateArrows->Open(headSink.GetAddressOf()))) return;
 	{
 		auto deg{ start + sweep };
 		auto rad = deg * 3.14159265358979323846f / 180.f;
@@ -314,10 +326,11 @@ void ShapeBase::paintRotateHandleAt(ID2D1DeviceContext* ctx, const D2D1_POINT_2F
 	headSink->Close();
 	// 两段几何先一起白描边打底，再上原色：弧描边、箭头填充（描边那遍把箭头的轮廓也描上，
 	// 填充之后外圈仍留一道白边）
-	paintIconHaloed(ctx, dpi, [&](ID2D1Brush* b, float w) {
+	auto paint = [&](ID2D1Brush* b, float w) {
 		ctx->DrawGeometry(rotateArc.Get(), b, w);
 		ctx->DrawGeometry(rotateArrows.Get(), b, w);
-	});
-	ctx->DrawGeometry(rotateArc.Get(), brushDragger.Get(), dpi);
-	ctx->FillGeometry(rotateArrows.Get(), brushDragger.Get());
+	};
+	if (halo) paint(halo, dpi + haloExtra);
+	paint(fg, dpi);
+	ctx->FillGeometry(rotateArrows.Get(), fg);
 }
