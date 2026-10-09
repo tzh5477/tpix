@@ -138,6 +138,28 @@ namespace {
 		return (0.299 * r + 0.587 * g + 0.114 * b) > 200;
 	}
 
+	// 色块悬停时的底色：把颜色朝"反方向"挪一档 —— 暗色提亮、亮色压暗。
+	//
+	// ⚠️ **不能**照别的按钮那样铺一层灰底（ToolSub 那排色卡铺的是 `0xF2F2F2FF`）：
+	// 那边灰底铺在 Button 上、颜色画在**子 Label** 上，灰只是个框；这里颜色**就是**
+	// Button 自己的底色，铺灰等于把颜色整个抹掉。叠加 `Button::onMove` 进 hover 时
+	// 无条件 `visual.Brush(hoverBrush)`、而 `hoverBrush` 只在 `setHoverBg` 里建过
+	// ⇒ 没设过 hoverBg 的按钮一悬停画刷被换成空，整块变成**空白**（这就是本来的毛病）。
+	//
+	// 分方向的阈值取 128（中灰），比 `isLightColor` 的 200 低：那个 200 问的是
+	// "太亮了、在白底上得描边"，这里问的是"提亮还是压暗更看得出来"，各管各的
+	UINT32 hoverShadeOf(UINT32 rgba)
+	{
+		const int r = (rgba >> 24) & 0xFF, g = (rgba >> 16) & 0xFF, b = (rgba >> 8) & 0xFF;
+		const bool dark = (0.299 * r + 0.587 * g + 0.114 * b) <= 128;
+		const auto ch = [dark](int v) {
+			// 暗色朝白混 28%，亮色整体乘 0.82 —— 两个方向都保证色相不变
+			const double nv = dark ? v + (255 - v) * 0.28 : v * 0.82;
+			return (UINT32)std::lround(std::clamp(nv, 0.0, 255.0));
+		};
+		return (ch(r) << 24) | (ch(g) << 16) | (ch(b) << 8) | 0xFF;
+	}
+
 	class Picker : public Ling::WinBase
 	{
 	public:
@@ -331,12 +353,18 @@ namespace {
 			btn->setSize(cell - 4.f, cell - 4.f);
 			btn->setMargin(2.f);          // 四周各 2 的缝，格子步距仍是 cell
 			btn->setBg(color);
+			// 颜色就画在这个 Button 自己的底色上，所以 hover 必须给它一个**还是这个颜色**的
+			// 底色，否则 `Button::onMove` 会把画刷换成空、整块变空白（见 hoverShadeOf）
+			const auto hoverFill = hoverShadeOf(color);
+			btn->setHoverBg(hoverFill);
 			btn->setBorderRadius(3.f);
 			btn->setFontFamily(L"icon");
 			btn->setFontSize(9.f);
-			// 对勾的黑白跟着底色走，浅色块还要描一圈边，否则白块在白色面板上是个看不见的洞
+			// 对勾的黑白跟着底色走，浅色块还要描一圈边，否则白块在白色面板上是个看不见的洞。
+			// 悬停态按**提亮/压暗之后**的底色重算：按原色算的话，恰好越过判据的暗色一提亮
+			// 就变成"白勾画在浅色块上"，反而看不清了
 			btn->setColor(checkInkOn(color));
-			btn->setHoverColor(checkInkOn(color));
+			btn->setHoverColor(checkInkOn(hoverFill));
 			if (isLightColor(color)) btn->setBorder(1.f, 0xA8A8A8FF);
 			// 当前用的那个颜色打勾。只按建面板那一刻算 —— 拖 SV 的过程中不打勾更新，
 			// 那是每帧都要重铺一遍格子的事，而拖动时用户看的是预览块
