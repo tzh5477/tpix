@@ -293,6 +293,77 @@ def icon_chat(pen):
         seg(pen, 240, y, 784, y, 60)
 
 
+# ——— AI 回答条上那两枚（重新生成 / 追问）———————————————————————
+# 它们与「复制」并排放在同一条 20 像素高的图标行里，所以轮廓必须比细节重要：
+# 每枚只留一个大形状，缩到 13 像素也分得清谁是谁。
+
+def arc_band(pen, cx, cy, r, w, a0, a1, steps=16):
+    """一段有宽度的圆弧（环形的一段）。角度是数学惯例：0 度朝右、逆时针为正。
+    外圈从 a0 逆时针走到 a1，内圈再顺着回来 —— 闭合之后与 ring() 同向（顺时针）。"""
+    outer, inner = [], []
+    for i in range(steps + 1):
+        a = a0 + (a1 - a0) * i / steps
+        outer.append(_p(cx, cy, r + w / 2.0, a))
+        inner.append(_p(cx, cy, r - w / 2.0, a))
+    pts = outer + list(reversed(inner))
+    tri_wind(pen, pts)
+
+
+def tri_wind(pen, pts):
+    """按给定点序画一个闭合多边形，并保证它是**顺时针**的。
+    非零环绕要求会重叠的形状同向（见文件头），而箭头那种三角形是算出来的，
+    点序容易反 —— 交给这里统一矫正，省得每处自己推一遍。"""
+    if len(pts) < 3:
+        return
+    area = 0.0
+    for i in range(len(pts)):
+        x0, y0 = pts[i]
+        x1, y1 = pts[(i + 1) % len(pts)]
+        area += x0 * y1 - x1 * y0
+    if area > 0:      # 正的有向面积 = 逆时针，翻过来
+        pts = [pts[0]] + list(reversed(pts[1:]))
+    pen.moveTo(pts[0])
+    for p in pts[1:]:
+        pen.lineTo(p)
+    pen.closePath()
+
+
+def _arrow_head(pen, bx, by, tx, ty, size):
+    """在 (bx,by) 处画一支顺着 (tx,ty) 方向指的三角箭头。"""
+    # 法向：切向转 90 度
+    nx, ny = -ty, tx
+    tip = (bx + tx * size, by + ty * size)
+    p1 = (bx + nx * size * 0.62, by + ny * size * 0.62)
+    p2 = (bx - nx * size * 0.62, by - ny * size * 0.62)
+    tri_wind(pen, [tip, p1, p2])
+
+
+def icon_refresh(pen):
+    """留口的圆环 + 末端一支箭头 = 重新生成（再来一份答案）。
+    与「依次贴」那两个的箭头分得开：这里箭头是顺着圆弧走的切线，不是一根竖箭头。"""
+    cx, cy, r, w = CX, CY, 292, 68
+    # 从 -30 度顺时针扫 280 度到 -310 度（等价于 50 度）—— 留出的 80 度缺口落在右侧
+    a0, a1 = -30.0, -310.0
+    arc_band(pen, cx, cy, r, w, a0, a1)
+    rad = math.radians(a1)
+    bx, by = cx + r * math.cos(rad), cy + r * math.sin(rad)
+    # 顺时针方向在该点的切向：角度递减 -> 切向 = (sin, -cos)
+    _arrow_head(pen, bx, by, math.sin(rad), -math.cos(rad), 172)
+
+
+def icon_chat_plus(pen):
+    """气泡 + 加号 = 追问（把这段回答接上自己的问题）。
+    与 icon_chat 只差里面那两行字换成一个加号 —— 同一个气泡形状，一眼知道是一家。"""
+    w = 58
+    rrect_ring(pen, 96, 232, 928, 800, w, 96)
+    pen.moveTo((240, 240))
+    pen.lineTo((430, 240))
+    pen.lineTo((240, 40))
+    pen.closePath()
+    seg(pen, 512, 630, 512, 402, 66)
+    seg(pen, 398, 516, 626, 516, 66)
+
+
 ICONS = [
     (0xE909, 'arrowPlain', icon_arrow_plain),
     (0xE90A, 'arrowTaper', icon_arrow_taper),
@@ -314,6 +385,9 @@ ICONS = [
     (0xE90F, 'clipOlder', icon_clip_older),
     (0xE910, 'translate', icon_translate),
     (0xE911, 'chat', icon_chat),
+    # AI 回答条上那两枚（见上面一段的说明）
+    (0xE912, 'refresh', icon_refresh),
+    (0xE913, 'chatPlus', icon_chat_plus),
 ]
 
 
