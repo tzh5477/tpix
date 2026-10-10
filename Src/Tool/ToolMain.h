@@ -39,8 +39,15 @@ private:
 	void paintSelectIcon(ID2D1DeviceContext* ctx, float w, float h);
 	// 描一支 I 形文本光标（「选文」那枚）。同样是归一化坐标 + 等比缩放，见实现
 	void paintTextSelectIcon(ID2D1DeviceContext* ctx, float w, float h);
+	// 把那两枚自绘图标（选择对象 / 选文）重画一遍。它们不写字、颜色画在画布上，
+	// 选中态要翻白就只能重画 —— selectTool / cancelSelect / setToggle 改完选中态都要叫一次
+	void paintIcons();
 	// 未选中态配色，选中态在 onClick 里就地设置
 	void applyNormalStyle(Ling::Button* btn);
+	// 选中态配色：铺满主题色实底 + 图标 / 文字翻白（与设置页左侧菜单选中项、开关「开」态同款）。
+	// 原来这里用的是 Setting::getThemeSoft()「白底掺 10% 主题色」的浅染，浅到在白色工具条上
+	// 几乎看不出选中；作者要求"背景色与主题色一致"，于是改成实底
+	void applySelectStyle(Ling::Button* btn);
 	// 按当前 dpi 把窗口尺寸算出来并应用。构造时算一次，DPI 变了再算一次
 	void refreshSize();
 private:
@@ -83,6 +90,8 @@ private:
 	// 自绘图标（那支 I 形文本光标）的墨色。取值与 Button 默认字色同色，
 	// 免得同一排里有一枚比别的深一档
 	Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brushIconInk;
+	// 「选文」选中时那支 I 形光标的墨色（白）。选中格铺了主题色实底，深墨在上面对比度不够
+	Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brushIconInkOn;
 	// 悬停提示。要 hwnd，所以在 onCreated 里才建得起来
 	std::unique_ptr<Tip> tip;
 };

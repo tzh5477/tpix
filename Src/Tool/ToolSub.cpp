@@ -1122,13 +1122,22 @@ void ToolSub::toggleColorPicker(Ling::Node* anchor)
 void ToolSub::applyToggleStyle(Ling::Button* btn, bool selected)
 {
 	if (selected) {
+		// 选中态 = 铺满主题色实底 + 图标翻白，与主工具条那枚选中工具、设置页左侧菜单
+		// 选中项、开关「开」态同一套。原来这里铺的是 Setting::getThemeSoft() 的浅染，
+		// 而 getThemeSoft 本身算错成脏灰（见那个函数的注释）—— 一块灰跟主题色毫无关系
+		const unsigned int accent = (Setting::getThemeColor() << 8) | 0xFF;
 		// 选中态 hover 色与常态一致，避免鼠标移上去时选中效果被 hover 覆盖掉
-		btn->setBg((Setting::getThemeSoft() << 8) | 0xFF);
-		btn->setHoverBg((Setting::getThemeSoft() << 8) | 0xFF);
+		btn->setBg(accent);
+		btn->setHoverBg(accent);
+		btn->setColor(0xFFFFFFFF);
+		btn->setHoverColor(0xFFFFFFFF);
 	}
 	else {
 		btn->setBg(0);
 		btn->setHoverBg(0xF2F2F2ff);
+		// 字色跟着复位：setColor 是粘的，不复位取消选中那枚会一直是白图标
+		btn->setColor(0x333333ff);
+		btn->setHoverColor(0x333333ff);
 	}
 }
 

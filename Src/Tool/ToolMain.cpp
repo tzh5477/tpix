@@ -85,6 +85,8 @@ void ToolMain::onCreated()
 	d2d->deviceContext->CreateSolidColorBrush(D2D1::ColorF(0x404040), brushCursorEdge.GetAddressOf());
 	// 自绘图标用的是 0x333333，与 Button 的默认字色一致
 	d2d->deviceContext->CreateSolidColorBrush(D2D1::ColorF(0x333333), brushIconInk.GetAddressOf());
+	// 选中格铺了主题色实底，自绘图标的墨色得翻白才看得清（见 paintTextSelectIcon）
+	d2d->deviceContext->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::White), brushIconInkOn.GetAddressOf());
 	body->setBg(0xFFFFFFFF);
 	body->setBorder(1.f, 0xA8A8A8ff);
 	body->setAlignItems(Ling::Align::Center);
@@ -160,8 +162,15 @@ void ToolMain::syncGeomIcon()
 void ToolMain::layout()
 {
 	Ling::WinBase::layout();
-	// 与 ToolSub 的样例格子同一套：startPaint / finishPaint 要成对用，
-	// 且这一层底子是透明的 —— 按钮的常态 / 悬停底色从它下面透上来
+	paintIcons();
+}
+
+// 两枚自绘图标重画一遍。从 layout() 里抽出来是为了让"选中态变了"也能就地重刷 ——
+// 那两枚不写字、图标是画在画布上的，翻墨色只能重画（Button::setColor 管不到它俩）。
+// 与 ToolSub 的样例格子同一套：startPaint / finishPaint 要成对用，
+// 且这一层底子是透明的 —— 按钮的常态 / 悬停底色从它下面透上来
+void ToolMain::paintIcons()
+{
 	auto paint = [](Ling::Canvas* canvas, auto&& fn) {
 		if (!canvas) return;
 		auto ctx = canvas->startPaint();
@@ -217,6 +226,9 @@ void ToolMain::paintSelectIcon(ID2D1DeviceContext* ctx, const float w, const flo
 void ToolMain::paintTextSelectIcon(ID2D1DeviceContext* ctx, const float w, const float h)
 {
 	if (!brushIconInk) return;
+	// 选中时这枚格子铺的是主题色实底（见 applySelectStyle），深墨压在上面对比度不够 ⇒ 翻白。
+	// 「选文」是两态开关而不是 curId 上的工具，状态住在 WinPin 里，所以问它要
+	auto ink = win->getTextSelect() && brushIconInkOn ? brushIconInkOn.Get() : brushIconInk.Get();
 	const float s{ 12.f * dpi };                 // 光标墨迹高度
 	const float boxW{ s * 0.5f };                // 一支光标大约是 1:2 的瘦长条
 	const float ox{ (w - boxW) / 2.f }, oy{ (h - s) / 2.f };
@@ -240,17 +252,36 @@ void ToolMain::paintTextSelectIcon(ID2D1DeviceContext* ctx, const float w, const
 	sink->AddLine(D2D1::Point2F(x1, y1));
 	sink->EndFigure(D2D1_FIGURE_END_OPEN);
 	sink->Close();
-	ctx->DrawGeometry(geo.Get(), brushIconInk.Get(), 1.4f * dpi);
+	ctx->DrawGeometry(geo.Get(), ink, 1.4f * dpi);
 }
 
 void ToolMain::applyNormalStyle(Ling::Button* btn)
 {
 	btn->setBg(0);
 	btn->setHoverBg(0xF2F2F2ff);
+	// 字色也要复位：选中态把图标翻成白（见 applySelectStyle），而 Button::setColor 是粘的 ——
+	// 不复位的话取消选中的那枚会一直是白的，白图标压在白色工具条上等于没了
+	btn->setColor(0x333333ff);
+	btn->setHoverColor(0x333333ff);
+	paintIcons();
+}
+
+// 选中底色。与设置页左侧菜单选中项、开关「开」态同一套：铺满主题色，图标 / 文字翻白
+void ToolMain::applySelectStyle(Ling::Button* btn)
+{
+	const unsigned int accent = (Setting::getThemeColor() << 8) | 0xFF;
+	// 选中态 hover 色与常态一致，避免鼠标移上去时选中效果被 hover 覆盖掉
+	btn->setBg(accent);
+	btn->setHoverBg(accent);
+	btn->setColor(0xFFFFFFFF);
+	btn->setHoverColor(0xFFFFFFFF);
+	// 两枚自绘图标不认 setColor，得重画才翻得过墨色来。放在这里而不是各个调用点，
+	// 是为了让 setToggle / selectTool / cancelSelect 三条路都不会漏
+	paintIcons();
 }
 
 // 选中底色（「选文」那个两态开关、以及「选择对象」那个常驻模式都用它）。
-// 与 selectTool 里给工具按钮上的那层是同一种青色，但两者互斥地发生：
+// 与 selectTool 里给工具按钮上的那层是同一种实底，但两者互斥地发生：
 // 拿起任何一个标注工具都会先把选文关掉（见 selectTool 开头）
 void ToolMain::setToggle(const std::wstring& id, bool on)
 {
@@ -258,8 +289,7 @@ void ToolMain::setToggle(const std::wstring& id, bool on)
 	{
 		if (b->id != id) continue;
 		if (on) {
-			b->setBg((Setting::getThemeSoft() << 8) | 0xFF);
-			b->setHoverBg((Setting::getThemeSoft() << 8) | 0xFF);
+			applySelectStyle(b);
 		}
 		else {
 			applyNormalStyle(b);
@@ -383,8 +413,7 @@ void ToolMain::selectTool(const std::wstring& id)
 		}
 		if (b->id == id)
 		{
-			b->setBg((Setting::getThemeSoft() << 8) | 0xFF);
-			b->setHoverBg((Setting::getThemeSoft() << 8) | 0xFF);
+			applySelectStyle(b);
 		}
 	}
 	curId = id;
