@@ -5,7 +5,9 @@ class WinCap;
 class Tip;
 // 录屏工具条。两种形态，切换时把 body 的子节点整批重建（同 ToolSub 的做法）：
 //   未录制：MP4 / GIF 二选一 + 系统声 / 麦克风开关 + 开始录制 + 退出
-//   录制中：计时文字 + 暂停 / 继续 + 丢弃 / 存文件 / 存剪切板
+//   录制中：计时文字 + 暂停 / 继续 + 丢弃 / 存文件 / 存剪切板 / 编辑（仅 MP4）
+// 「编辑」是"停录并进裁剪窗"：裁剪靠重编码，GIF 那条自己一套 8bit 调色板，
+// 不支持裁剪，所以 GIF 记录形态下这一枚不出现
 class ToolVideo : public Ling::WinBase
 {
 public:
@@ -24,6 +26,8 @@ private:
 	void startRecord();
 	// 停止录制并另存为文件；计时到上限时也走这里
 	void saveFile();
+	// 停止录制 → 关掉截图流程 → 把临时文件交给编辑窗裁剪
+	void editRecord();
 	// 停止录制后收工：toClipboard 为真则把文件放进剪切板，否则直接删掉
 	void finishRecord(bool toClipboard);
 	void updateTimerText();
@@ -50,6 +54,8 @@ private:
 	Ling::Button* btnMic{ nullptr };
 	Ling::Label* timerLabel{ nullptr };
 	Ling::Button* btnPause{ nullptr };
+	// 录制中那一枚「编辑」（只 MP4 形态有）
+	Ling::Button* btnEdit{ nullptr };
 	// 暂停按钮当前绑的提示文案，见 applyPauseStyle
 	std::wstring pauseTip;
 	// 0 = MP4，1 = GIF

@@ -1,6 +1,7 @@
 ﻿#include "pch.h"
 #include "../Setting.h"
 #include "../Win/WinCap.h"
+#include "../Win/WinVideoEdit.h"
 #include "../Util.h"
 #include "../Lang.h"
 #include "../Tip.h"
@@ -64,8 +65,10 @@ float ToolVideo::settingWidth() const
 
 float ToolVideo::recordingWidth() const
 {
-	// 左右内边距 + 计时 + 分隔符 + 暂停 + 分隔符 + 丢弃/存文件/存剪切板
-	return timerW + spliterW * 2 + btnSize * 4;
+	// 左右内边距 + 计时 + 分隔符 + 暂停 + 分隔符 + 丢弃/存文件/存剪切板，
+	// MP4 形态再多一枚「编辑」（GIF 不支持裁剪，不出现）
+	const float actionBtns = (selectIndex == 0) ? 5.f : 4.f;
+	return timerW + spliterW * 2 + btnSize * actionBtns;
 }
 
 Ling::Node* ToolVideo::makeSpliter()
@@ -170,6 +173,7 @@ void ToolVideo::showRecording()
 	btnSpeaker = nullptr;
 	btnMic = nullptr;
 	btnPause = nullptr;
+	btnEdit = nullptr;
 	timerLabel = nullptr;
 	tip->hide();
 	body->removeAllChildren();
@@ -210,6 +214,15 @@ void ToolVideo::showRecording()
 	auto btnClipboard = makeIconBtn(L"\ue6ad");
 	btnClipboard->onClick.add([this](Ling::Button*) { finishRecord(true); });
 	tip->bind(btnClipboard, Lang::get(L"video.stopClipboard"));
+	// 「编辑」= 停录并带着临时文件进裁剪窗。只有 MP4 有 —— GIF 是 8bit 调色板 +
+	// 自己那套编码器，裁剪要重做量化与调色板，本期不做（见 Doc/P1-录后轻量视频编辑设计.md）
+	if (selectIndex == 0) {
+		btnEdit = makeIconBtn(L"\ue601");   // 铅笔，与 AI 对话窗的「编辑」同一枚
+		btnEdit->onClick.add([this](Ling::Button*) { editRecord(); });
+		// 键名是 video.editTip 不是 video.edit —— video.edit 让给裁剪窗那一组文案了
+		// （Lang::get 按点分层级，video.edit 必须是对象才取得到 video.edit.title）
+		tip->bind(btnEdit, Lang::get(L"video.editTip"));
+	}
 	// 换形态后宽度变了（多一个暂停按钮），重走一遍摆放规则，
 	// 否则工具条右边缘会伸出录制区那一截
 	win->layoutTool(this);
@@ -316,6 +329,24 @@ bool ToolVideo::onSaveKey(bool toClipboard)
 	if (toClipboard) finishRecord(true);
 	else saveFile();
 	return true;
+}
+
+void ToolVideo::editRecord()
+{
+	hide();
+	killTimer(tickTimerId);
+	auto srcPath = win->stopRecord();
+	// 一帧都没录到（刚开录就点了编辑）：没东西可裁，整个流程收工。
+	// stopRecord 那边已经把空壳文件删了
+	if (srcPath.empty()) {
+		win->close();
+		return;
+	}
+	// 先把截图流程关掉再开编辑窗：录制遮罩/工具条都该收工了，编辑窗是另一件事。
+	// WinCap 的 C++ 对象要到下一轮消息循环才释放（见 WinCap::onClosed），
+	// 所以这里紧接着用 srcPath 是安全的
+	win->close();
+	WinVideoEdit::init(srcPath);
 }
 
 void ToolVideo::finishRecord(bool toClipboard)
