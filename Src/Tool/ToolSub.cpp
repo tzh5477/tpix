@@ -1123,8 +1123,8 @@ void ToolSub::applyToggleStyle(Ling::Button* btn, bool selected)
 {
 	if (selected) {
 		// 选中态 hover 色与常态一致，避免鼠标移上去时选中效果被 hover 覆盖掉
-		btn->setBg(0xe6f4ffff);
-		btn->setHoverBg(0xe6f4ffff);
+		btn->setBg((Setting::getThemeSoft() << 8) | 0xFF);
+		btn->setHoverBg((Setting::getThemeSoft() << 8) | 0xFF);
 	}
 	else {
 		btn->setBg(0);

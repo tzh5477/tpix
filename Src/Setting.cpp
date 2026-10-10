@@ -840,6 +840,42 @@ void Setting::setLongHorizontal(bool val)
 	save();
 }
 
+JsonObject Setting::getUiObj()
+{
+	auto obj = configObj.GetNamedObject(L"ui", nullptr);
+	if (!obj) {
+		obj = JsonObject();
+		configObj.SetNamedValue(L"ui", obj);
+	}
+	return obj;
+}
+
+unsigned int Setting::getThemeColor()
+{
+	// 默认 0x1677FF：写死在各处的那种强调蓝。老配置没有 ui 组，取到的就是它。
+	// 三个取值都声明成 static（调用点写起来短），于是这里得自己拿实例 ——
+	// getUiObj / save 都是非静态的
+	return static_cast<unsigned int>(Setting::get()->getUiObj().GetNamedNumber(L"theme", 0x1677FF)) & 0xFFFFFF;
+}
+
+void Setting::setThemeColor(unsigned int rgb)
+{
+	auto s = Setting::get();
+	s->getUiObj().SetNamedValue(L"theme", JsonValue::CreateNumberValue(static_cast<double>(rgb & 0xFFFFFF)));
+	s->save();
+}
+
+unsigned int Setting::getThemeSoft()
+{
+	// 浅底 = 白底上叠一层 10% 的主题色。按钮"选中"那一档的底色（原 0xE6F4FF
+	// 正是 0x1677FF 掺白出来的），跟着主题色走，不单独存配置
+	const unsigned int c = getThemeColor();
+	const auto ch = [c](unsigned int shift) {
+		const unsigned int v = (c >> shift) & 0xFF;
+		return 0xFF + static_cast<int>((v - 0xFF) * 0.10);
+	};
+	return (ch(16) << 16) | (ch(8) << 8) | ch(0);
+}
 long long Setting::getUpdateCheckDay()
 {
     auto common = configObj.GetNamedObject(L"common", nullptr);

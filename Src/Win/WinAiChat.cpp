@@ -967,7 +967,7 @@ Ling::Node* WinAiChat::addItem(const AiService::Role role, const std::wstring& t
 		bubble->setMaxWidthPercent(bubbleMaxPct);
 		bubble->setPadding(10.f, 8.f, 10.f, 8.f);
 		bubble->setBorderRadius(8.f);
-		bubble->setBg(0xE6F4FFFF);
+		bubble->setBg((Setting::getThemeSoft() << 8) | 0xFF);
 	}
 	else {
 		// 回答条没有气泡：顶左、纯文字、右边撑满整个对话区宽度（不留灰底与内边距，

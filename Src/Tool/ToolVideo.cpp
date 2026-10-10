@@ -1,4 +1,5 @@
 ﻿#include "pch.h"
+#include "../Setting.h"
 #include "../Win/WinCap.h"
 #include "../Util.h"
 #include "../Lang.h"
@@ -90,10 +91,10 @@ Ling::Button* ToolVideo::makeIconBtn(const std::wstring& code)
 void ToolVideo::applyToggleStyle(Ling::Button* btn, bool selected)
 {
 	if (selected) {
-		btn->setBg(0xe6f4ffff);
-		btn->setHoverBg(0xe6f4ffff);
-		btn->setColor(0x1677ffff);
-		btn->setHoverColor(0x1677ffff);
+		btn->setBg((Setting::getThemeSoft() << 8) | 0xFF);
+		btn->setHoverBg((Setting::getThemeSoft() << 8) | 0xFF);
+		btn->setColor((Setting::getThemeColor() << 8) | 0xFF);
+		btn->setHoverColor((Setting::getThemeColor() << 8) | 0xFF);
 	}
 	else {
 		btn->setBg(0);
@@ -245,10 +246,10 @@ void ToolVideo::applyFormatStyle()
 	if (!btnMp4 || !btnGif) return;
 	applyToggleStyle(btnMp4, selectIndex == 0);
 	applyToggleStyle(btnGif, selectIndex == 1);
-	btnMp4->setColor(selectIndex == 0 ? 0x1677ffff : 0x333333ff);
-	btnMp4->setHoverColor(0x1677ffff);
-	btnGif->setColor(selectIndex == 1 ? 0x1677ffff : 0x333333ff);
-	btnGif->setHoverColor(0x1677ffff);
+	btnMp4->setColor(selectIndex == 0 ? (Setting::getThemeColor() << 8) | 0xFF : 0x333333ff);
+	btnMp4->setHoverColor((Setting::getThemeColor() << 8) | 0xFF);
+	btnGif->setColor(selectIndex == 1 ? (Setting::getThemeColor() << 8) | 0xFF : 0x333333ff);
+	btnGif->setHoverColor((Setting::getThemeColor() << 8) | 0xFF);
 	applyToggleStyle(btnSpeaker, selectSpeaker);
 	applyToggleStyle(btnMic, selectMic);
 }

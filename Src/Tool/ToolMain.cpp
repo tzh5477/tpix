@@ -258,8 +258,8 @@ void ToolMain::setToggle(const std::wstring& id, bool on)
 	{
 		if (b->id != id) continue;
 		if (on) {
-			b->setBg(0xe6f4ffff);
-			b->setHoverBg(0xe6f4ffff);
+			b->setBg((Setting::getThemeSoft() << 8) | 0xFF);
+			b->setHoverBg((Setting::getThemeSoft() << 8) | 0xFF);
 		}
 		else {
 			applyNormalStyle(b);
@@ -383,8 +383,8 @@ void ToolMain::selectTool(const std::wstring& id)
 		}
 		if (b->id == id)
 		{
-			b->setBg(0xe6f4ffff);
-			b->setHoverBg(0xe6f4ffff);
+			b->setBg((Setting::getThemeSoft() << 8) | 0xFF);
+			b->setHoverBg((Setting::getThemeSoft() << 8) | 0xFF);
 		}
 	}
 	curId = id;

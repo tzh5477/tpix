@@ -10,6 +10,7 @@
 #include "WinSetting.h"
 #include "WinSettingCommon.h"
 #include "WinHistory.h"
+#include "WinPin.h"
 
 namespace {
     // 选目录对话框。返回 false 表示用户取消或调用失败，out 不动
@@ -62,9 +63,10 @@ namespace {
 }
 
 WinSettingCommon::WinSettingCommon(Ling::WinBase* parent):Ling::Node(parent)
-{    
+{
     initAutoStartCtrls();
     initLangCtrls();
+    initThemeCtrls();
     initCapCtrls();
     initSaveCtrls();
     initHistoryCtrls();
@@ -239,6 +241,46 @@ Ling::Button* WinSettingCommon::makeSwitchBtn(Ling::Node* row,
         write(next);
     });
     return btn;
+}
+
+void WinSettingCommon::initThemeCtrls()
+{
+    auto row = makeRow(L"setting.theme");
+    auto box = row->makeChild<Ling::Node>();
+    box->setFlexDirection(Ling::FlexDirection::Row);
+    box->setAlignItems(Ling::Align::Center);
+    // 八个预设够选了：贴图边框、按钮选中底色都从这一个色派生，自定义色的入口留给
+    // 「取色器」（那边本来就是干这个的），这里不重复做一套
+    const unsigned int presets[]{ 0x1677FF, 0x2F54EB, 0x722ED1, 0xEB2F96,
+                                  0xF5222D, 0xFA8C16, 0x52C41A, 0x13C2C2 };
+    // 主题色那排色块的清单是成员不是局部变量：onClick 回调要遍历它改描边，
+    // 局部 vector 按引用抓进 lambda，函数一返回就是悬垂 —— 点击即崩（探针实测）
+    themeSwatches.clear();
+    for (auto c : presets) {
+        auto btn = box->makeChild<Ling::Button>();
+        btn->setWidth(26.f);
+        btn->setHeight(26.f);
+        btn->setMarginRight(8.f);
+        btn->setBg((c << 8) | 0xFF);
+        // ⚠️ setBg 了就必须给 setHoverBg，否则一悬停整块变空白（Button 的规矩，见 TOPIC）
+        btn->setHoverBg((c << 8) | 0xFF);
+        btn->onClick.add([this, btn, c](Ling::Button*) {
+            for (auto* b : themeSwatches) {
+                bool on = (b == btn);
+                b->setBorder(on ? 2.f : 1.f, on ? 0x333333FF : 0xE0E0E0FF);
+            }
+            Setting::setThemeColor(c);
+            // 还开着的贴图立即换边框色；工具按钮的选中底色是点选时现取的，不用逐个刷
+            WinPin::applyTheme();
+        });
+        themeSwatches.push_back(btn);
+        if (c == Setting::getThemeColor()) {
+            btn->setBorder(2.f, 0x333333FF);
+        }
+        else {
+            btn->setBorder(1.f, 0xE0E0E0FF);
+        }
+    }
 }
 
 void WinSettingCommon::initCapCtrls()

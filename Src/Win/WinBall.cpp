@@ -270,7 +270,7 @@ void WinBall::buildBody()
 			btn->setHoverBg(0xE8F0FEFF);
 			btn->setBorderRadius(4.f);
 			btn->setColor(0x444444FF);
-			btn->setHoverColor(0x1677FFFF);
+			btn->setHoverColor((Setting::getThemeColor() << 8) | 0xFF);
 			bindTip(btn, Lang::get(def->nameKey));
 			btn->setId(id);
 			btn->onClick.add([this, id](Ling::Button*) { runAction(id); });

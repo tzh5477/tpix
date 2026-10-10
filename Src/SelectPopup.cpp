@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "Setting.h"
 #include <include/Ling.h>
 #include <algorithm>
 #include "SelectPopup.h"
@@ -121,7 +122,7 @@ namespace
 				btn->setHoverColor(0x000000FF);
 				// 当前那一档标成选中色，与设置页工具勾选的高亮一致
 				if (i == cur) {
-					btn->setBg(0xE6F4FFFF);
+					btn->setBg((Setting::getThemeSoft() << 8) | 0xFF);
 					btn->setColor(0x597EF7FF);
 				}
 				// 自绘项：文字留空，底下铺一层铺满的画布画小图 —— Button 不能自绘，

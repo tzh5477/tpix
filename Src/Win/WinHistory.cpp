@@ -186,8 +186,8 @@ void WinHistory::fillList()
 	}
 	auto applyTab = [](Ling::Button* btn, bool selected) {
 		if (selected) {
-			btn->setBg(0xe6f4ffff);
-			btn->setHoverBg(0xe6f4ffff);
+			btn->setBg((Setting::getThemeSoft() << 8) | 0xFF);
+			btn->setHoverBg((Setting::getThemeSoft() << 8) | 0xFF);
 		}
 		else {
 			btn->setBg(0);

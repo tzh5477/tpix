@@ -11,6 +11,8 @@ public:
 private:
 	void initAutoStartCtrls();
 	void initLangCtrls();
+	// 主题色：一排预设色块，点哪个哪个就是全界面的强调色。存 Setting 的 ui.theme
+	void initThemeCtrls();
 	// 捕获：延时 / 包含鼠标指针 / 定时自动截图。都走 Setting 的 cap 组
 	void initCapCtrls();
 	// 输出格式、自动保存目录与命名模板。存盘路径由 Util::resolveSavePath 消费
@@ -39,4 +41,7 @@ private:
 	Ling::Button* makeSwitchBtn(Ling::Node* row,
 		std::function<bool()> read, std::function<void(bool)> write);
 	void setAutoStartBtn(Ling::Button* btn);
+	// 主题色那排色块。必须是成员：onClick 回调要逐个改描边，按引用抓局部 vector
+	// 等回调真正触发时栈帧早没了（悬垂引用，点了就崩）
+	std::vector<Ling::Button*> themeSwatches;
 };

@@ -1,4 +1,5 @@
 ﻿#include "pch.h"
+#include "../Setting.h"
 #include <algorithm>
 #include <cmath>
 #include "../App.h"
@@ -125,7 +126,7 @@ namespace {
 			s->setThumbColor(0x595959FF);
 			s->setHoverThumbColor(0x595959FF);
 			s->setTrackColor(0xD9D9D9FF);
-			s->setFillColor(0x1677FFFF);
+			s->setFillColor((Setting::getThemeColor() << 8) | 0xFF);
 			// 数值：显示整数，与滑块的 step=1 配套。滑块变了就同步刷新那一格。
 			// 居右：位数从 1 位变 3 位时左边缘不动，读数不会左右跳
 			auto num = row->makeChild<Ling::Label>();

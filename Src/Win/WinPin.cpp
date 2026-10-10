@@ -277,6 +277,20 @@ bool WinPin::hasWindow()
 	return !winPins.empty();
 }
 
+void WinPin::applyTheme()
+{
+	// 画刷都绑在共享的 D2D 设备上，重建设置页动不到的那些就行。色值是这次刚落盘的，
+	// 直接读 Setting；工具条上按钮的选中底色是点选时现取的，不用这里管
+	auto d2d = Ling::D2D::get();
+	for (auto& pin : winPins) {
+		d2d->deviceContext->CreateSolidColorBrush(D2D1::ColorF(Setting::getThemeColor()),
+			pin->borderBrush.GetAddressOf());
+		d2d->deviceContext->CreateSolidColorBrush(D2D1::ColorF(Setting::getThemeColor(), 0.34f),
+			pin->selectBrush.GetAddressOf());
+		pin->refresh();
+	}
+}
+
 void WinPin::dispose()
 {
 	winPins.clear();
@@ -2147,7 +2161,7 @@ void WinPin::onCreated()
     canvas = body->makeChild<Ling::Canvas>();
     canvas->enableSwapChain();
     canvas->setSizePercent(100.f, 100.f);
-    d2d->deviceContext->CreateSolidColorBrush(D2D1::ColorF(0x1677ff), borderBrush.GetAddressOf());
+    d2d->deviceContext->CreateSolidColorBrush(D2D1::ColorF(Setting::getThemeColor()), borderBrush.GetAddressOf());
     // 「待编组」那圈高亮。用与蓝边框区分得开的暖色（橙），粗一倍
     d2d->deviceContext->CreateSolidColorBrush(D2D1::ColorF(0xFF8F00), brushPick.GetAddressOf());
     d2d->deviceContext->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::White), brushSelWhite.GetAddressOf());
@@ -2168,7 +2182,7 @@ void WinPin::onCreated()
     d2d->deviceContext->CreateSolidColorBrush(D2D1::ColorF(0x000000, 0.46f), brushTipBg.GetAddressOf());
     d2d->deviceContext->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::White), brushTipText.GetAddressOf());
     // 选中的词铺的那层蓝底。半透明：字还得看得清，不然选完不知道选的是哪几个字
-    d2d->deviceContext->CreateSolidColorBrush(D2D1::ColorF(0x1677ff, 0.34f), selectBrush.GetAddressOf());
+    d2d->deviceContext->CreateSolidColorBrush(D2D1::ColorF(Setting::getThemeColor(), 0.34f), selectBrush.GetAddressOf());
     // 「贴图之后默认识别文本」：不等用户点「选文」，窗口一建起来就在后台认 ——
     // 那张图通常刚截下来，用户点开选文时结果基本已经在了，选起来是即时的
     startOcr();

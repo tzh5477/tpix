@@ -129,6 +129,13 @@ public:
 	// 滚动截图的方向：true = 横向（拼出来的图往右长），false = 竖向（默认）
 	bool getLongHorizontal();
 	void setLongHorizontal(bool val);
+	// 主题色（强调色）。存在 config.json 的 ui 组里：theme（0xRRGGBB，默认 0x1677FF 蓝）。
+	// 贴图蓝边框、工具按钮的选中底色、录屏面板的选中字色等一众"强调蓝"都从这来 ——
+	// 改一处全界面跟着变，不必逐处找色值。setThemeColor 立即落盘
+	static unsigned int getThemeColor();
+	static void setThemeColor(unsigned int rgb);
+	// 主题色的浅底：往白里掺 10%（按钮选中那一档的底色）。跟着主题色走，不单独存配置
+	static unsigned int getThemeSoft();
 	// AI（翻译 / 对话，S1–S3）。存在 config.json 的 ai 组。
 	// ⚠️ apiKey 是明文落的：本机单人工具，加密换不来什么，反倒会让已有的「导出配置」跑到别的机器上就用不了。
 	//    补偿靠 exportConfig 把它摘出去，见那里的注释。
@@ -199,6 +206,8 @@ private:
 	JsonObject getPinObj();
 	// cap 那一组（捕获：延时 / 定时 / 指针），缺则现建
 	JsonObject getCapObj();
+	// ui 那一组（外观：主题色这类），缺则现建
+	JsonObject getUiObj();
 	// ai 那一组（接口列表 / 场景绑定 / 翻译选哪家 / 历史策略），缺则现建
 	JsonObject getAiObj();
 	// ai.providers 数组，缺则现建

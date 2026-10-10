@@ -1,4 +1,5 @@
 #include "pch.h"
+#include "../Setting.h"
 #include <algorithm>
 #include <cmath>
 #include <format>
@@ -313,16 +314,16 @@ namespace {
 			b->setMarginLeft(marginLeft);
 			b->setBorderRadius(4.f);
 			if (primary) {
-				b->setBg(0x1677FFFF);
+				b->setBg((Setting::getThemeColor() << 8) | 0xFF);
 				b->setHoverBg(0x4090FFFF);
 				b->setColor(0xFFFFFFFF);
 				b->setHoverColor(0xFFFFFFFF);
 			}
 			else {
 				b->setBg(0xF2F2F2FF);
-				b->setHoverBg(0xE6F4FFFF);
+				b->setHoverBg((Setting::getThemeSoft() << 8) | 0xFF);
 				b->setColor(0x333333FF);
-				b->setHoverColor(0x1677FFFF);
+				b->setHoverColor((Setting::getThemeColor() << 8) | 0xFF);
 			}
 			b->onClick.add([onClick](Ling::Button*) { onClick(); });
 		}
