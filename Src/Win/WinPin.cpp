@@ -287,6 +287,19 @@ void WinPin::applyTheme()
 			pin->borderBrush.GetAddressOf());
 		d2d->deviceContext->CreateSolidColorBrush(D2D1::ColorF(Setting::getThemeColor(), 0.34f),
 			pin->selectBrush.GetAddressOf());
+		// 每一笔自己的控制点画刷（ShapeBase::brushDragger）也是建 shape 那一刻现取的，
+		// 顺手让它重取一次 —— 控制点方框与迷你条上那排图标用的就是它
+		if (auto* history = pin->getHistory()) {
+			for (auto& shape : history->shapes) shape->applyTheme();
+		}
+		// 工具条上"当前选中那枚"的底色（ToolMain::selectTool / setToggle 里上的那层）
+		// 同样是建按钮那一刻算出来的。只在它这会儿露着的时候重建：
+		// 收起来的话（缩略图 / 贴边细条）等它再出来时那条路本来就会按当前工具重建一遍
+		//（见 setThumbMode 的还原分支），这里跟着重建反而会把工具条提前弹出来
+		if (pin->toolMain && IsWindowVisible(pin->toolMain->hwnd)) {
+			pin->toolMain->refreshToolSub();   // 幂等，且会把「编号」输入框的值存回来
+			pin->toolMain->setToggle(L"textSelect", pin->textSelect);
+		}
 		pin->refresh();
 	}
 }

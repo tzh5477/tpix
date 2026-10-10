@@ -2,6 +2,7 @@
 #include <shobjidl.h>
 #include <algorithm>
 #include "../Lang.h"
+#include "../App.h"
 #include "../GlobalMouse.h"
 #include "../Ocr.h"
 #include "../SelectPopup.h"
@@ -10,9 +11,17 @@
 #include "WinSetting.h"
 #include "WinSettingCommon.h"
 #include "WinHistory.h"
-#include "WinPin.h"
 
 namespace {
+    // 主题色的八个预设色。设置页那排色块与"哪一个还亮着"（applyThemeSwatchStyle）共用一份 ——
+    // 各写一遍的话，改了预设顺序就会出现"点第 3 个、亮的是第 5 个"
+    const unsigned int kThemePresets[]{ 0x1677FF, 0x2F54EB, 0x722ED1, 0xEB2F96,
+                                       0xF5222D, 0xFA8C16, 0x52C41A, 0x13C2C2 };
+
+    // 开关「开」态的颜色 = 主题色（原来是写死的 0x597ef7）。makeSwitchBtn / setAutoStartBtn /
+    // applyTheme 三处共用 —— 强调色改成跟主题色走之后，各写一份必然漏掉一处
+    unsigned int kSwitchOnColor() { return (Setting::getThemeColor() << 8) | 0xFF; }
+
     // 选目录对话框。返回 false 表示用户取消或调用失败，out 不动
     bool pickFolder(HWND hwnd, std::wstring& out)
     {
@@ -105,6 +114,9 @@ void WinSettingCommon::initAutoStartCtrls()
     btn->setFontSize(18.f);
     btn->setWidth(60.f);
     setAutoStartBtn(btn);
+    // 自启动这一枚是手工搭的（它不落工具配置、只写注册表），进不了 makeSwitchBtn，
+    // 但主题色改了同样要按当前状态重上一层 —— 这里补登记一次
+    switchBtns.push_back({ btn, [] { return Setting::get()->getAutoStart(); } });
 
     // 开 / 关只有两种状态，按钮上的图标（勾 / 叉）与配色已经表示清楚了，单击直接翻转
     btn->onClick.add([this](Ling::Button* b) {
@@ -231,8 +243,8 @@ Ling::Button* WinSettingCommon::makeSwitchBtn(Ling::Node* row,
     btn->setWidth(60.f);
     auto apply = [btn](bool on) {
         btn->setText(on ? L"\ue688" : L"\ue687");
-        btn->setColor(on ? 0x597ef7ff : 0x666666FF);
-        btn->setHoverColor(on ? 0x597ef7ff : 0x666666FF);
+        btn->setColor(on ? kSwitchOnColor() : 0x666666FF);
+        btn->setHoverColor(on ? kSwitchOnColor() : 0x666666FF);
     };
     apply(read());
     // 同上：按钮本身已经显示出开关状态，单击即翻转，不必再弹一个两项列表
@@ -241,6 +253,8 @@ Ling::Button* WinSettingCommon::makeSwitchBtn(Ling::Node* row,
         apply(next);
         write(next);
     });
+    // 记进清单：主题色改了要按"当前状态"重上一层（那层色是上面 apply 里上的）
+    switchBtns.push_back({ btn, read });
     return btn;
 }
 
@@ -250,14 +264,12 @@ void WinSettingCommon::initThemeCtrls()
     auto box = row->makeChild<Ling::Node>();
     box->setFlexDirection(Ling::FlexDirection::Row);
     box->setAlignItems(Ling::Align::Center);
-    // 八个预设够选了：贴图边框、按钮选中底色都从这一个色派生，自定义色的入口留给
-    // 「取色器」（那边本来就是干这个的），这里不重复做一套
-    const unsigned int presets[]{ 0x1677FF, 0x2F54EB, 0x722ED1, 0xEB2F96,
-                                  0xF5222D, 0xFA8C16, 0x52C41A, 0x13C2C2 };
+    // 八个预设够选了：贴图边框、按钮选中底色、控制点、悬浮球那条细线都从这一个色派生，
+    // 自定义色的入口留给「取色器」（那边本来就是干这个的），这里不重复做一套
     // 主题色那排色块的清单是成员不是局部变量：onClick 回调要遍历它改描边，
     // 局部 vector 按引用抓进 lambda，函数一返回就是悬垂 —— 点击即崩（探针实测）
     themeSwatches.clear();
-    for (auto c : presets) {
+    for (auto c : kThemePresets) {
         auto btn = box->makeChild<Ling::Button>();
         btn->setWidth(26.f);
         btn->setHeight(26.f);
@@ -265,23 +277,42 @@ void WinSettingCommon::initThemeCtrls()
         btn->setBg((c << 8) | 0xFF);
         // ⚠️ setBg 了就必须给 setHoverBg，否则一悬停整块变空白（Button 的规矩，见 TOPIC）
         btn->setHoverBg((c << 8) | 0xFF);
-        btn->onClick.add([this, btn, c](Ling::Button*) {
-            for (auto* b : themeSwatches) {
-                bool on = (b == btn);
-                b->setBorder(on ? 2.f : 1.f, on ? 0x333333FF : 0xE0E0E0FF);
-            }
+        btn->onClick.add([this, c](Ling::Button*) {
             Setting::setThemeColor(c);
-            // 还开着的贴图立即换边框色；工具按钮的选中底色是点选时现取的，不用逐个刷
-            WinPin::applyTheme();
+            // 选中描边（哪个色块还亮着）与"边上的东西"一起刷：后者是 App::applyTheme ——
+            // 所有当前活着的窗口各自重读一遍颜色。只刷贴图窗的话，悬浮球那条细线、
+            // 截图框选那条线、设置页自己的开关都得等重启才变（作者报的正是这个）
+            applyThemeSwatchStyle();
+            App::applyTheme();
         });
         themeSwatches.push_back(btn);
-        if (c == Setting::getThemeColor()) {
-            btn->setBorder(2.f, 0x333333FF);
-        }
-        else {
-            btn->setBorder(1.f, 0xE0E0E0FF);
-        }
     }
+    applyThemeSwatchStyle();
+}
+
+// "哪个色块还亮着"那圈描边。onClick 与 applyTheme 共用 —— 两处各写一遍必然对不上
+void WinSettingCommon::applyThemeSwatchStyle()
+{
+    const unsigned int cur = Setting::getThemeColor();
+    for (size_t i = 0; i < themeSwatches.size(); ++i) {
+        const bool on = (kThemePresets[i] == cur);
+        themeSwatches[i]->setBorder(on ? 2.f : 1.f, on ? 0x333333FF : 0xE0E0E0FF);
+    }
+}
+
+// 主题色改了：这一页上的强调色都要重上一层。
+// 开关的「开」态是建按钮那一刻按当时的状态上的色（见 makeSwitchBtn 里的 apply），
+// 主题色块那圈描边同理由 applyThemeSwatchStyle 重算
+void WinSettingCommon::applyTheme()
+{
+    for (auto& s : switchBtns) {
+        if (!s.btn) continue;
+        const bool on = s.read ? s.read() : false;
+        s.btn->setColor(on ? kSwitchOnColor() : 0x666666FF);
+        s.btn->setHoverColor(on ? kSwitchOnColor() : 0x666666FF);
+    }
+    applyThemeSwatchStyle();
+    win->refresh();
 }
 
 void WinSettingCommon::initCapCtrls()
@@ -599,8 +630,8 @@ void WinSettingCommon::setAutoStartBtn(Ling::Button* btn)
     auto isAutoStart = setting->getAutoStart();
     if (isAutoStart) {
         btn->setText(L"\ue688");
-        btn->setColor(0x597ef7ff);
-        btn->setHoverColor(0x597ef7ff);
+        btn->setColor(kSwitchOnColor());
+        btn->setHoverColor(kSwitchOnColor());
     }
     else {
         btn->setText(L"\ue687");

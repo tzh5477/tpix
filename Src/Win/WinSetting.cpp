@@ -3,6 +3,7 @@
 #include "../App.h"
 #include "../Lang.h"
 #include "../SelectPopup.h"
+#include "../Setting.h"
 #include "WinSetting.h"
 #include "WinSettingCommon.h"
 #include "WinSettingShortcut.h"
@@ -94,6 +95,35 @@ void WinSetting::dispose()
 	winSetting.reset();
 }
 
+void WinSetting::applyTheme()
+{
+	if (!winSetting) return;
+	winSetting->applyThemeNow();
+}
+
+// 侧栏菜单项的两态配色。原来是 initMenuItems（第 0 项）与 onMenuItemClick（换页时）各写一遍，
+// 现在三处（含 applyTheme）共用这一份 —— 强调色改成跟主题色走之后，各写一遍必然漏掉一处
+void WinSetting::applyMenuStyle(int index)
+{
+	for (size_t i = 0; i < menus.size(); ++i) {
+		auto* item = menus[i];
+		const bool on = ((int)i == index);
+		const unsigned int accent = (Setting::getThemeColor() << 8) | 0xFF;
+		item->setColor(on ? 0xFFFFFFFF : 0x333333FF);
+		item->setBg(on ? accent : 0x00000000);
+		item->setHoverColor(on ? 0xFFFFFFFF : 0x000000ff);
+		item->setHoverBg(on ? accent : 0xE1E1E3ff);
+	}
+}
+
+void WinSetting::applyThemeNow()
+{
+	applyMenuStyle(menuIndex);
+	// 开关的「开」态与主题色块选中那圈描边都长在通用设置那一页上，那一页开着才轮得到它
+	if (commonPage) commonPage->applyTheme();
+	refresh();
+}
+
 void WinSetting::makeContent(int index)
 {
 	// 滚动容器连同内容一起销毁重建，滚动位置随之回到顶（切菜单回顶也合理）。
@@ -105,8 +135,11 @@ void WinSetting::makeContent(int index)
 	scroller->setFlexGrow(1.f);
 	scroller->setWidthPercent(100.f);
 	// 内容保持自然高度（超出容器才滚动），所以不再给它设 flexGrow / 百分比
+	commonPage = nullptr;
 	if (index == 0) {
-		content = scroller->makeChild<WinSettingCommon>();
+		auto page = scroller->makeChild<WinSettingCommon>();
+		content = page;
+		commonPage = page;
 	}
 	else if (index == 1) {
 		content = scroller->makeChild<WinSettingShortcut>();
@@ -192,35 +225,29 @@ void WinSetting::initMenuItems(Ling::Node* menuBox)
 		auto menuItem = menuBox->makeChild<Ling::Button>();
 		menuItem->setFontSize(14.f);
 		menuItem->setHeight(40.f);
-		if (i == 0) {
-			menuItem->setColor(0xFFFFFFFF);
-			menuItem->setBg(0x597ef7ff);
-			menuItem->setHoverColor(0xFFFFFFFF);
-			menuItem->setHoverBg(0x597ef7ff);
-			menuItem->setText(Lang::get(L"setting.common"));
+		if (i == 1) {
+			menuItem->setText(Lang::get(L"setting.shortcut"));
+		}
+		else if (i == 2) {
+			menuItem->setText(Lang::get(L"setting.ball.title"));
+		}
+		else if (i == 3) {
+			menuItem->setText(Lang::get(L"setting.llm"));
+		}
+		else if (i == 4) {
+			menuItem->setText(Lang::get(L"setting.translation"));
+		}
+		else if (i == 5) {
+			menuItem->setText(Lang::get(L"setting.about"));
 		}
 		else {
-			menuItem->setHoverColor(0x000000ff);
-			menuItem->setHoverBg(0xE1E1E3ff);
-			if (i == 1) {
-				menuItem->setText(Lang::get(L"setting.shortcut"));
-			}
-			else if (i == 2) {
-				menuItem->setText(Lang::get(L"setting.ball.title"));
-			}
-			else if (i == 3) {
-				menuItem->setText(Lang::get(L"setting.llm"));
-			}
-			else if (i == 4) {
-				menuItem->setText(Lang::get(L"setting.translation"));
-			}
-			else if (i == 5) {
-				menuItem->setText(Lang::get(L"setting.about"));
-			}
+			menuItem->setText(Lang::get(L"setting.common"));
 		}
 		menuItem->onClick.add([this](auto menuItem) {this->onMenuItemClick(menuItem);});
 		menus.push_back(menuItem);
 	}
+	// 配色统一在最后上一次：当前项那层强调色跟着主题色走（见 applyMenuStyle）
+	applyMenuStyle(0);
 }
 void WinSetting::onMenuItemClick(Ling::Button* menuItem)
 {
@@ -231,16 +258,8 @@ void WinSetting::onMenuItemClick(Ling::Button* menuItem)
 	if (menuIndex == 0) {
 		SelectPopup::close();
 	}
-	auto oldItem = menus[menuIndex];
-	oldItem->setColor(0x333333FF);
-	oldItem->setBg(0x00000000);
-	oldItem->setHoverColor(0x000000ff);
-	oldItem->setHoverBg(0xE1E1E3ff);
 	menuIndex = index;
-	menuItem->setColor(0xFFFFFFFF);
-	menuItem->setBg(0x597ef7ff);
-	menuItem->setHoverColor(0xFFFFFFFF);
-	menuItem->setHoverBg(0x597ef7ff);
+	applyMenuStyle(menuIndex);
 
 	makeContent(menuIndex);
 }

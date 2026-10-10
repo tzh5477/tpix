@@ -27,6 +27,8 @@ public:
 	// 宽高都大于 0 才算真的框出了东西
 	bool hasRect() const;
 	void paint(ID2D1DeviceContext* ctx);
+	// 主题色改了：那条选区边框的颜色是构造那一刻取的，就地重建这支画刷
+	void applyTheme();
 
 	// —— 手绘（自由多边形）选区 ——
 	// 拖动过程中逐点采样，松手闭合成多边形。maskRect 始终是它的外接矩形，

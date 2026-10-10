@@ -607,9 +607,15 @@ void WinCap::onClosed()
 
 void WinCap::stopIfRecording()
 {
-    if (!winCap || !winCap->capVideo) return;
-    // 正在录制：先停止编码线程，避免退出时线程与设备卡死
-    winCap->capVideo->stop();
+	if (!winCap || !winCap->capVideo) return;
+	// 正在录制：先停止编码线程，避免退出时线程与设备卡死
+	winCap->capVideo->stop();
+}
+
+void WinCap::applyTheme()
+{
+	if (!winCap || !winCap->cutMask) return;
+	winCap->cutMask->applyTheme();
 }
 
 bool WinCap::enterByArg()

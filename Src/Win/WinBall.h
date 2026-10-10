@@ -28,6 +28,8 @@ public:
 	static void toggle();
 	// 设置页改完操作项 / 贴边之后调：节点树是照着旧配置建的，不重建就会新旧两套混在一起
 	static void reload();
+	// 主题色改了：细线颜色与图标的 hover 色都是 buildBody 里现取并缓存的，重建一遍树就换过来
+	static void applyTheme();
 	// 拖到球上的文件，由 .cpp 里接管的那个窗口过程转进来
 	void onDropFiles(HDROP drop);
 	// 跨程序拖来的裸文本（Notepad / 浏览器选中一段拖过来）：开一扇可编辑文本钉窗

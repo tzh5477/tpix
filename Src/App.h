@@ -12,6 +12,10 @@ class App
 		// 表现为读取访问权限冲突
 		static void dispose();
 		static App* get();
+		// 主题色改了：所有**当前活着**的窗口各自重读一遍颜色。
+		// 强调色到处都是"建窗口 / 建按钮那一刻现取并缓存"的（画刷、按钮底色、悬浮球细线），
+		// 不统一通知一遍，用户就得重启才看得到（作者反馈："主题色更新后必须重启软件才能生效"）
+		static void applyTheme();
 		void takeScreenShot(int x, int y, int w, int h,ID2D1Bitmap1** img);
 		std::tuple<int, int, int, int> getScreenArea();
 		// 把窗口从屏幕捕获里摘出去：它在屏幕上照常显示、照常能点，但录屏和抓屏都拿不到它。

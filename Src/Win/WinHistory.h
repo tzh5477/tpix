@@ -11,10 +11,14 @@ public:
 	~WinHistory();
 	static void init();
 	static void dispose();
+	// 主题色改了：两个 tab 的选中底色跟着换（卡片本身的配色不跟主题色走）
+	static void applyTheme();
 private:
 	void onCreated() override;
 	void initTabs(Ling::Node* parent);
 	void fillList();
+	// 两个 tab 的选中态配色。fillList 与 applyTheme 共用这一份 —— 各写一遍迟早对不上
+	void applyTabStyle();
 	// 一张卡片。图片条目画缩略图，文本条目画截断后的文字
 	Ling::Node* makeCard(Ling::Node* parent, const ShotHistory::Item& item);
 	// 三个操作都按 id 取条目：卡片回调只捕获 id，Item 本身在刷新列表时会被换掉

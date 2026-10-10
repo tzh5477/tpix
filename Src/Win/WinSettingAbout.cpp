@@ -1,5 +1,6 @@
 ﻿#include "pch.h"
 #include "../Lang.h"
+#include "../Setting.h"
 #include "WinSetting.h"
 #include "WinSettingAbout.h"
 #include "../Util.h"
@@ -29,8 +30,9 @@ WinSettingAbout::WinSettingAbout(Ling::WinBase* parent):Ling::Node(parent)
         }
         else if (key == L"project") {
             btn->setText(L"github.com/tzh5477/tpix");
-            btn->setColor(0x597ef7ff);
-            btn->setHoverColor(0x597ef7ff);
+            // 链接色 = 主题色（原来是写死的 0x597ef7）
+            btn->setColor((Setting::getThemeColor() << 8) | 0xFF);
+            btn->setHoverColor((Setting::getThemeColor() << 8) | 0xFF);
             btn->onClick.add([this](Ling::Button* btn) {
                 std::wstring downloadUrl{ L"https://github.com/tzh5477/tpix" };
                 ShellExecute(win->hwnd, L"open", downloadUrl.data(), nullptr, nullptr, SW_SHOWNORMAL);

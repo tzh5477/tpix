@@ -111,10 +111,12 @@ Ling::Node* WinSettingBall::makeActionRow(const BallActionDef& def)
 
 void WinSettingBall::applySwitch(Ling::Button* btn, bool on)
 {
-	// 开 / 关两套配色，与设置页其他开关、ToolSub::applyToggleStyle 保持一致
+	// 开 / 关两套配色，与设置页其他开关、ToolSub::applyToggleStyle 保持一致。
+	// 「开」态 = 主题色（原来是写死的 0x597ef7）
 	btn->setText(on ? L"\ue688" : L"\ue687");
-	btn->setColor(on ? 0x597ef7ff : 0x666666FF);
-	btn->setHoverColor(on ? 0x597ef7ff : 0x666666FF);
+	const unsigned int accent = (Setting::getThemeColor() << 8) | 0xFF;
+	btn->setColor(on ? accent : 0x666666FF);
+	btn->setHoverColor(on ? accent : 0x666666FF);
 }
 
 bool WinSettingBall::isPicked(const std::wstring& id) const

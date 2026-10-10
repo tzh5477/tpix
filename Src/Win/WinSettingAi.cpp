@@ -117,8 +117,10 @@ Ling::Button* WinSettingAi::makeSwitchBtn(Ling::Node* row,
 	btn->setWidth(60.f);
 	auto apply = [btn](bool on) {
 		btn->setText(on ? L"\ue688" : L"\ue687");
-		btn->setColor(on ? 0x597ef7ff : 0x666666FF);
-		btn->setHoverColor(on ? 0x597ef7ff : 0x666666FF);
+		// 「开」态 = 主题色（原来是写死的 0x597ef7），与通用设置页、悬浮球页那几个开关同一套
+		const unsigned int accent = (Setting::getThemeColor() << 8) | 0xFF;
+		btn->setColor(on ? accent : 0x666666FF);
+		btn->setHoverColor(on ? accent : 0x666666FF);
 	};
 	apply(read());
 	// 同上：按钮本身已经显示出开关状态，单击即翻转，不必再弹一个两项列表

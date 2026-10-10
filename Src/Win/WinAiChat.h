@@ -21,6 +21,8 @@ public:
 	// 而且多半还要再加一句要求）。热键带选中内容进来走的就是这条路
 	static void init(const std::wstring& preset = L"");
 	static void dispose();
+	// 主题色改了：用户气泡的底色（getThemeSoft）是建气泡那一刻取的，整块消息区重画一遍
+	static void applyTheme();
 private:
 	WinAiChat();
 	void onCreated() override;

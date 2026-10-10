@@ -26,6 +26,8 @@ public:
 	static void dispose();
 	// 退出流程里调：正在录制时先把编码线程停掉，否则线程与设备会卡住
 	static void stopIfRecording();
+	// 主题色改了：框选那条边框线的画刷在 CutMask 构造时就建好了，这里通知它重建一遍
+	static void applyTheme();
 	Microsoft::WRL::ComPtr<ID2D1Bitmap1> getCutImg();
 	// 整屏原图。贴图窗口的常驻剪裁要的是它 —— getCutImg() 给的只是选区那一块，
 	// 一旦裁掉就补不回来，采样点往外拖时得从这张原图里把框外的画面取回来

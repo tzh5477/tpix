@@ -154,6 +154,15 @@ bool CutMask::hasRect() const
 	return maskRect.right > maskRect.left && maskRect.bottom > maskRect.top;
 }
 
+// 主题色改了。这支画刷是构造那一刻按当时的主题色建的，改完设置不重建的话，
+// 用户得重启才看得到新颜色（作者反馈："主题色更新后必须重启软件才能生效"）
+void CutMask::applyTheme()
+{
+	Ling::D2D::get()->deviceContext->CreateSolidColorBrush(
+		D2D1::ColorF(Setting::getThemeColor()), brushBorder.ReleaseAndGetAddressOf());
+	win->refresh();
+}
+
 void CutMask::startPoly(POINT pos)
 {
 	poly.clear();

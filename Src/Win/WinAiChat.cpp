@@ -173,6 +173,14 @@ void WinAiChat::dispose()
 	winAiChat.reset();
 }
 
+void WinAiChat::applyTheme()
+{
+	if (!winAiChat) return;
+	// 用户气泡的底色是 getThemeSoft（建气泡那一刻现取的），整块消息区重画一遍即可。
+	// renderMsgs 自己会把滚动条拉回底部 —— 与"发完一条"是同一种收尾，可以接受
+	winAiChat->renderMsgs();
+}
+
 void WinAiChat::onCreated()
 {
 	// 命中坐标补偿必须排在消息区那些 Button **之前**订阅：Ling 的 winrt::event 按

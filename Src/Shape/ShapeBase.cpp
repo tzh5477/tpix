@@ -3,20 +3,31 @@
 #include "Canvas.h"
 #include "History.h"
 #include "ShapeBase.h"
+#include "../Setting.h"
 
 using Microsoft::WRL::ComPtr;
 
 ShapeBase::ShapeBase(Canvas* win):win{win}, draggerSize{6*win->getDpi()}
 {
 	auto d2d = Ling::D2D::get();
-	// 控制点：浅蓝描边（原来的黑色压在标注上很扎眼），选中时填白把下层线挡住
-	d2d->deviceContext->CreateSolidColorBrush(D2D1::ColorF(0x4A9EFF), brushDragger.GetAddressOf());
+	// 控制点：主题色描边（原来是写死的浅蓝 0x4A9EFF，作者要求跟着主题色走），
+	// 选中时填白把下层线挡住。迷你条上"复制"那枚图标与旋转手柄也用这支画刷
+	d2d->deviceContext->CreateSolidColorBrush(
+		D2D1::ColorF(Setting::getThemeColor()), brushDragger.GetAddressOf());
 	d2d->deviceContext->CreateSolidColorBrush(D2D1::ColorF(0xFFFFFF), brushDraggerFill.GetAddressOf());
 	// 迷你条的三个配角：淡灰边、极淡的投影、删除那格的红。边框取色与圆角半径
 	// 跟取色面板（WinColorPicker）那一套对齐 —— 白底浮层的既有约定，别再发明第二种
 	d2d->deviceContext->CreateSolidColorBrush(D2D1::ColorF(0xDCDFE4), brushBarBorder.GetAddressOf());
 	d2d->deviceContext->CreateSolidColorBrush(D2D1::ColorF(0x000000, 0.08f), brushBarShadow.GetAddressOf());
 	d2d->deviceContext->CreateSolidColorBrush(D2D1::ColorF(0xE24B4A), brushDelete.GetAddressOf());
+}
+
+// 主题色改了：控制点方框、迷你条上的复制图标、旋转手柄画共用这一支画刷，
+// 而它的颜色是构造那一刻取的 —— 不重取一次，改完主题色得等重新画一笔才看得到
+void ShapeBase::applyTheme()
+{
+	Ling::D2D::get()->deviceContext->CreateSolidColorBrush(
+		D2D1::ColorF(Setting::getThemeColor()), brushDragger.ReleaseAndGetAddressOf());
 }
 
 ShapeBase::~ShapeBase()

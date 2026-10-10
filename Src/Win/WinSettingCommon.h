@@ -8,7 +8,12 @@ class WinSettingCommon:public Ling::Node
 public:
 	WinSettingCommon(Ling::WinBase* parent);
 	~WinSettingCommon();
+	// 主题色改了：这一页上的强调色（开关的「开」态、主题色块选中那圈描边）重上一层。
+	// 开关那层色是建按钮时按当时的状态上的，所以清单里连"怎么读当前状态"一起记着
+	void applyTheme();
 private:
+	// 主题色块那圈"当前选中"的描边。onClick 与 applyTheme 共用 —— 各写一遍必然对不上
+	void applyThemeSwatchStyle();
 	void initAutoStartCtrls();
 	void initLangCtrls();
 	// 主题色：一排预设色块，点哪个哪个就是全界面的强调色。存 Setting 的 ui.theme
@@ -46,4 +51,11 @@ private:
 	// 主题色那排色块。必须是成员：onClick 回调要逐个改描边，按引用抓局部 vector
 	// 等回调真正触发时栈帧早没了（悬垂引用，点了就崩）
 	std::vector<Ling::Button*> themeSwatches;
+	// 开关按钮的清单（按钮 + 它读的那个状态）。主题色改了要按"当前状态"重上一层色，
+	// 而那层色是在建按钮那一刻上的 —— 只记按钮、不记 read，重刷时就复原不回来
+	struct SwitchRef {
+		Ling::Button* btn{ nullptr };
+		std::function<bool()> read;
+	};
+	std::vector<SwitchRef> switchBtns;
 };

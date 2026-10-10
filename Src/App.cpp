@@ -125,6 +125,23 @@ App* App::get()
     return app.get();
 }
 
+// 主题色改了：把当前还活着的窗口逐个通知到。
+// 为什么需要这样一个广播：强调色在各处都是"建窗口 / 建按钮那一刻现取并缓存"的
+//（D2D 画刷、Ling 按钮底色、悬浮球那条细线），配置改了内存里的色值当然也变了，
+// 但已经建好的那些东西不会自己回头再读一次 —— 于是"主题色更新后必须重启软件才能生效"。
+// 顺序无所谓，每个被调的都会自己判"我还在不在"（各自有 hasWindow / 空指针判据），
+// 所以这里不用先判断有没有窗口。晚建的那些（录屏工具条、录后编辑窗、录制上限小窗）
+// 不需要通知：它们只在录制 / 编辑流程里活着，建的时候读到的本来就是新值
+void App::applyTheme()
+{
+    WinPin::applyTheme();       // 贴图窗的边框、选中框、每一笔的控制点，以及它那两条工具条
+    WinCap::applyTheme();       // 截图框选那条边框线（CutMask 里那支画刷）
+    WinBall::applyTheme();      // 悬浮球：细线颜色 + 图标的 hover 色
+    WinHistory::applyTheme();   // 历史窗顶部的两个 tab
+    WinAiChat::applyTheme();    // AI 对话里用户气泡的底色
+    WinSetting::applyTheme();   // 设置页自己（左侧菜单选中项、开关的「开」态、主题色块的描边）
+}
+
 void App::takeScreenShot(int x, int y, int w, int h, ID2D1Bitmap1** img)
 {
     // 与滚动截图同一套抓屏代码：BGRA 布局一致，鼠标指针也是在同一个地方画上去的

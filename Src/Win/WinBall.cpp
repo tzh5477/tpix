@@ -26,11 +26,13 @@ namespace {
 	WNDPROC ballOrigProc{ nullptr };
 	WinBall* ballPtr{ nullptr };
 
-	// 逻辑像素。细线是"贴着屏幕边的一条红杠"，展开后每个图标占一个方块
+	// 逻辑像素。细线是"贴着屏幕边的一条杠"，展开后每个图标占一个方块
 	constexpr float lineLen{ 100.f };      // 细线长度
 	constexpr float lineThick{ 5.f };      // 细线粗细
 	constexpr float itemSize{ 32.f };      // 展开后每个图标的格子
-	constexpr uint32_t lineColor{ 0xE4383Cff };
+	// 细线颜色跟主题色走（原来是写死的红 0xE4383C）。它贴在屏幕边上，是悬浮球唯一的
+	// "看得见"的部分，跟着主题色一起变才叫"主题色生效区域"；取值在 buildBody 里现取，
+	// 于是改完主题色重建一次节点树就换过来了（见 WinBall::applyTheme）
 	// 延时收起的定时器 id。要避开宿主窗口里其他人在用的（Tip 用 0x5100，
 	// ToolVideo 用 100，Ling 的 TextBox 从 0x4200 起）
 	constexpr UINT menuTimerId{ 0x5200 };
@@ -187,6 +189,14 @@ void WinBall::reload()
 	ballIns->rebuildBody();
 }
 
+void WinBall::applyTheme()
+{
+	// 与 reload 同一条路：细线颜色（buildBody 里的 lineBox->setBg）与每个图标的 hover 色
+	// 都是重建节点树时现取的，重跑一遍就都换过来了。展开态顺手收回折叠 ——
+	// 改主题色时鼠标在设置窗口那边，本来也不该留着它挂在那儿
+	reload();
+}
+
 void WinBall::onMinMaxInfo(MINMAXINFO* mmi)
 {
 	// 同 ToolMain / ToolSub / WinPin：小窗口都得把最小跟踪尺寸放到 1，
@@ -247,7 +257,7 @@ void WinBall::buildBody()
 		lineBox = body->makeChild<Ling::Node>();
 		if (edge == Edge::Top) lineBox->setSize(lineLen, lineThick);
 		else lineBox->setSize(lineThick, lineLen);
-		lineBox->setBg(lineColor);
+		lineBox->setBg((Setting::getThemeColor() << 8) | 0xFF);
 		lineBox->setBorderRadius(lineThick / 2.f);
 		};
 	auto makeItems = [this]() {

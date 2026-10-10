@@ -166,6 +166,31 @@ void WinHistory::initTabs(Ling::Node* parent)
 	closeBtn->onClick.add([this](Ling::Button*) { close(); });
 }
 
+void WinHistory::applyTabStyle()
+{
+	auto applyTab = [](Ling::Button* btn, bool selected) {
+		if (selected) {
+			btn->setBg((Setting::getThemeSoft() << 8) | 0xFF);
+			btn->setHoverBg((Setting::getThemeSoft() << 8) | 0xFF);
+		}
+		else {
+			btn->setBg(0);
+			btn->setHoverBg(0xF2F2F2ff);
+		}
+	};
+	if (tabShot) applyTab(tabShot, curSource == ShotHistory::Source::Shot);
+	if (tabClip) applyTab(tabClip, curSource == ShotHistory::Source::Clipboard);
+}
+
+void WinHistory::applyTheme()
+{
+	if (!winHistory) return;
+	// 只重刷两个 tab 的底色，不重跑 fillList —— 那条路会把所有卡片连缩略图一起重建，
+	// 改个主题色不值得付那个代价
+	winHistory->applyTabStyle();
+	winHistory->refresh();
+}
+
 void WinHistory::fillList()
 {
 	// ScrollerBox::content 是框架持有的，只能清子节点，不能换掉
@@ -184,18 +209,7 @@ void WinHistory::fillList()
 			makeCard(scroller->content, item);
 		}
 	}
-	auto applyTab = [](Ling::Button* btn, bool selected) {
-		if (selected) {
-			btn->setBg((Setting::getThemeSoft() << 8) | 0xFF);
-			btn->setHoverBg((Setting::getThemeSoft() << 8) | 0xFF);
-		}
-		else {
-			btn->setBg(0);
-			btn->setHoverBg(0xF2F2F2ff);
-		}
-	};
-	applyTab(tabShot, curSource == ShotHistory::Source::Shot);
-	applyTab(tabClip, curSource == ShotHistory::Source::Clipboard);
+	applyTabStyle();
 	refresh();
 }
 

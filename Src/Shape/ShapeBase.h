@@ -52,6 +52,9 @@ public:
 	virtual bool isEmptyStroke() const { return false; };
 	// 命中判定要能在 const 上下文里用（动作图标的 hitActionBtn 就是 const 的）
 	bool isInRect(const D2D1_RECT_F rect, const float x, const float y) const;
+	// 主题色改了，重取一次控制点那支画刷（控制点方框 / 迷你条图标 / 旋转手柄共用它）。
+	// 不做成虚函数：颜色只存在基类这一支画刷上，派生类没有各存一份的理由
+	void applyTheme();
 	// 元素在底图坐标系里的外接矩形。用来摆右上角那排动作图标 ——
 	// 默认返回 false（水印铺满整图、折线族那几笔用户说不用加），派生类按需覆写。
 	// 带旋转的元素要把旋转也算进去（摆图标的是外接框，不是未旋转的那个 rect）
