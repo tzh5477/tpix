@@ -340,18 +340,37 @@ void ShapeLine::mouseDown(const float x, const float y)
 	// 折线：每次左键落一个节点。第一下起头，之后每一下续一个；末节点到光标那段橡皮筋
 	// 由 movePreview 现画（它还不是真节点，不入 linePoints）。抬手不结束 —— 结束看双击 / 右键
 	if (isPoly()) {
-		if (!building) {
-			linePoints.assign(1, { x, y });
-			building = true;
+		// ⚠️ 只有"刚落下的这一笔"才在这里落节点，判据与 ShapeLineBase::mouseDown 的
+		// "首次创建"那条一致（它用的就是 hoverDraggerIndex == -1），再加一条 linePoints
+		// 为空：压在**已经画好的**折线身上时（hoverDraggerIndex == 8，ShapeLineBase::hitTest
+		// 给的"整条平移"）或两端夹点（0 / 1）上时都不属于新建 —— 照旧无脑走这一支的话，
+		// linePoints 会被 assign 成"就落下的这一个点"，已经定形的那条折线当场被打回一个
+		// 节点、还挂上 building，之后每一次点击都接着它续画（作者报的"折线画完之后虽然
+		// 标记点已经聚焦折线但还是无法单击选中，每次单击就变成新的折线起点了"）。
+		// 落在已有折线上的一律交给基类：8 是整条平移、0 / 1 是拖端点，拖动都由 mouseDrag 接管
+		if (hoverDraggerIndex == -1 && (building || linePoints.empty())) {
+			if (!building) {
+				linePoints.assign(1, { x, y });
+				building = true;
+			}
+			else {
+				linePoints.push_back({ x, y });
+			}
+			hasPreview = false;
+			hoverDraggerIndex = -1;   // 续画期间不做 hover 命中：这一段鼠标都归这条折线
+			makePath();
+			makeDraggers();
+			win->refresh();
+			return;
 		}
-		else {
-			linePoints.push_back({ x, y });
+		// 已经定形（building == false 且已有节点）的那一笔：这里绝不能再碰 linePoints。
+		// 命中态是 0 / 1 / 8 时交给基类（整条平移、拖两端夹点）；命中态没算出来的话
+		// 交给基类反而会走进它的"首次创建"分支、往这条折线尾巴上补一个点，所以直接返回 ——
+		// 抬手照旧把它选中（见 WinPin::onUp）
+		if (linePoints.empty()) return;
+		if (hoverDraggerIndex == 0 || hoverDraggerIndex == 1 || hoverDraggerIndex == 8) {
+			ShapeLineBase::mouseDown(x, y);
 		}
-		hasPreview = false;
-		hoverDraggerIndex = -1;   // 续画期间不做 hover 命中：这一段鼠标都归这条折线
-		makePath();
-		makeDraggers();
-		win->refresh();
 		return;
 	}
 	// 直角折线的新建这一笔：起点先落下来，几何随后由鼠标轨迹现算（见 mouseDrag）。
