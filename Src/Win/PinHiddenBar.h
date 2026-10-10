@@ -20,6 +20,9 @@ public:
 	// 藏 / 放 / 关窗之后都要走一遍：按当前"藏在这条边上的贴图"重建条。一条都没有就把窗口收掉
 	static void sync();
 	static void dispose();
+	// 浮层被单击时由它回调：执行"把那张贴图放回桌面"（与 handleDown 的左键同义）。
+	// 浮层是独立顶层窗、压在书签条旁边，光标压在浮层上时书签条收不到点击，所以这条入口专门接它
+	void restoreFromPreview(WinPin* pin);
 	// 析构必须公开：本类由文件里的 std::unique_ptr 持有，销毁时是 std::default_delete
 	// 在调它，够不着 private。WinDelay 也是这么摆的
 	~PinHiddenBar();
@@ -28,16 +31,19 @@ private:
 	PinHiddenBar(WinPin::BarEdge edge);
 	void onCreated() override;
 	void onMinMaxInfo(MINMAXINFO* mmi) override;
-	// 鼠标在条上移动：认出手指底下是第几条，先弹它的缩略预览，停满 peekDelayMs 再把整张露出来。
+	// 鼠标在条上移动：认出手指底下是第几条，在条旁弹它的缩略预览（安静，不自动升级成整窗）；整窗交给单击「放回桌面」。
 	// Ling 把"离开窗口"也报进这条事件（坐标给的是 INT_MAX，见 WinBase::mouseLeave）
 	void onMove(POINT pos);
-	// 第 index 格的悬停小预览 —— hover 的第一级回应，第二级是整窗 peek，中间隔 peekDelayMs。
+	// 第 index 格的悬停小预览 —— hover 时唯一的回应（安静），整窗 peek 不再由 hover 触发。
 	// 真正负责画的是 PinHoverPreview 那扇窗（整进程一枚，两条边共用）
 	void showPreview(int index, WinPin* pin);
 	void hidePreview();
 	// 鼠标按下：左键 = 把手指底下那一条放回桌面；右键 = 弹上下文菜单（放回 / 复制 / 另存为 /
 	// 整组放回 / 关闭）。名字不用 onMouseDown 是为了与 WinBase 上的事件成员区分开
 	void handleDown(POINT pos, bool isRight);
+	// 浮层存活期复核：光标是不是压在书签条本身 / 浮层本身上
+	bool pvCursorOverBar() const;
+	bool pvCursorOverPreview() const;
 	void onTimerCB(UINT id);
 	// 按当前藏在这条边上的贴图重建：条数、颜色、窗口尺寸
 	void rebuild();
@@ -49,6 +55,8 @@ private:
 	// 让第 index 张藏着的贴图露出来。只显窗口，隐藏状态不动 —— 条要一直留着，
 	// 不然鼠标一离开条就没了，而"离开就收回去"正是这一套的行为
 	void reveal(int index);
+	// 起 / 续浮层存活期复核定时器（见 pvTickId 说明）
+	void startPvWatch();
 	// 把露出来的那张收回去，并停掉复核的定时器
 	void conceal();
 	// 第 index 条线旁边的摆位（物理像素，不钳位 —— 钳位需要贴图宽高，只有 reveal 拿得到）
@@ -70,12 +78,15 @@ private:
 	// 复核间隔：露出来之后每隔这么久看一眼鼠标还在不在；离开判定见 onTimerCB（连续离开满 800ms 才收）
 	static constexpr UINT tickMs{ 250 };
 	static constexpr UINT tickId{ 100 };
-	// hover 一格到"整窗 peek"之间的延迟。先把小预览弹给人看（这是安静的一步），
-	// 停满这么久才升级成整窗 —— 于是顺着条扫过去只带走几张小图的闪，不再是一串整屏闪
-	static constexpr UINT peekDelayMs{ 220 };
+	// 保留 dwellId 给各处 killTimer 用（防御性取消可能 pending 的 dwell）；整窗自动升级已取消
 	static constexpr UINT dwellId{ 101 };
 	// 离开宽限：第一次发现鼠标离开后，连续这么久仍不在场才收回去（spec 第 4 节）
 	static constexpr UINT peekGraceMs{ 800 };
+	// hover 浮层存活期复核：浮层与书签条之间隔着 4px 缝，光标从条挪到浮层必经那条缝，
+	// 条的离开事件会把它藏掉、导致"单击浮层恢复"点不中。于是浮层的存废改由这枚定时器看着：
+	// 光标在书签条或浮层上就保留，都不在才收
+	static constexpr UINT pvTickMs{ 200 };
+	static constexpr UINT pvTickId{ 102 };
 	// 「用户把这张图从条上拖出来了」的判定阈值（物理像素）：回显的摆位是 reveal 时记下的
 	// peekX/peekY，位置离开它超过这个量就算拖出来了。留几像素是免得窗口被系统挪一像素
 	// 就误判成拖动

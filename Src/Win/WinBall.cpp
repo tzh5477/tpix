@@ -159,6 +159,11 @@ void WinBall::init()
 void WinBall::dispose()
 {
 	if (ballPtr) ballPtr->revokeDrop();
+	// ⚠️ Ling::WinBase 的析构函数只放成员、从不 DestroyWindow（close() 才销毁原生窗口）。
+	// 漏了这步的话，C++ 对象没了、HWND 还挂在屏幕上：设置页每开/关一次"显示悬浮球"
+	// 就多叠一个看不见的僵尸窗口（10-10 实测作者机器上同一个位置叠了 4 个）。
+	// close 是同步的（同线程 DestroyWindow），发完 WM_DESTROY 回来再放 C++ 对象才安全
+	if (ballIns) ballIns->close();
 	ballPtr = nullptr;
 	ballIns.reset();
 }

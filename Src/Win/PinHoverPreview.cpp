@@ -2,6 +2,7 @@
 #include <algorithm>
 #include "../Win/WinPin.h"
 #include "PinHoverPreview.h"
+#include "PinHiddenBar.h"
 
 PinHoverPreview::PinHoverPreview() : Ling::WinBase()
 {
@@ -30,6 +31,20 @@ void PinHoverPreview::onCreated()
 	// 画布比窗口小的唯一可能就是被 flex 压了 —— 这里要的是它就等于窗口，别让它收缩
 	surface->setFlexShrink(0.f);
 	// 这里不 show：没有 hover 的时候不该在屏幕角上多一枚空窗
+	// 单击浮层 = 把那张贴图放回桌面（与书签条上单击同义）。浮层压在书签条旁边、中间隔着 4px 缝，
+	// 光标从条挪到浮层必经那条缝、书的离开事件会把它藏掉 —— 所以浮层自己得能接住这次点击，
+	// 否则"点浮层恢复"永远点不中（见 PinHiddenBar 的存活期管理）
+	onMouseDown.add([this](POINT, bool isRight) {
+		if (!cur) return;
+		if (!isRight && owner) { owner->restoreFromPreview(cur); return; }
+		// 右键只是把浮层收掉，不弹菜单（菜单由书签条自己管）
+		if (isRight) hidePreview();
+	});
+	// 光标离开浮层（挪回条或到桌面）= 收掉。收回本扇窗由书签条的复核定时器统一判，
+	// 这里只负责"从浮层本身离开"这一半
+	onMouseMove.add([this](POINT pos) {
+		if (pos.x == INT_MAX) hidePreview();
+	});
 }
 
 void PinHoverPreview::onMinMaxInfo(MINMAXINFO* mmi)
@@ -59,6 +74,7 @@ void PinHoverPreview::showPreview(WinPin* pin, POINT pos, float dpiVal)
 	// 小图不放太：比上限还矮小就按原始像素显示，放上去只是把像素拉糊
 	s = std::min(s, 1.f);
 	dpi = dpiVal;
+	cur = pin;
 	setSize(sz.width * s, sz.height * s);
 	// 钳进工作区：落点是从屏幕角上那条书签算过来的，贴着角的几格最容易算到屏外
 	RECT wa{};
@@ -69,10 +85,13 @@ void PinHoverPreview::showPreview(WinPin* pin, POINT pos, float dpiVal)
 	const int x = std::clamp((int)pos.x, (int)wa.left, std::max((int)wa.left, (int)wa.right - wPx));
 	const int y = std::clamp((int)pos.y, (int)wa.top, std::max((int)wa.top, (int)wa.bottom - hPx));
 	setPosition(x, y);
-	cur = pin;
-	// layout 里会把画面按新尺寸补画一次（这时候画布才拿得到像素宽高）
-	layout();
+	// 先把窗口建好尺寸、再 show，最后才 layout 补画 —— 画（swap chain 的 BeginDraw + Present）
+	// 必须发生在窗口**可见**之后。这与 WinPin / TextBox 那些从不出空白的 swap chain 画布是同一套
+	// 时序：藏在隐藏态画完再 show 偶尔会丢那一次 present（DWM 还没消费），浮层就整片白。
+	// 换图换尺寸时隐藏态下的 ResizeBuffers 也偶发失败（DWM 仍持着上一次 present 的缓冲），
+	// 同样表现为白板 —— 见 Ling::Canvas::ensureSwapChain 的补偿。
 	show();
+	layout();
 }
 
 void PinHoverPreview::layout()
@@ -88,7 +107,7 @@ void PinHoverPreview::paintPreview()
 	if (!bmp) return;
 	auto ctx = surface->startPaint();
 	if (!ctx) return;
-	const auto sz = bmp->GetPixelSize();
+	const auto sz = bmp->GetSize();
 	const float cw = surface->w, ch = surface->h;
 	if (cw <= 0.f || ch <= 0.f) {
 		surface->finishPaint();
@@ -96,14 +115,14 @@ void PinHoverPreview::paintPreview()
 	}
 	ctx->SetTransform(D2D1::Matrix3x2F::Identity());
 	ctx->Clear(D2D1::ColorF(D2D1::ColorF::White));
-	// 等比、**居中**：窗口是按比例算出来的，但画布实际像素要减去那一圈描边，
-	// 差一两个像素就会在右边 / 下边留一道白边 —— 按小的一边取倍数再把图摆中间
-	float s = std::min(cw / (float)sz.width, ch / (float)sz.height);
+	// 等比、**居中**：取小的一边当倍数，把整张（含标注）摆到画布正中。底图与标注的合成、
+	// imgOrigin 偏移、缩放对齐全交给 WinPin::drawAnnotationComposite —— 与正式窗口同一套画法，
+	// 浮层里就不会"有图没标注"或"标注偏一截"
+	float s = std::min(cw / sz.width, ch / sz.height);
+	s = std::min(s, 1.f);
 	const float dw = sz.width * s, dh = sz.height * s;
-	ctx->SetTransform(D2D1::Matrix3x2F::Translation((cw - dw) / 2.f, (ch - dh) / 2.f)
-		* D2D1::Matrix3x2F::Scale(s, s));
-	ctx->DrawBitmap(bmp, D2D1::RectF(0.f, 0.f, (float)sz.width, (float)sz.height));
-	ctx->SetTransform(D2D1::Matrix3x2F::Identity());
+	const float offX = (cw - dw) / 2.f, offY = (ch - dh) / 2.f;
+	cur->drawAnnotationComposite(ctx, s, offX, offY);
 	surface->finishPaint();
 }
 

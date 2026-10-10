@@ -177,40 +177,92 @@ void PinHiddenBar::onMove(POINT pos)
 	if (pos.x == INT_MAX) {
 		hoverIdx = -1;
 		killTimer(dwellId);
-		hidePreview();
+		// 不直接收：光标可能正挪到浮层上（条与浮层之间隔着 4px 缝），交给复核定时器判 ——
+		// 那样才能"单击浮层缩略图恢复贴图"。光标真的离开条和浮层两边，定时器再收
+		startPvWatch();
 		return;
 	}
 	auto idx = barIndexAt(pos);
 	if (idx < 0) return;
-	// 还停在同一格就什么都不做：整窗 peek 由 dwell 定时器负责，图已经露着时也由它自己那条路维持
+	// 还停在同一格就什么都不做：预览由 showPreview 自己维持，换格才重画
 	if (idx == hoverIdx) return;
 	hoverIdx = idx;
 	killTimer(dwellId);
 	auto pins = WinPin::getHiddenPins(edge);
 	if (idx >= (int)pins.size()) return;
-	// 已经有整窗露着了 —— 顺着条换格就该立刻换图，不必再走一遍延迟：
-	// 否则这一会儿屏幕上是一张旧的大图 + 一张新的小预览，比不预览还吵
+	// 若已有整窗露着（防御性：当前仅拖出等其它路径可能触发），换格即换图
 	if (peek) {
 		hidePreview();
 		reveal(idx);
 		return;
 	}
-	// hover 一格：先弹这格的缩略预览（安静），停满 peekDelayMs 之后定时器才把它升级成整窗 peek。
-	// 落点复用 calcPeekPos —— 预览与回显摆的是同一个位置，升级时图不会跳
+	// hover 一格：在条旁边弹这格的缩略预览（安静）。不自动升级成整窗 peek —— 整窗交给单击「放回桌面」。
+	// 落点复用 calcPeekPos —— 预览与（若存在）回显摆的是同一个位置
 	showPreview(idx, pins[(size_t)idx]);
-	setTimer(peekDelayMs, dwellId);
 }
 
 // hover 一格时先给出的那个安静的小预览。见 PinHoverPreview 上的说明
 void PinHiddenBar::showPreview(int index, WinPin* pin)
 {
-	ensurePreview()->showPreview(pin, calcPeekPos(index), dpi);
+	auto* pv = ensurePreview();
+	// 浮层整进程一枚、两条边共用：每次唤起都把 owner 指回当前这条，单击恢复才找得到正确的条
+	pv->owner = this;
+	pv->showPreview(pin, calcPeekPos(index), dpi);
+	// 浮层起来了：它的存活期改由复核定时器看着（光标在条或浮层上就留），
+	// 不再走"条一离开就收" —— 否则光标从条挪到浮层必经那条 4px 缝，浮层会被提前藏掉
+	startPvWatch();
 }
 
 void PinHiddenBar::hidePreview()
 {
 	// 没建过就别建 —— ensurePreview 会凭空造出一扇窗，而这里只是要"如果没有就啥也不做"
 	if (hoverPreview) hoverPreview->hidePreview();
+	// 浮层收了，复查它的定时器也没存在的必要
+	killTimer(pvTickId);
+}
+
+void PinHiddenBar::startPvWatch()
+{
+	// 浮层存活期复核定时器：光标在书签条或浮层上就留着，都不在才收。
+	// 重复 setTimer 同一个 id 等于续期，hover 换格时反复调也安全
+	setTimer(pvTickMs, pvTickId);
+}
+
+// 浮层被单击时由它回调：执行"把那张贴图放回桌面" —— 与 handleDown 的左键完全同义。
+// 浮层是独立顶层窗、压在书签条旁边，光标压在浮层上时书签条收不到点击，所以这条入口专门接它
+void PinHiddenBar::restoreFromPreview(WinPin* pin)
+{
+	killTimer(pvTickId);
+	hoverIdx = -1;
+	// owner 指回的是这一条，恢复后这扇条可能被 sync 重建甚至销毁，先解绑免得悬空指针
+	if (hoverPreview) hoverPreview->owner = nullptr;
+	hidePreview();
+	// 它正被 hover 露着的话，先让 conceal 把它挪回原位再放回 —— "点一下就回到原来的地方"；
+	// 没露着就直接放回（x/y 本来就是藏之前那一份）
+	if (peek == pin) conceal();
+	// setHidden(false) 会走 PinHiddenBar::sync() 重建本窗（藏着的都放回了可能就没这条了），
+	// 之后 this 可能失效 —— 所以它必须放最后，后面不再碰 this 的成员
+	pin->setHidden(false);
+	// 点回来 = 要接着动这张图：工具条一并请回来，并默认选中矩形工具
+	pin->armDefaultTool();
+}
+
+// 光标是不是压在书签条本身上（判断浮层要不要留）
+bool PinHiddenBar::pvCursorOverBar() const
+{
+	if (!hwnd) return false;
+	POINT p{};
+	GetCursorPos(&p);
+	return WindowFromPoint(p) == hwnd;
+}
+
+// 光标是不是压在浮层预览窗上（判断浮层要不要留）
+bool PinHiddenBar::pvCursorOverPreview() const
+{
+	if (!hoverPreview || !hoverPreview->hwnd) return false;
+	POINT p{};
+	GetCursorPos(&p);
+	return WindowFromPoint(p) == hoverPreview->hwnd;
 }
 
 // 左键点某一条 = 把那一张放回桌面（落回藏之前的位置）；右键 = 上下文菜单。
@@ -359,12 +411,13 @@ bool PinHiddenBar::isOverPeek() const
 
 void PinHiddenBar::onTimerCB(UINT id)
 {
-	if (id == dwellId) {
-		// 停满 peekDelayMs 了 —— 把预览升级成原来那套整窗 peek。
-		// reveal 内部会 conceal 掉上一次露出的那张（这里多半是"没有"），并自己起 tickId 那条复核
-		killTimer(dwellId);
+	// 浮层存活期复核：只在浮层还开着时才有意义。光标压在书签条或浮层上就留着；
+	// 两边都不在（挪到桌面 / 别处）→ 收掉浮层并停定时器
+	if (id == pvTickId) {
+		if (!hoverPreview || !hoverPreview->hwnd) { killTimer(pvTickId); return; }
+		if (pvCursorOverBar() || pvCursorOverPreview()) return;
 		hidePreview();
-		if (hoverIdx >= 0) reveal(hoverIdx);
+		killTimer(pvTickId);
 		return;
 	}
 	if (id != tickId) return;

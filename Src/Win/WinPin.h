@@ -78,6 +78,11 @@ public:
 	// 底图位图本身。给书签条的 hover 浮层预览用（那里要按它的原始像素算缩放比例）。
 	// 只借出去看一眼，所有权还在 drawing 上；没有底图时返回 nullptr
 	ID2D1Bitmap1* getScreenImg() const;
+	// 把"底图 + 当前所有未撤销的标注"合成进调用方给定的上下文（不含编辑态手柄 / 选区 / 动作图标 /
+	// 选中蓝底那套交互 chrome —— 那套只有在真正编辑的窗口上才有意义）。
+	// 给书签条的 hover 浮层预览用：浮层要的只是"带标注的缩略图"。fitScale / offX / offY 由调用方
+	// 按浮层画布尺寸算好（底图等比居中）；变换结构照搬 layout()，只把 viewScale 换成 fitScale
+	void drawAnnotationComposite(ID2D1DeviceContext* ctx, float fitScale, float offX, float offY) const;
 	// 把底图与所有未撤销的 shape 合成后写入剪切板，成功即关窗
 	void copyToClipboard();
 	// 同上，但**不动窗口**：ToolMain 上的「复制」用 —— 用户复制一份之后

@@ -439,6 +439,28 @@ ID2D1Bitmap1* WinPin::getScreenImg() const
 	return drawing ? drawing->screenImg.Get() : nullptr;
 }
 
+void WinPin::drawAnnotationComposite(ID2D1DeviceContext* ctx, float fitScale, float offX, float offY) const
+{
+	if (!drawing || !drawing->screenImg) return;
+	auto sz = drawing->screenImg->GetSize();
+	// 底图在"标注坐标系"里的位置：剪过一刀之后这张图从 imgOrigin 处开始铺
+	//（shape 的坐标没被搬动，靠这个偏移让图和标注重新对齐）。与 layout() 同构，
+	// 只是把 viewScale 换成调用方给的 fitScale、再补一个居中偏移 —— 底图与标注共用同一套变换，
+	// 浮层里就不会出现"图归图、标注偏移一截"的错位
+	const auto& o = drawing->imgOrigin;
+	ctx->SetTransform(D2D1::Matrix3x2F::Translation(offX, offY)
+		* D2D1::Matrix3x2F::Scale(fitScale, fitScale)
+		* D2D1::Matrix3x2F::Translation(-(float)o.x, -(float)o.y));
+	D2D1_RECT_F destRect = D2D1::RectF((float)o.x, (float)o.y, (float)o.x + sz.width, (float)o.y + sz.height);
+	ctx->DrawBitmap(drawing->screenImg.Get(), destRect);
+	// 只叠标注本体，不画手柄 / 动作图标 / 选区框 / 选中蓝底 —— 那是编辑态交互，浮层要的是静态缩略图
+	if (drawing->history) {
+		for (auto& shape : drawing->history->shapes)
+			shape->paint(ctx);
+	}
+	ctx->SetTransform(D2D1::Matrix3x2F::Identity());
+}
+
 void WinPin::armDefaultTool()
 {
 	if (isClosed || !toolMain) return;
