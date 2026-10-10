@@ -153,7 +153,8 @@ namespace {
             ShotHistory::get()->addImage(ShotHistory::Source::Shot, w, h, pixels.data());
             return;
         }
-        // 一个识别语言包都没装时硬走内置 OCR 只会拿到空串，退回外部插件让用户自己解决
+        // 内置模型（PP-OCRv6）优先，它不挑系统语言包、缺文件会自己下，所以这块基本恒真；
+        // 只有模型这条路也走不通（下不来、坏了）且系统没装语言包时，才退回外部插件
         if (!Ocr::isAvailable()) {
             Util::openWithImageReader(w, h, pixels.data());
             return;

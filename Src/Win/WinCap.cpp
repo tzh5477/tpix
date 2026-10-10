@@ -847,8 +847,8 @@ void WinCap::startOcr()
     std::vector<BYTE> pixels;
     int cw{ 0 }, ch{ 0 };
     if (!getCutPixels(pixels, cw, ch)) return;
-    // 系统装了 OCR 语言包就用内置的，装了才走 —— 一个包都没装时 isAvailable() 是 false，
-    // 那时硬走内置只会弹出一句"识别失败"，不如退回插件让用户自己解决
+    // 先走内置的：默认是自带的 PP-OCRv6 模型（不挑语言包、缺文件会自己下），
+    // 模型走不通且系统也没装识别包时 isAvailable() 才是 false，那时才退回外部插件
     if (Ocr::isAvailable()) {
         WinOcr::init(std::move(pixels), cw, ch);
         close();

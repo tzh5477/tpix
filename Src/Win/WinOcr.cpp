@@ -29,6 +29,19 @@ namespace {
 
 	// 把模型回的表格文本（行内 tab、行间换行）拆成 TableResult —— 这样同一份结果
 	// 既能当纯文本复制，也能当成 HTML 表格粘进 Word / Excel（见 TableResult::toHtml）
+	// 一个字都没认出来有两种：图里真没字，或者内置模型压根没准备好。
+	// 后者不给提示的话用户只看到一句"没有识别到文字"，还以为这功能坏了没法修
+	std::wstring modelErrText()
+	{
+		switch (Ocr::modelState()) {
+		case OcrModelState::download: return Lang::get(L"ocr.modelDownload");
+		case OcrModelState::noModel: return Lang::get(L"ocr.modelNoModel");
+		case OcrModelState::badModel:
+		case OcrModelState::runtime: return Lang::get(L"ocr.modelFail");
+		default: return {};
+		}
+	}
+
 	bool parseTsvText(const std::wstring& text, TableResult& out)
 	{
 		out.cols = 0;
@@ -321,7 +334,9 @@ void WinOcr::startRecognize()
 		if (asTable) ok = Table::recognize(w, h, data.data(), lang, table, err);
 		else {
 			text = Ocr::recognize(w, h, data.data(), lang);
-			ok = true;   // 文字识别认不出来就是空，不算失败
+			// 认不出来就是空，不算失败；但模型没准备好要说清是哪一种
+			if (text.empty()) err = modelErrText();
+			ok = true;
 		}
 		Ling::App::get()->dq.TryEnqueue(
 			[this, seq, asTable, ok, text = std::move(text), table = std::move(table), err = std::move(err)]() mutable {
@@ -335,6 +350,12 @@ void WinOcr::startRecognize()
 					return;
 				}
 				if (asTable) setTable(table);
+				else if (!err.empty()) {
+					// 空结果 + 模型没准备好：把原因摆出来，别只留一句"没有识别到文字"
+					result.clear();
+					html.clear();
+					box->setText(err);
+				}
 				else setResult(text);
 			});
 	}).detach();
@@ -412,9 +433,10 @@ void WinOcr::applyEngineBtn()
 {
 	if (!engineBtn) return;
 	engineBtn->setText(aiMode ? Lang::get(L"ocr.engineAi") : Lang::get(L"ocr.engineSys"));
-	// 语言包是系统离线 OCR 才有的概念，大模型那条路用不上 —— 留着会让人以为它在生效
+	// 语言包是系统离线 OCR 才有的概念：大模型用不上，内置模型（PP-OCRv6）是
+	// 多语种的也不用挑 —— 留着会让人以为它在生效
 	if (langBtn) {
-		if (aiMode) langBtn->hide();
+		if (aiMode || Ocr::engine() != OcrEngine::System) langBtn->hide();
 		else langBtn->show();
 	}
 }

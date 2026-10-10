@@ -3214,8 +3214,8 @@ void WinPin::ocrToWindow()
 	std::vector<BYTE> pixels;
 	int w{ 0 }, h{ 0 };
 	if (!readBasePixels(pixels, w, h)) return;
-	// 系统装了 OCR 语言包就走内置引擎（与截图界面那一枚同一条判据）。
-	// 一个包都没装时内置引擎用不了，退回外部插件 —— 插件缺失时它会自己打开下载页，
+	// 与截图界面那一枚同一条判据：默认走内置的 PP-OCRv6 模型；模型也走不通、
+	// 系统又没装识别包时才退回外部插件 —— 插件缺失时它会自己打开下载页，
 	// 所以不看返回值（见 Ocr.h 上那条约定）
 	if (!Ocr::isAvailable()) {
 		Util::openWithImageReader(w, h, pixels.data());

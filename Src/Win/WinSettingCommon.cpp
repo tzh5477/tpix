@@ -600,6 +600,19 @@ void WinSettingCommon::showConfigTip(const std::wstring& key)
 
 void WinSettingCommon::initOcrCtrls()
 {
+    // 识别模型。ocr\<名字>\ 下每有一对 det / rec 的 onnx 就多一项 ——
+    // 出了 PP-OCRv7 只要把两个文件丢进新目录，这里就能选，不用改代码
+    auto models = Ocr::models();
+    if (!models.empty()) {
+        auto cur = Ocr::curModel();
+        int idx{ 0 };
+        for (int i = 0; i < (int)models.size(); ++i) if (models[i] == cur) { idx = i; break; }
+        auto modelRow = makeRow(L"setting.ocrModel");
+        makeSelectBtn(modelRow, 160.f, models, idx, [models](int i) { Ocr::setModel(models[i]); });
+    }
+    // 语言包只对系统 OCR 有意义：内置模型是多语种的，选语言不起作用 ——
+    // 回了落到系统 OCR 才把这一行显示出来
+    if (Ocr::engine() != OcrEngine::System) return;
     auto langs = Ocr::languages();
     auto row = makeRow(L"setting.ocrLang");
     if (langs.empty()) {

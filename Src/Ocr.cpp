@@ -1,9 +1,12 @@
 ﻿#include "pch.h"
 #include "Ocr.h"
+#include <optional>
 #include <winrt/Windows.Media.Ocr.h>
 #include <winrt/Windows.Graphics.Imaging.h>
 #include <winrt/Windows.Globalization.h>
 #include <algorithm>
+#include "OcrModel.h"
+#include "Setting.h"
 
 using namespace winrt;
 using namespace winrt::Windows::Graphics::Imaging;
@@ -242,6 +245,56 @@ namespace {
 		if (unit <= 0.f) return -1.f;
 		return (x1 - (x0 + w0)) / unit;
 	}
+
+	// ---- 内置模型那条路 ----
+	//
+	// 优先跑它：中英日韩都能认，不要求系统装语言包。跑不起来才回落系统 OCR
+	OcrModelState lastState{ OcrModelState::unknown };
+
+	std::wstring modelRoot()
+	{
+		return (Setting::get()->getDataPath() / L"ocr").wstring();
+	}
+
+	std::wstring modelName()
+	{
+		// 没选过就是空串 —— 用内置清单里的默认代次
+		return Setting::get()->getToolStr(L"ocr", L"model", OcrModel::defaultModel());
+	}
+
+	// 认一次。成了给词表；模型这条路走不通给 nullopt，调用方据此回落系统 OCR
+	std::optional<std::vector<OcrModelBox>> wordsByModel(const int w, const int h, BYTE* data)
+	{
+		std::vector<OcrModelBox> boxes;
+		const auto err = OcrModel::recognize(modelRoot(), modelName(), w, h, data, boxes);
+		switch (err) {
+		case OcrModel::Err::ok: lastState = OcrModelState::ok; break;
+		case OcrModel::Err::noModel: lastState = OcrModelState::noModel; break;
+		case OcrModel::Err::download: lastState = OcrModelState::download; break;
+		case OcrModel::Err::badModel: lastState = OcrModelState::badModel; break;
+		default: lastState = OcrModelState::runtime; break;
+		}
+		if (err != OcrModel::Err::ok) return std::nullopt;
+		return boxes;
+	}
+
+	// 词表拼成整段文字：同一行的词之间补一个空格，行与行之间换行。
+	// 中文一行本来就只有一个词（没有空格可切），所以不会退化成"退 出 tpix"
+	std::wstring joinBoxes(const std::vector<OcrModelBox>& boxes)
+	{
+		std::wstring text;
+		int lastLine{ -1 };
+		for (auto const& b : boxes) {
+			if (b.text.empty()) continue;
+			if (!text.empty()) {
+				if (b.line != lastLine) text += L'\n';
+				else text += L' ';
+			}
+			text += b.text;
+			lastLine = b.line;
+		}
+		return text;
+	}
 }
 
 bool ocrNeedSpace(wchar_t left, wchar_t right, float relGap)
@@ -261,12 +314,46 @@ bool ocrNeedSpace(wchar_t left, wchar_t right, float relGap)
 
 bool Ocr::isAvailable()
 {
+	// 内置模型这条路不挑系统语言包（缺文件会自己下），所以选中的那代能用就总有一条路；
+	// 只有"连模型都拿不到、系统又没装语言包"这一种情况才是真的没得用
+	if (engine() == OcrEngine::Model) return true;
 	try {
 		return wmo::OcrEngine::AvailableRecognizerLanguages().Size() > 0;
 	}
 	catch (...) {
 		return false;
 	}
+}
+
+OcrEngine Ocr::engine()
+{
+	// 内置清单里登记过就能自己下载、目录里已经有的就能直接用 ——
+	// 两者都不是（比如用户填了个并不存在的目录名）才回落到系统 OCR
+	const auto name = modelName();
+	if (name.empty()) return OcrEngine::System;
+	for (auto const& m : OcrModel::listModels(modelRoot())) if (m == name) return OcrEngine::Model;
+	return OcrEngine::System;
+}
+
+OcrModelState Ocr::modelState()
+{
+	return lastState;
+}
+
+std::vector<std::wstring> Ocr::models()
+{
+	return OcrModel::listModels(modelRoot());
+}
+
+std::wstring Ocr::curModel()
+{
+	return modelName();
+}
+
+void Ocr::setModel(const std::wstring& name)
+{
+	// 换掉之后下一次识别才会重建会话：OcrModel 内部按名字认，名字变了自然重来
+	Setting::get()->setToolStr(L"ocr", L"model", name);
 }
 
 std::vector<OcrLang> Ocr::languages()
@@ -289,7 +376,8 @@ std::vector<OcrLang> Ocr::languages()
 	return list;
 }
 
-std::wstring Ocr::recognize(const int w, const int h, BYTE* data, const std::wstring& langTag)
+// 系统 OCR 那条路。Ocr::recognize / recognizeWords 在内置模型走不通时回落到这里
+static std::wstring recognizeBySystem(const int w, const int h, BYTE* data, const std::wstring& langTag)
 {
 	// prepared 只是为了拿放大系数把词框换算回原图 —— 拼字符串只需要原图坐标下的
 	// 相对间隙，而等比缩放不改变间隙与字高的比值，所以这里换算回原图算也一样对
@@ -328,7 +416,7 @@ std::wstring Ocr::recognize(const int w, const int h, BYTE* data, const std::wst
 	return text;
 }
 
-std::vector<OcrWord> Ocr::recognizeWords(const int w, const int h, BYTE* data, const std::wstring& langTag)
+static std::vector<OcrWord> wordsBySystem(const int w, const int h, BYTE* data, const std::wstring& langTag)
 {
 	std::vector<OcrWord> words;
 	if (w <= 0 || h <= 0 || !data) return words;
@@ -349,4 +437,26 @@ std::vector<OcrWord> Ocr::recognizeWords(const int w, const int h, BYTE* data, c
 		}
 	}
 	return words;
+}
+
+std::wstring Ocr::recognize(const int w, const int h, BYTE* data, const std::wstring& langTag)
+{
+	// 内置模型优先。它认出来的是空的也认账 —— 图里真的没有字就是没有字，
+	// 再去问一遍系统 OCR 只会白等一秒；只有模型这条路自己走不通才回落
+	if (auto boxes = wordsByModel(w, h, data)) return joinBoxes(*boxes);
+	return recognizeBySystem(w, h, data, langTag);
+}
+
+std::vector<OcrWord> Ocr::recognizeWords(const int w, const int h, BYTE* data, const std::wstring& langTag)
+{
+	// 表格填字（Table::fillText）与贴图窗口的选文都走这里 —— 换模型这件事
+	// 对它们同样生效，不用各改一遍
+	if (auto boxes = wordsByModel(w, h, data)) {
+		std::vector<OcrWord> words;
+		words.reserve(boxes->size());
+		for (auto const& b : *boxes)
+			words.push_back({ b.text, b.x, b.y, b.w, b.h });
+		return words;
+	}
+	return wordsBySystem(w, h, data, langTag);
 }
