@@ -940,11 +940,20 @@ void Setting::setThemeColor(unsigned int rgb)
 unsigned int Setting::getThemeSoft()
 {
 	// 浅底 = 白底上叠一层 10% 的主题色。按钮"选中"那一档的底色（原 0xE6F4FF
-	// 正是 0x1677FF 掺白出来的），跟着主题色走，不单独存配置
+	// 正是 0x1677FF 掺白出来的），跟着主题色走，不单独存配置。
+	//
+	// ⚠️ 原来写成 `0xFF + static_cast<int>((v - 0xFF) * 0.10)`，而 v 是
+	//    `const unsigned int` ⇒ `v - 0xFF` 在 v < 255 时**按无符号回绕成 42 亿**，
+	//    `static_cast<int>(4.2e8)` 越界是 UB，实测各档主题色算出来是
+	//    (155,139,255) / (155,154,146) / (159,154,131) 这种跟主题色毫无关系的脏灰
+	//    —— 全工程 9 个调用点（工具条选中格、子面板开关、历史窗 tab、AI 气泡、
+	//    下拉选中项、录制档位…）全都显示成同一块灰，换主题色也不动
+	//    （作者报的"工具条选中工具的背景色还是灰色"）。先转 double 再算就没有回绕
 	const unsigned int c = getThemeColor();
 	const auto ch = [c](unsigned int shift) {
-		const unsigned int v = (c >> shift) & 0xFF;
-		return 0xFF + static_cast<int>((v - 0xFF) * 0.10);
+		const double v = static_cast<double>((c >> shift) & 0xFF);
+		// 255 + (v-255)*0.1 落在 [229.5, 255] 上，恒为正 ⇒ +0.5 后截断即四舍五入
+		return static_cast<unsigned int>(255.0 + (v - 255.0) * 0.10 + 0.5);
 	};
 	return (ch(16) << 16) | (ch(8) << 8) | ch(0);
 }
