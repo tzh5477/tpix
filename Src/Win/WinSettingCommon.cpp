@@ -403,6 +403,8 @@ void WinSettingCommon::initSaveCtrls()
     auto tplBox = tplRow->makeChild<Ling::TextBox>();
     tplBox->setHeight(28.f);
     tplBox->setWidth(200.f);
+    // 同上：不加这一行，框右边会常驻一条滚动条 —— WinSettingAi 那轮清扫漏了这一只
+    tplBox->setPadding(6.f, 0.f, 6.f, 0.f);
     tplBox->setBorder(1.f, 0xE0E0E0FF);
     tplBox->setVerticalCenter(true);
     tplBox->setText(Setting::get()->getSaveNameTpl());
