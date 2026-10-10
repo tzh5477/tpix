@@ -129,6 +129,24 @@ public:
 	// 滚动截图的方向：true = 横向（拼出来的图往右长），false = 竖向（默认）
 	bool getLongHorizontal();
 	void setLongHorizontal(bool val);
+	// 录屏。存在 config.json 的 video 组里：
+	//   timeLimitMin —— 录制时长上限，**分钟**，0 = 不限。默认 120，与老版本硬编码的
+	//                   MP4 上限一致，老用户升上来行为不变；GIF 也读它（原来写死 6 分钟）
+	//   tempDir      —— 录制临时文件（temp.mp4 / temp.gif / 裁剪产物）落在哪个目录，
+	//                   空串 = 数据目录。存在的意义是"录一天"：数据目录在 %appdata% 下
+	//                   （C 盘），4Mbps 一天就是几十 G，得能指到大分区去
+	int getVideoTimeLimitMin();
+	void setVideoTimeLimitMin(int val);
+	// 把输入框里那串字解析成分钟数。返回 -1 表示"一个数字都没有"（空串、或者敲了串
+	// 别的东西）。0 是合法值（不限时），所以不能拿 0 当失败标记。
+	// 设置页与录制中改上限的小窗共用这一份，免得两边对"什么算有效输入"给出不同答案
+	static int parseTimeLimitText(const std::wstring& text);
+	std::wstring getVideoTempDir();
+	void setVideoTempDir(const std::wstring& dir);
+	// 录制临时文件真正落到的目录。返回**副本**：调用方还要 append 文件名，
+	// 不能就地改到成员上（同 getDataPath）。配的目录建不出来就回落数据目录 ——
+	// 录到一半才发现写不进去，比一开始就用默认目录糟得多
+	std::filesystem::path getRecordTempDir();
 	// 主题色（强调色）。存在 config.json 的 ui 组里：theme（0xRRGGBB，默认 0x1677FF 蓝）。
 	// 贴图蓝边框、工具按钮的选中底色、录屏面板的选中字色等一众"强调蓝"都从这来 ——
 	// 改一处全界面跟着变，不必逐处找色值。setThemeColor 立即落盘
@@ -206,6 +224,8 @@ private:
 	JsonObject getPinObj();
 	// cap 那一组（捕获：延时 / 定时 / 指针），缺则现建
 	JsonObject getCapObj();
+	// video 那一组（录屏：时长上限 / 临时目录），缺则现建
+	JsonObject getVideoObj();
 	// ui 那一组（外观：主题色这类），缺则现建
 	JsonObject getUiObj();
 	// ai 那一组（接口列表 / 场景绑定 / 翻译选哪家 / 历史策略），缺则现建

@@ -840,6 +840,78 @@ void Setting::setLongHorizontal(bool val)
 	save();
 }
 
+JsonObject Setting::getVideoObj()
+{
+	auto obj = configObj.GetNamedObject(L"video", nullptr);
+	if (!obj) {
+		obj = JsonObject();
+		configObj.SetNamedValue(L"video", obj);
+	}
+	return obj;
+}
+
+int Setting::getVideoTimeLimitMin()
+{
+	// 夹到 [0, 100000]：0 是"不限"，100000 分钟（约 69 天）只是个防溢出的哨兵，
+	// 不是产品限制 —— 需求就是"取消限制"，所以上限给得远远超出任何真实录制时长
+	auto val = (int)getVideoObj().GetNamedNumber(L"timeLimitMin", 120.0);
+	if (val < 0) return 0;
+	if (val > 100000) return 100000;
+	return val;
+}
+
+void Setting::setVideoTimeLimitMin(int val)
+{
+	if (val < 0) val = 0;
+	if (val > 100000) val = 100000;
+	getVideoObj().SetNamedValue(L"timeLimitMin", JsonValue::CreateNumberValue((double)val));
+	save();
+}
+
+int Setting::parseTimeLimitText(const std::wstring& text)
+{
+	// 设置页那个输入框与录制中改上限的小窗共用这一份 —— 两边对"什么算有效输入"
+	// 必须给出同一个答案，否则同一个数字在设置页存进去是 120、在小窗里存进去是 0
+	bool hasDigit{ false };
+	long long val{ 0 };
+	for (auto c : text) {
+		// 非数字字符直接跳过而不是判错：用户很可能手打成"120 分钟"，
+		// 为此弹一次错误提示反而更烦人
+		if (c < L'0' || c > L'9') continue;
+		hasDigit = true;
+		val = val * 10 + (c - L'0');
+		if (val > 100000) { val = 100000; break; }
+	}
+	// -1 = "一个数字都没有"。0 是合法值（不限时），所以不能拿 0 当失败标记
+	return hasDigit ? (int)val : -1;
+}
+
+std::wstring Setting::getVideoTempDir()
+{
+	return std::wstring{ getVideoObj().GetNamedString(L"tempDir", L"") };
+}
+
+void Setting::setVideoTempDir(const std::wstring& dir)
+{
+	getVideoObj().SetNamedValue(L"tempDir", JsonValue::CreateStringValue(dir));
+	save();
+}
+
+std::filesystem::path Setting::getRecordTempDir()
+{
+	auto dir = getVideoTempDir();
+	if (!dir.empty()) {
+		std::error_code ec;
+		std::filesystem::path p{ dir };
+		if (std::filesystem::exists(p, ec) || std::filesystem::create_directories(p, ec)) {
+			if (std::filesystem::is_directory(p, ec)) return p;
+		}
+		// 配的目录用不了（盘没挂上 / 没权限 / 路径被删了）：退回数据目录。
+		// 静默回落是刻意的 —— 弹个框拦住录制不划算，录到的文件在哪儿用户一看就知道
+	}
+	return getDataPath();
+}
+
 JsonObject Setting::getUiObj()
 {
 	auto obj = configObj.GetNamedObject(L"ui", nullptr);

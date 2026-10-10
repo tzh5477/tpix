@@ -68,6 +68,7 @@ WinSettingCommon::WinSettingCommon(Ling::WinBase* parent):Ling::Node(parent)
     initLangCtrls();
     initThemeCtrls();
     initCapCtrls();
+    initVideoCtrls();
     initSaveCtrls();
     initHistoryCtrls();
     initPinCtrls();
@@ -361,6 +362,76 @@ void WinSettingCommon::initCapCtrls()
         { Lang::get(L"long.vertical"), Lang::get(L"long.horizontal") },
         Setting::get()->getLongHorizontal() ? 1 : 0,
         [](int idx) { Setting::get()->setLongHorizontal(idx == 1); });
+}
+
+void WinSettingCommon::initVideoCtrls()
+{
+    // 录制时长上限。0 = 不限时，默认 120 分钟（与老版本硬编码的 MP4 上限一致，
+    // 所以老用户升上来行为不变）。GIF 也读这一个 —— 原来它写死 6 分钟
+    auto limitRow = makeRow(L"setting.videoTimeLimit");
+    auto limitBox = limitRow->makeChild<Ling::TextBox>();
+    limitBox->setHeight(28.f);
+    limitBox->setWidth(96.f);
+    // 单行输入框的上下内边距要让位给 setVerticalCenter：TextBox 构造默认上下各 6，
+    // 28 高的框只剩 16 逻辑像素装文本，而一行 14 号字就有 ~19 —— 内容永远"溢出"半行，
+    // 滚动条就常驻在框上（没换行也在）。同 WinSettingAi 里那六个框
+    limitBox->setPadding(6.f, 0.f, 6.f, 0.f);
+    limitBox->setBorder(1.f, 0xE0E0E0FF);
+    limitBox->setVerticalCenter(true);
+    limitBox->setText(std::to_wstring(Setting::get()->getVideoTimeLimitMin()));
+    // 落盘时机是"离开输入框 / 回车"，不是每次按键：逐字落盘的话，把 120 改成 30 的
+    // 中途会先存下 1、12，而 1 分钟意味着录制一秒后就自动停止 —— 那是真的会丢内容
+    auto commitLimit = [limitBox]() {
+        const int val = Setting::parseTimeLimitText(limitBox->getText());
+        // 一个数字都没敲出来（清空了 / 敲了串别的）：恢复原值，不改配置
+        if (val < 0) {
+            limitBox->setText(std::to_wstring(Setting::get()->getVideoTimeLimitMin()));
+            return;
+        }
+        Setting::get()->setVideoTimeLimitMin(val);
+        // 回显规范化后的值：填了 999999 会被夹住，得让用户看见真正生效的那个数
+        limitBox->setText(std::to_wstring(Setting::get()->getVideoTimeLimitMin()));
+    };
+    limitBox->onFocusChanged.add([commitLimit](Ling::TextBox*, bool focused) {
+        if (!focused) commitLimit();
+    });
+    limitBox->onKeyDown.add([commitLimit](Ling::TextBox*, UINT key, bool* handled) {
+        if (key == VK_RETURN) { *handled = true; commitLimit(); }
+    });
+
+    auto limitUnit = limitRow->makeChild<Ling::Label>();
+    limitUnit->setText(Lang::get(L"setting.videoTimeLimitUnit"));
+    limitUnit->setFontSize(13.f);
+    limitUnit->setColor(0x666666FF);
+    limitUnit->setMarginLeft(6.f);
+
+    auto limitHint = limitRow->makeChild<Ling::Label>();
+    limitHint->setText(Lang::get(L"setting.videoTimeLimitHint"));
+    limitHint->setFontSize(12.f);
+    limitHint->setColor(0x999999FF);
+    limitHint->setMarginLeft(12.f);
+
+    // 录制临时目录：temp.mp4 / temp.gif / 裁剪产物都落这里，默认是数据目录
+    // （%appdata%\tpix，在系统盘上）。存在的意义就是"录一天"——4Mbps 一天几十个 G，
+    // 得能指到大分区去。跟保存目录那一行完全同款：只列当前值，点开选目录
+    auto dirRow = makeRow(L"setting.videoTempDir");
+    auto dirBtn = dirRow->makeChild<Ling::Button>();
+    dirBtn->setHeight(28.f);
+    dirBtn->setWidth(240.f);
+    dirBtn->setBorder(1.f, 0xE0E0E0FF);
+    dirBtn->setHoverBg(0xFFFFFFFF);
+    auto applyTempDir = [](Ling::Button* btn) {
+        auto dir = Setting::get()->getVideoTempDir();
+        // 空 = 没配过，实际落到数据目录（getRecordTempDir 的回落分支），照实说清
+        btn->setText(dir.empty() ? Lang::get(L"setting.videoTempDirDefault") : shortenPath(dir));
+    };
+    applyTempDir(dirBtn);
+    dirBtn->onClick.add([this, applyTempDir](Ling::Button* btn) {
+        std::wstring dir;
+        if (!pickFolder(win->hwnd, dir)) return;
+        Setting::get()->setVideoTempDir(dir);
+        applyTempDir(btn);
+    });
 }
 
 void WinSettingCommon::initSaveCtrls()

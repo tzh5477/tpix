@@ -5,7 +5,24 @@
 #include "../Util.h"
 #include "../Lang.h"
 #include "../Tip.h"
+#include "../Win/WinRecordLimit.h"
 #include "ToolVideo.h"
+
+namespace {
+	// 秒 → mm:ss；过了 1 小时才带小时位 —— 上限可配到 1440 分钟，
+	// 位数不能写死成两位分钟（"录一天"时那是 1440:00）
+	std::wstring fmtDur(int sec)
+	{
+		if (sec < 0) sec = 0;
+		const int h = sec / 3600;
+		const int m = (sec / 60) % 60;
+		const int s = sec % 60;
+		if (h > 0) return std::format(L"{}:{:02d}:{:02d}", h, m, s);
+		return std::format(L"{:02d}:{:02d}", m, s);
+	}
+}
+
+ToolVideo* ToolVideo::liveTool{ nullptr };
 
 ToolVideo::ToolVideo(WinCap* win) : Ling::WinBase(), win(win)
 {
@@ -38,8 +55,23 @@ ToolVideo::~ToolVideo()
 {
 }
 
+ToolVideo* ToolVideo::living()
+{
+	return liveTool;
+}
+
 void ToolVideo::onCreated()
 {
+	// 登记"活着的工具条是我"：改上限那个小窗拿不到 ToolVideo*，只能现问这里
+	liveTool = this;
+	// 工具条一销毁（到点自动停止、或者用户点了丢弃/存盘），那一格倒计时就没了，
+	// 改上限的小窗也就没事可做了 —— 跟着收掉，别让它孤儿一样留在桌面上。
+	// 注意这条路径可能正是从那个小窗的按钮点击栈上一路过来的（改完上限立刻到点）
+	onDestroy.add([this]() {
+		if (liveTool == this) liveTool = nullptr;
+		WinRecordLimit::closeIfOpen();
+	});
+
 	tip = std::make_unique<Tip>(this);
 	// 提示气泡是独立顶层窗口，本窗口被摘出屏幕捕获它不跟着走，得单独说一声
 	tip->excludeFromCapture();
@@ -115,7 +147,8 @@ void ToolVideo::showSetting()
 	btnSpeaker = nullptr;
 	btnMic = nullptr;
 	btnPause = nullptr;
-	timerLabel = nullptr;
+	btnEdit = nullptr;
+	timerBtn = nullptr;
 	// 按钮被销毁时 onLeave 不会触发，提示得手动收掉，否则它会一直挂在屏幕上
 	tip->hide();
 	body->removeAllChildren();
@@ -174,16 +207,26 @@ void ToolVideo::showRecording()
 	btnMic = nullptr;
 	btnPause = nullptr;
 	btnEdit = nullptr;
-	timerLabel = nullptr;
+	timerBtn = nullptr;
 	tip->hide();
 	body->removeAllChildren();
 	setSize(recordingWidth(), btnSize);
 
-	timerLabel = body->makeChild<Ling::Label>();
-	timerLabel->setWidth(timerW);
-	timerLabel->setHeightPercent(100.f);
-	timerLabel->setAlignItems(Ling::Align::Center);
-	timerLabel->setJustifyContent(Ling::Justify::Center);
+	// 计时：有上限时是**倒计时**（剩 mm:ss，最后 30 秒变主题色），不限时是已录时长。
+	// 点它弹小窗改上限 —— 应标那种"录到一半发现还得再撑两分钟"的场合用得上，
+	// 改完立刻生效（onTimerCB 每个 tick 现读设置）。
+	// 它是工具条的成员，而工具条挂了不出现在屏幕捕获里（CapVideo::makeTool），
+	// 所以这个倒计时**不会被录进视频**，弹出来的小窗也一样要自己摘出去
+	timerBtn = body->makeChild<Ling::Button>();
+	timerBtn->setWidth(timerW);
+	timerBtn->setHeightPercent(100.f);
+	timerBtn->setFontSize(13.f);
+	timerBtn->setBg(0);
+	timerBtn->setHoverBg(0xF2F2F2ff);   // 设了底色就必须配 hover 底色（Button 的硬规矩）
+	timerBtn->setColor(0x333333ff);
+	timerBtn->setHoverColor(0x333333ff);
+	timerBtn->onClick.add([this](Ling::Button*) { WinRecordLimit::show(hwnd, dpi); });
+	tip->bind(timerBtn, Lang::get(L"video.timeLimitTip"));
 	updateTimerText();
 
 	makeSpliter();
@@ -284,22 +327,46 @@ void ToolVideo::startRecord()
 
 void ToolVideo::updateTimerText()
 {
-	if (!timerLabel) return;
-	// GIF 上限 6 分钟，MP4 上限 120 分钟
-	const int maxMinutes = (selectIndex == 1) ? 6 : 120;
-	timerLabel->setText(std::format(L"{:02d}:{:02d} / {:02d}:00", totalSeconds / 60, totalSeconds % 60, maxMinutes));
+	if (!timerBtn) return;
+	// 上限每次现读，不缓存：设置页改了、录制中点计时改了，下一个 tick 就跟着变。
+	// 0 = 不限 —— 不限时显示**已录**时长（就是个秒表）；有上限时显示**剩余**，
+	// "还能录多久"一眼可见，不用自己拿上限去减
+	const int limitMin = Setting::get()->getVideoTimeLimitMin();
+	if (limitMin <= 0) {
+		timerBtn->setText(fmtDur(totalSeconds));
+		timerBtn->setColor(0x333333ff);
+		timerBtn->setHoverColor(0x333333ff);
+		return;
+	}
+	const int remain = std::max(0, limitMin * 60 - totalSeconds);
+	timerBtn->setText(Lang::get(L"video.remain") + L" " + fmtDur(remain));
+	// 最后 30 秒换成主题色。用颜色而不是闪烁：录屏工具条是个置顶小窗，
+	// 用户的眼睛多半在别处，"变色"比"闪烁"更容易被余光抓到，也更好截图取证
+	const unsigned int c = (remain <= 30) ? ((Setting::getThemeColor() << 8) | 0xFF) : 0x333333ff;
+	timerBtn->setColor(c);
+	timerBtn->setHoverColor(c);
+}
+
+void ToolVideo::onLimitChanged()
+{
+	updateTimerText();
 }
 
 void ToolVideo::onTimerCB(UINT id)
 {
 	if (id != tickTimerId) return;
-	// 暂停期间计时不走：录出来的视频里这一段本来就被跳过了，显示上得对得上
-	if (isPaused) return;
+	// 上限现读不缓存：录制当中改上限要立刻算数（见 updateTimerText）
+	const int limitSec = Setting::get()->getVideoTimeLimitMin() * 60;
+	// 暂停期间计时不走：录出来的视频里这一段本来就被跳过了，显示上得对得上。
+	// 但仍要刷一次文字 —— 暂停着改了上限，倒计时得马上变
+	if (isPaused) {
+		updateTimerText();
+		return;
+	}
 	totalSeconds += 1;
 	updateTimerText();
-	const int maxSeconds = ((selectIndex == 1) ? 6 : 120) * 60;
-	if (totalSeconds >= maxSeconds) {
-		// 到上限就自动存盘收工
+	// 到上限就自动存盘收工（弹保存框）。不限时（limitSec == 0）永远走不到这里
+	if (limitSec > 0 && totalSeconds >= limitSec) {
 		saveFile();
 	}
 }

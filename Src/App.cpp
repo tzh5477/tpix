@@ -14,6 +14,7 @@
 #include "Util.h"
 #include "./Win/WinCap.h"
 #include "./Win/WinDelay.h"
+#include "./Win/WinRecordLimit.h"
 #include "./Win/WinOverlay.h"
 #include "./Win/WinPin.h"
 #include "./Win/PinHiddenBar.h"
@@ -103,6 +104,7 @@ void App::dispose()
     PinHiddenBar::dispose();
     WinCap::dispose();
     WinDelay::dispose();    // 倒计时窗口：退出时可能正倒数到一半
+    WinRecordLimit::dispose();  // 录制中改时长上限那个小窗：可能正开在工具条上方
     WinOverlay::dispose();  // 屏幕辅助层：铺满整屏的窗口，留着会挡住退出的观感
     WinSetting::dispose();
     WinOcr::dispose();

@@ -747,8 +747,10 @@ void WinVideoEdit::exportAs(bool toClipboard)
 	setPlaying(false);
 	exportToClip = toClipboard;
 	// 产物先落在临时目录，等用户选完保存框再拷过去（剪切板那条路直接留在那儿）。
-	// getDataPath() 给的是 std::filesystem::path，追加文件名要走 append（不是 operator+）
-	tmpOut = Setting::get()->getDataPath().append(L"trim.mp4").wstring();
+	// 目录跟录制临时文件同一份（设置页的「录制临时目录」）—— 裁剪产物和源片是一个量级，
+	// 就该和源片待在同一块盘上；默认仍是数据目录，所以没配过的话行为与以前完全一致。
+	// getRecordTempDir() 给的是 std::filesystem::path，追加文件名要走 append（不是 operator+）
+	tmpOut = Setting::get()->getRecordTempDir().append(L"trim.mp4").wstring();
 	DeleteFileW(tmpOut.c_str());
 
 	jobCancel = false;

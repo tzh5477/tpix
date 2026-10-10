@@ -155,7 +155,9 @@ bool CapVideo::isRecording() const
 void CapVideo::startMp4(bool useSpeaker, bool useMic)
 {
     auto& cutMask = win->cutMask;
-    auto videoTempPath = Setting::get()->getDataPath();
+    // 录制临时文件的落点可配（设置页的「录制临时目录」）：默认还是数据目录，
+    // 但"录一天"那种量级必须能指到大分区 —— 数据目录在 %appdata% 下，属于系统盘
+    auto videoTempPath = Setting::get()->getRecordTempDir();
     mp4Param = std::make_unique<VideoMp4::DESKTOPCAPTUREPARAMS>();
     mp4Param->ClickFx = Setting::get()->getClickFx();
     mp4Param->ClickFxScale = win->dpi;
@@ -244,7 +246,7 @@ void CapVideo::startMp4(bool useSpeaker, bool useMic)
 void CapVideo::startGif()
 {
     auto& cutMask = win->cutMask;
-    auto videoTempPath = Setting::get()->getDataPath();
+    auto videoTempPath = Setting::get()->getRecordTempDir();   // 同上：可配，默认数据目录
     gifParam = std::make_unique<VideoGif::GifParam>();
     gifParam->x = (int)(win->x + cutMask->maskRect.left);
     gifParam->y = (int)(win->y + cutMask->maskRect.top);
