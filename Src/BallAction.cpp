@@ -56,7 +56,7 @@ std::wstring ballDefaultActions()
 {
 	// 顺序照 ballActionDefs 的定义表写：togglePick 会按表重排，写乱顺序也走不出别的排列。
 	// 只影响"还没有这个键"的全新配置；老配置照自己存的那一串走
-	return L"cap,long,delay,video,ocr,pinClip,pinFile,history,aiTrans,aiChat,setting,exitCap";
+	return L"cap,long,delay,video,ocr,pinClip,pinFile,history,aiTrans,aiChat,exitCap,setting";
 }
 
 std::vector<std::wstring> ballParseActions(const std::wstring& raw)
