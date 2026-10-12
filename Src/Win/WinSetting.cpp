@@ -201,6 +201,11 @@ void WinSetting::onCreated()
 	header->setHeight(40.f);
 	// 与 body 同色（必须不透明，否则滚上来的内容会透出来）
 	header->setBg(0xFAFAFAFF);
+	// 标题区（顶部带 ✕ 关闭按钮的那条头带）与配置区之间的一条分隔线
+	auto headerLine = contentCol->makeChild<Ling::Node>();
+	headerLine->setHeight(1.f);
+	headerLine->setWidthPercent(100.f);
+	headerLine->setBg(0xE0E0E0FF);
 
 	makeContent(0);
 

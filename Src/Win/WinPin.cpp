@@ -1720,6 +1720,9 @@ void WinPin::setHidden(bool on, BarEdge edge)
 		hide();
 	}
 	else {
+		// 藏的手势是"拖到屏幕边上松手"，那份坐标多半整幅在屏幕外，原样放回来就是
+		// "恢复出来的贴图大半截留在屏幕外"。放回来时先钳回工作区，让整张图一眼看全
+		clampIntoWorkArea();
 		show();
 		// 藏起来之前工具条是开着的才请回来。这里不走 setToolsVisible：那个会把缩略图 /
 		// 贴边细条一并还原，而"放回来"不该顺手改用户收图的形态
@@ -1734,6 +1737,16 @@ void WinPin::setHidden(bool on, BarEdge edge)
 		refresh();
 	}
 	PinHiddenBar::sync();
+}
+
+// 把窗口整个钳回主显示器工作区（见 reveal 的同款算法）。图比工作区还大时贴着左 / 上边
+void WinPin::clampIntoWorkArea()
+{
+	RECT wa{};
+	if (!SystemParametersInfo(SPI_GETWORKAREA, 0, &wa, 0)) return;
+	int nx = std::clamp(x, (int)wa.left, std::max((int)wa.left, (int)(wa.right - w)));
+	int ny = std::clamp(y, (int)wa.top, std::max((int)wa.top, (int)(wa.bottom - h)));
+	if (nx != x || ny != y) setPosition(nx, ny);
 }
 
 // hover 那条时"露一下"。只把窗口显出来，isHidden 不动 —— 条本身得一直留着，
@@ -3221,7 +3234,10 @@ void WinPin::ocrToWindow()
 		Util::openWithImageReader(w, h, pixels.data());
 		return;
 	}
-	WinOcr::init(std::move(pixels), w, h);
+	// 这张图先自己藏进侧边栏，把屏幕让给识别窗 —— 两个置顶窗叠着只会互相挡内容。
+	// 识别窗记住了 this，它关闭时会调 revealAfterOcr 把这张放回来（顺带钳回工作区）
+	setHidden(true);
+	WinOcr::init(std::move(pixels), w, h, this);
 }
 
 // 二维码识别：同样在当前这张图上解。解出来弹窗问要不要复制，解不出就提示一句 ——

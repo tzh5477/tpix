@@ -7,14 +7,18 @@
 #include "../Ocr.h"
 #include "../Table.h"
 
+class WinPin;
+
 // OCR 结果窗口。建好就开一条工作线程去识别，识别完把文字填进多行文本框 ——
 // 识别一张满屏图可能要好几百毫秒，直接堵在 UI 线程上窗口会卡住不动。
 class WinOcr : public Ling::WinBase
 {
 public:
-	WinOcr(std::vector<BYTE>&& data, const int w, const int h);
+	WinOcr(std::vector<BYTE>&& data, const int w, const int h, WinPin* owner = nullptr);
 	~WinOcr();
-	static void init(std::vector<BYTE>&& data, const int w, const int h);
+	// owner：从哪张贴图打开的。贴图那条路会把图自动藏进侧边栏（见 WinPin::ocrToWindow），
+	// 识别窗关闭时负责把它放回来；截图编辑页那条路不传，没有"放回"一说
+	static void init(std::vector<BYTE>&& data, const int w, const int h, WinPin* owner = nullptr);
 	static void dispose();
 private:
 	void onCreated() override;
@@ -38,6 +42,8 @@ private:
 private:
 	std::vector<BYTE> pixels;
 	int imgW{ 0 }, imgH{ 0 };
+	// 从哪张贴图打开的（贴图那条路才有）。关闭时调它的 revealAfterOcr 放回侧边栏里藏的那张
+	WinPin* pinOwner{ nullptr };
 	std::wstring result;
 	// 表格模式下的 HTML：框里显示的是 tab 分隔的文本，复制时才把它一起放上剪贴板，
 	// 这样粘到 Word / Excel 里是一张真表

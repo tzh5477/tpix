@@ -23,6 +23,16 @@ namespace {
 		}
 		return hasHan;
 	}
+	// 把这枚窗口抬到同族 TOPMOST 窗口的最上面。直接再戴一次 TOPMOST 是不动的
+	//（已经在最上层带里），必须先摘掉 NOTOPMOST 再戴回 TOPMOST 才抬得动 ——
+	// 否则它盖不住同样置顶的文字识别窗，"点翻译"看起来像没反应
+	void raiseToFront(HWND hwnd)
+	{
+		if (!hwnd || !IsWindow(hwnd)) return;
+		SetWindowPos(hwnd, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+		SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+		BringWindowToTop(hwnd);
+	}
 }
 
 WinAiTrans::WinAiTrans() : Ling::WinBase()
@@ -34,27 +44,44 @@ WinAiTrans::WinAiTrans() : Ling::WinBase()
 	setTitle(Lang::get(L"ai.transTitle"));
 	setSize(560.f, 520.f);
 	setCenter();
-	createNativeWindow();
+	// 必须置顶：它常从"同样置顶的 OCR 结果窗 / 编辑页"里被唤起，普通窗口永远
+	// 压不过 TOPMOST 那一带 —— 翻译窗会被整个压在底下（截图实测）。与它们同族，
+	// 谁后抬谁在上面
+	createNativeWindow(WS_EX_TOPMOST | WS_EX_TOOLWINDOW);
 }
 
 WinAiTrans::~WinAiTrans()
 {
 	*alive = false;
 	if (task) task->cancel();
+	// 唤起方（识别窗）为让这一扇独占屏幕把自己藏了，现在还给它 —— 摘了再戴 TOPMOST
+	// 才抬得动（同族置顶窗排先后只有这一条路），正好也把它顶到最前
+	if (ownerWin && ownerWin->hwnd && IsWindow(ownerWin->hwnd)) {
+		ownerWin->show();
+		raiseToFront(ownerWin->hwnd);
+	}
 }
 
-void WinAiTrans::init(const std::wstring& preset)
+void WinAiTrans::init(const std::wstring& preset, Ling::WinBase* owner)
 {
 	if (winAiTrans) {
 		if (winAiTrans->hwnd && IsWindow(winAiTrans->hwnd)) {
+			// 上一个唤起方还藏着的话先还给它（连着从两个窗口点翻译，前一个不能永远消失）
+			if (winAiTrans->ownerWin && winAiTrans->ownerWin != owner
+				&& winAiTrans->ownerWin->hwnd && IsWindow(winAiTrans->ownerWin->hwnd)) {
+				winAiTrans->ownerWin->show();
+			}
+			winAiTrans->ownerWin = owner;
 			winAiTrans->applyPreset(preset);
 			winAiTrans->show();
+			raiseToFront(winAiTrans->hwnd);
 			SetForegroundWindow(winAiTrans->hwnd);
 			return;
 		}
 		winAiTrans.reset();
 	}
 	winAiTrans.reset(new WinAiTrans());
+	winAiTrans->ownerWin = owner;
 	// 填预设必须排在构造之后：控件是在 onCreated 里建出来的，而在构造函数里就
 	// createNativeWindow 把 onCreated 跑完了 —— 构造前存一份成员变量的老写法，
 	// 读到它的时候永远是空的，"带原文进来"从来就没生效过
@@ -65,6 +92,7 @@ void WinAiTrans::init(const std::wstring& preset)
 		// （而且 winAiTrans 已经存在，下一次进来走的是上面那条分支，恰好又会 show ——
 		// 所以症状是"第一次点没反应，第二次才有窗口"，特别像没反应）
 		winAiTrans->show();
+		raiseToFront(winAiTrans->hwnd);
 		SetForegroundWindow(winAiTrans->hwnd);
 	}
 }

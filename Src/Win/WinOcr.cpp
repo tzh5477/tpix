@@ -10,6 +10,7 @@
 #include "../Util.h"
 #include "WinAiTrans.h"
 #include "WinOcr.h"
+#include "WinPin.h"
 
 namespace {
 	std::unique_ptr<WinOcr> winOcr;
@@ -74,8 +75,8 @@ namespace {
 	}
 }
 
-WinOcr::WinOcr(std::vector<BYTE>&& data, const int w, const int h)
-	: Ling::WinBase(), pixels(std::move(data)), imgW(w), imgH(h)
+WinOcr::WinOcr(std::vector<BYTE>&& data, const int w, const int h, WinPin* owner)
+	: Ling::WinBase(), pixels(std::move(data)), imgW(w), imgH(h), pinOwner(owner)
 {
 	// 关窗按钮的点击栈上不能同步 reset（use-after-free），推迟到下一轮消息循环。
 	// 捕获 this 而不是裸用：回调跑的时候这个对象可能已经不是当前那一个了（见 init 的存在性判断）
@@ -98,21 +99,27 @@ WinOcr::~WinOcr()
 	// 光靠 alive 标记只能让它别去动节点，请求本身还在跑
 	*alive = false;
 	if (aiTask) aiTask->cancel();
+	// 从贴图打开的这条：关掉识别窗，把藏在侧边栏的那张图放回来（会顺带钳回工作区）
+	if (pinOwner) pinOwner->revealAfterOcr();
 }
 
-void WinOcr::init(std::vector<BYTE>&& data, const int w, const int h)
+void WinOcr::init(std::vector<BYTE>&& data, const int w, const int h, WinPin* owner)
 {
 	if (winOcr) {
 		// 句柄还在才谈"拉到前台"。对象活着、窗口却已经没了（销毁的收尾没跑到），
 		// SetForegroundWindow 会落在失效句柄上，表现就是"点了没反应" —— 那就丢掉重建
 		if (winOcr->hwnd && IsWindow(winOcr->hwnd)) {
+			// 上一张主子还藏在侧边栏等着放回的话，先还给它，再认新主子 ——
+			// 否则连着两张贴图先后开识别窗，前一张就永远留在侧边栏里了
+			if (winOcr->pinOwner && winOcr->pinOwner != owner) winOcr->pinOwner->revealAfterOcr();
+			winOcr->pinOwner = owner;
 			winOcr->show();
 			SetForegroundWindow(winOcr->hwnd);
 			return;
 		}
 		winOcr.reset();
 	}
-	winOcr.reset(new WinOcr(std::move(data), w, h));
+	winOcr.reset(new WinOcr(std::move(data), w, h, owner));
 	// 刚建出来的这一枚可能落在编辑页后面（两者都是 TOPMOST），明确再拉到最前一次
 	if (winOcr->hwnd) {
 		winOcr->show();
@@ -130,6 +137,9 @@ void WinOcr::onCreated()
 	enableShadow();
 	body->setBg(0xFFFFFFFF);
 	body->setFlexDirection(Ling::FlexDirection::Column);
+	// 交叉轴（水平）方向拉满：内容区 box 不写死宽度、靠 stretch 撑满窗口（再减左右 margin），
+	// 否则 Yoga 默认的 FlexStart 会让 box 缩成内容宽度，滚动条落到窗口中间
+	body->setAlignItems(Ling::Align::Stretch);
 
 	// 标题行：左边标题文字，右边关闭按钮。窗口是 WS_POPUP，系统标题栏不存在 ——
 	// 没有这一行的话整个窗只有一块文本框，用户既拖不动它，也没有关它的办法
@@ -138,15 +148,18 @@ void WinOcr::onCreated()
 	titleRow->setWidthPercent(100.f);
 	titleRow->setFlexDirection(Ling::FlexDirection::Row);
 	titleRow->setAlignItems(Ling::Align::Center);
+	// 标题区自带一层浅灰底，与白底的内容区拉开（下面再补一条分隔线）
+	titleRow->setBg(0xF7F7F8FF);
 
 	auto title = titleRow->makeChild<Ling::Label>();
 	title->setText(Lang::get(L"ocr.title"));
-	title->setHeightPercent(100.f);
 	title->setPaddingLeft(12.f);
-	title->setFontSize(13.f);
+	// 字号与翻译窗的标题一致（14）。不给 Label 定高：定满整行的话 Label 内部
+	// 文字是顶对齐的，Align::Center 就失效了 —— 标题会顶到窗口上沿、与右边的
+	// × 按钮不在一条水平线上。让它按内容自适应，交给行容器的 alignItems 居中
+	title->setFontSize(14.f);
 	title->setColor(0x333333FF);
 	title->setFlexGrow(1.f);
-	title->setJustifyContent(Ling::Justify::Start);
 
 	// 绝对定位到右上角：不占标题行的横向空间，也不会把标题文字挤窄
 	auto closeBtn = titleRow->makeChild<Ling::Button>();
@@ -160,18 +173,38 @@ void WinOcr::onCreated()
 	closeBtn->setFontFamily(L"icon");
 	closeBtn->onClick.add([](Ling::Button* btn) { btn->win->close(); });
 
+	// 标题区与内容区之间的分隔线
+	auto titleLine = body->makeChild<Ling::Node>();
+	titleLine->setHeight(1.f);
+	titleLine->setWidthPercent(100.f);
+	titleLine->setBg(0xE0E0E0FF);
+
 	box = body->makeChild<Ling::TextBox>();
 	box->setFlexGrow(1.f);
-	box->setWidthPercent(100.f);
 	box->setFontSize(14.f);
 	box->setPadding(12.f, 12.f, 12.f, 12.f);
 	box->setText(Lang::get(L"ocr.recognizing"));
+	// 内容区自成一格：四周留边距、铺一层浅灰底、圆角，与白底的标题区 / 按钮区拉开。
+	// 用底色而不用描边做区分，与翻译窗的译文区同一套做法。TextBox 本来就是可编辑
+	// 控件（点进去改、Ctrl+C/V/X/A、IME 都在），识别结果直接就能二次加工
+	box->setMargin(12.f, 10.f, 12.f, 10.f);
+	box->setBg(0xF7F7F9FF);
+	box->setBorderRadius(6.f);
+
+	// 内容区与按钮区之间的分隔线
+	auto bottomLine = body->makeChild<Ling::Node>();
+	bottomLine->setHeight(1.f);
+	bottomLine->setWidthPercent(100.f);
+	bottomLine->setBg(0xE0E0E0FF);
 
 	auto bottom = body->makeChild<Ling::Node>();
 	bottom->setHeight(48.f);
 	bottom->setWidthPercent(100.f);
 	bottom->setFlexDirection(Ling::FlexDirection::Row);
 	bottom->setAlignItems(Ling::Align::Center);
+	// 按钮区与标题区同用一层浅灰底：上中下三段一眼分明
+	bottom->setBg(0xF7F7F8FF);
+	bottom->setPaddingLeft(12.f);
 	bottom->setPaddingRight(12.f);
 
 	// 语言按钮。系统装了几种就多几个选项，一个都没装时它只显示一句提示、点了没反应。
@@ -247,7 +280,13 @@ void WinOcr::onCreated()
 	transBtn->setHoverBg(0xF2F2F2FF);
 	transBtn->onClick.add([this](Ling::Button*) {
 		if (result.empty()) return;
-		WinAiTrans::init(result);
+		// 以文本框里当下的内容为准：识别结果支持二次编辑，改完再点翻译，翻的是改后的。
+		// 翻译窗置顶弹出后把识别窗自己藏起来 —— 两个置顶窗叠着只会互相挡内容，
+		// 关掉翻译窗时（WinAiTrans 的 owner 回调）识别窗会自己回来
+		auto text = box->getText();
+		if (text.empty()) return;
+		WinAiTrans::init(text, this);
+		hide();
 	});
 
 	auto spacer = bottom->makeChild<Ling::Node>();
@@ -261,8 +300,12 @@ void WinOcr::onCreated()
 	copyBtn->setHoverBg(0xF2F2F2FF);
 	copyBtn->onClick.add([this](Ling::Button*) {
 		if (result.empty()) return;
-		if (html.empty()) Ling::Util::setTextToClipboard(result);
-		else Util::setHtmlToClipboard(html, result);
+		auto text = box->getText();
+		if (text.empty()) return;
+		// 内容没动过且带着表格 HTML 才走 HTML 那条（粘进 Word / Excel 是真的一张表）；
+		// 编辑过就以框里的内容为准出纯文本 —— 那份 HTML 是对着识别原文编的，改完就对不上了
+		if (text == result && !html.empty()) Util::setHtmlToClipboard(html, result);
+		else Ling::Util::setTextToClipboard(text);
 		ShotHistory::get()->skipNextClipboard();
 	});
 

@@ -221,6 +221,12 @@ public:
 	// hover 时"露一下" / 收回去。只动窗口，isHidden 不动 —— 条本身要一直留着，
 	// 不然鼠标一离开条就没了，而"离开就收回去"正是这一套的行为
 	void peek(bool on);
+	// 把窗口整个钳回主显示器工作区。放回贴图（setHidden(false)）时调：
+	// 藏的手势是"拖到屏幕边上松手"，原位多半整幅在屏幕外，原样放回来图就大半截看不见了
+	void clampIntoWorkArea();
+	// OCR 结果窗（WinOcr）关闭时回调：开识别窗时这张图自动藏进了侧边栏，
+	// 这里负责放回来。图已经没了（用户从别的路子关掉了）就不再显出来
+	void revealAfterOcr() { if (!isClosed && isHidden) setHidden(false); }
 	// 隐藏条上那一条的颜色序号：新建贴图时按创建顺序轮转分配，之后不再变 ——
 	// 藏了放、放了藏，同一张图前后得是同一个颜色
 	int getBarColorIndex() const { return barColorIndex; }

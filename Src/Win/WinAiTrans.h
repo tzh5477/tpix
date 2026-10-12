@@ -12,8 +12,9 @@ class WinAiTrans : public Ling::WinBase
 {
 public:
 	~WinAiTrans();
-	// preset 非空时填进输入框并立刻翻一次（OCR 那条路就是这么进来的）
-	static void init(const std::wstring& preset = L"");
+	// preset 非空时填进输入框并立刻翻一次（OCR 那条路就是这么进来的）。
+	// owner：从哪个窗口唤起的（比如识别窗）。它唤起时把自己藏了，这里关闭时要放它回来
+	static void init(const std::wstring& preset = L"", Ling::WinBase* owner = nullptr);
 	static void dispose();
 private:
 	WinAiTrans();
@@ -54,4 +55,7 @@ private:
 	std::wstring result;
 	// 窗口关掉之后迟到的回调不能再碰这些节点（收尾回调是"取消也照送"的）
 	std::shared_ptr<bool> alive{ std::make_shared<bool>(true) };
+	// 从哪个窗口唤起的（识别窗 / 无）。关闭时把它 show 回来 —— 两个置顶窗叠着
+	// 只会互相挡，唤起方都是先藏了自己再开这一扇
+	Ling::WinBase* ownerWin{ nullptr };
 };
