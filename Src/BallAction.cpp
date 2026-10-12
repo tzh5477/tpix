@@ -8,7 +8,7 @@ namespace {
 	// 后加进来、要替老配置补上的操作项。
 	// 「翻译」「AI 对话」是明确要求放到球上的，但老配置里存的那一串里没有它们 ——
 	// 不补的话设置页能看见（未勾选），球上却永远不出现。
-	const std::wstring migrateActions[]{ L"aiTrans", L"aiChat" };
+	const std::wstring migrateActions[]{ L"aiTrans", L"aiChat", L"exitCap" };
 
 	// 表顺序 = 展开条上的排列顺序，也是设置页里勾选列表的顺序。
 	// icon 必须在 Res/iconfont.ttf 里真的存在，否则按钮上是一个方块（由 Doc/tools/mkicons.py 生成）：
@@ -41,6 +41,9 @@ namespace {
 		{ L"aiChat",       L"\ue911", L"ball.aiChat" },
 		{ L"setting",      L"\ue906", L"ball.setting" },
 		{ L"hide",         L"\ue62d", L"ball.hide" },
+		// 「退出截图」：0xE638 是 Doc/tools/mkicons.py 里一枚现成的 ✕ 形图标，
+		// 没在别的动作上用过，正好表达"取消 / 退出当前截图流程"，不必为它重新生成字体
+		{ L"exitCap",      L"\ue638", L"ball.exitCap" },
 	};
 }
 
@@ -53,7 +56,7 @@ std::wstring ballDefaultActions()
 {
 	// 顺序照 ballActionDefs 的定义表写：togglePick 会按表重排，写乱顺序也走不出别的排列。
 	// 只影响"还没有这个键"的全新配置；老配置照自己存的那一串走
-	return L"cap,long,delay,video,ocr,pinClip,pinFile,history,aiTrans,aiChat,setting";
+	return L"cap,long,delay,video,ocr,pinClip,pinFile,history,aiTrans,aiChat,setting,exitCap";
 }
 
 std::vector<std::wstring> ballParseActions(const std::wstring& raw)

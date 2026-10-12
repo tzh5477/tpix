@@ -9,6 +9,7 @@ WinSettingBall::WinSettingBall(Ling::WinBase* parent) : Ling::Node(parent)
 {
 	picked = ballParseActions(Setting::get()->getToolStr(L"ball", L"actions", ballDefaultActions()));
 	initShowCtrl();
+	initLineAlphaCtrl();
 	initActionCtrls();
 }
 
@@ -52,6 +53,59 @@ void WinSettingBall::initShowCtrl()
 		if (next) WinBall::init();
 		else WinBall::dispose();
 		});
+}
+
+void WinSettingBall::initLineAlphaCtrl()
+{
+	// 横线透明度：0 = 整条线看不见（只剩悬浮球图标那一列），255 = 全不透明（原样）。
+	// buildBody 里 lineBox->setBg 读的就是这个值
+	auto box = makeChild<Ling::Node>();
+	box->setHeight(39.f);
+	box->setFlexDirection(Ling::FlexDirection::Row);
+	box->setAlignItems(Ling::Align::Center);
+
+	auto label = box->makeChild<Ling::Label>();
+	label->setText(Lang::get(L"setting.ball.lineAlpha"));
+	label->setFontSize(13.f);
+	label->setHeightPercent(100.f);
+	label->setJustifyContent(Ling::Justify::Center);
+	label->setWidth(110.f);
+	label->setFlexShrink(0.f);
+
+	auto s = box->makeChild<Ling::Slider>();
+	s->setHeight(12.f);
+	s->setFlexGrow(1.f);
+	s->setMarginLeft(10.f);
+	s->setMarginRight(8.f);
+	auto alpha = Setting::get()->getToolNum(L"ball", L"lineAlpha", 255.f);
+	s->setRange(0.f, 255.f);
+	s->setValue((float)std::clamp((int)alpha, 0, 255));
+	s->setStep(1.f);
+	s->setThumbColor(0x888888FF);
+	s->setHoverThumbColor(0x888888FF);
+	s->setTrackColor(0xD9D9D9FF);
+	s->setFillColor((Setting::getThemeColor() << 8) | 0xFF);
+
+	auto num = box->makeChild<Ling::Label>();
+	num->setFontSize(12.f);
+	num->setColor(0x555555FF);
+	num->setWidth(34.f);
+	num->setAlignItems(Ling::Align::FlexEnd);
+	num->setFlexShrink(0.f);
+	num->setText(std::to_wstring((int)alpha));
+
+	// setValue 排在 onValueChanged 之前：填初值这一下不会反过来又写一次盘
+	s->onValueChanged.add([num](Ling::Slider*, float v) {
+		int iv = (int)std::lround(v);
+		num->setText(std::to_wstring(iv));
+		Setting::get()->setToolNum(L"ball", L"lineAlpha", (float)iv);
+		// 细线是 buildBody 里现取这个值画的，重建一遍悬浮球节点树就换过来了
+		WinBall::reload();
+		});
+
+	auto border = makeChild<Ling::Node>();
+	border->setHeight(1.f);
+	border->setBg(0xE0E0E0FF);
 }
 
 void WinSettingBall::initActionCtrls()

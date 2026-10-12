@@ -19,6 +19,7 @@ private:
 	// 一行「图标 + 名称 + 勾选框」
 	Ling::Node* makeActionRow(const BallActionDef& def);
 	void initShowCtrl();
+	void initLineAlphaCtrl();
 	void initActionCtrls();
 	void applySwitch(Ling::Button* btn, bool on);
 	bool isPicked(const std::wstring& id) const;
