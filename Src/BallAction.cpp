@@ -41,9 +41,9 @@ namespace {
 		{ L"aiChat",       L"\ue911", L"ball.aiChat" },
 		{ L"setting",      L"\ue906", L"ball.setting" },
 		{ L"hide",         L"\ue62d", L"ball.hide" },
-		// 「退出截图」：0xE638 是 Doc/tools/mkicons.py 里一枚现成的 ✕ 形图标，
-		// 没在别的动作上用过，正好表达"取消 / 退出当前截图流程"，不必为它重新生成字体
-		{ L"exitCap",      L"\ue638", L"ball.exitCap" },
+		// 「退出截图」：电源符号（Doc/tools/mkicons.py 的 icon_power，e915），
+		// 点下去退出整个 tpix —— 与托盘菜单的「退出」走同一个 App::quit
+		{ L"exitCap",      L"\ue915", L"ball.exitCap" },
 	};
 }
 

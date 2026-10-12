@@ -179,15 +179,23 @@ void WinOcr::onCreated()
 	titleLine->setWidthPercent(100.f);
 	titleLine->setBg(0xE0E0E0FF);
 
-	box = body->makeChild<Ling::TextBox>();
+	// ⚠️ TextBox 构造函数里写死了 setWidth(240)，显式宽度优先级高于 alignItems 的
+	// stretch —— 直接放进 body 拉不开，灰底只有 240 逻辑像素宽（看着就是"背景只有一半"）。
+	// 所以套一层没有显式宽度的容器：容器靠 stretch 撑满（body 已设 alignItems:Stretch），
+	// 文本框再按容器宽的百分比铺满 —— 百分比落在容器上，叠外边距也不会溢出窗口右边
+	auto boxWrap = body->makeChild<Ling::Node>();
+	boxWrap->setFlexGrow(1.f);
+	boxWrap->setMargin(12.f, 10.f, 12.f, 10.f);
+
+	box = boxWrap->makeChild<Ling::TextBox>();
+	box->setWidthPercent(100.f);
 	box->setFlexGrow(1.f);
 	box->setFontSize(14.f);
 	box->setPadding(12.f, 12.f, 12.f, 12.f);
 	box->setText(Lang::get(L"ocr.recognizing"));
-	// 内容区自成一格：四周留边距、铺一层浅灰底、圆角，与白底的标题区 / 按钮区拉开。
+	// 内容区自成一格：铺一层浅灰底、圆角，与白底的标题区 / 按钮区拉开。
 	// 用底色而不用描边做区分，与翻译窗的译文区同一套做法。TextBox 本来就是可编辑
 	// 控件（点进去改、Ctrl+C/V/X/A、IME 都在），识别结果直接就能二次加工
-	box->setMargin(12.f, 10.f, 12.f, 10.f);
 	box->setBg(0xF7F7F9FF);
 	box->setBorderRadius(6.f);
 

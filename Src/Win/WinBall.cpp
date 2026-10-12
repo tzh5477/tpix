@@ -541,10 +541,9 @@ void WinBall::runAction(const std::wstring& id)
 	else if (id == L"aiChat") Ling::App::get()->dq.TryEnqueue([]() { WinAiChat::init(); });
 	else if (id == L"setting") Ling::App::get()->dq.TryEnqueue([]() { WinSetting::init(); });
 	else if (id == L"hide") hideSelf();
-	// 退出截图：把当前还在跑的截图流程收掉。WinCap 是拖框取景那一关，WinPin 是截完后的
-	// 编辑窗（也可能是从剪贴板/文件进来的贴图窗）—— 两个都 topmost，用户多半正卡在其中一关。
-	// 两个 dispose 各自是空窗时的安全空操作（reset 空指针 / clear 空表），所以一股脑都调掉
-	else if (id == L"exitCap") { WinCap::dispose(); WinPin::dispose(); }
+	// 退出截图：整个退出 tpix 软件（与托盘菜单的「退出」同一个入口 quit）。
+	// App::quit 会把消息循环收掉、所有窗口跟着销毁 —— 取景窗/编辑窗还开着也一样
+	else if (id == L"exitCap") Ling::App::get()->quit(0);
 }
 
 void WinBall::showActionMenu(const std::wstring& id, Ling::Button* anchor)

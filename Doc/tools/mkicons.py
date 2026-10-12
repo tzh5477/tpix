@@ -384,6 +384,15 @@ def icon_chat_plus(pen):
     seg(pen, 398, 516, 626, 516, 66)
 
 
+def icon_power(pen):
+    """电源符号：缺口朝上的圆环 + 穿过缺口的竖线 = 退出程序。
+    各种软件里「退出」的通用写法，与「隐藏悬浮球」的 ✕ 分得开。"""
+    w = 64
+    # 从 120° 逆时针扫 300° 到 60°：缺口正好留在正上方，竖线从缺口穿进环里
+    arc_band(pen, CX, CY, 300, w, 120.0, 60.0)
+    seg(pen, CX, CY - 420, CX, CY + 40, w)
+
+
 ICONS = [
     (0xE909, 'arrowPlain', icon_arrow_plain),
     (0xE90A, 'arrowTaper', icon_arrow_taper),
@@ -410,6 +419,8 @@ ICONS = [
     (0xE913, 'chatPlus', icon_chat_plus),
     # 工具条上的「画笔」（ToolMain 的 brush 那一格）
     (0xE914, 'brush', icon_brush),
+    # 悬浮球的「退出截图」（退出整个程序）
+    (0xE915, 'power', icon_power),
 ]
 
 
