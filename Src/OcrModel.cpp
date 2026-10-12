@@ -62,6 +62,8 @@ namespace {
 	constexpr int kRecMinW{ 320 };
 	constexpr int kRecMaxW{ 3200 };		// 官方给出的动态上限，再宽没意义
 	constexpr float kMinConf{ 0.5f };		// 行框认出来的字置信度低于这个就丢（官方默认）
+	constexpr float kRetrySingleConf{ 0.82f };	// 单行低于这个值就值得再试一次增强图
+	constexpr float kRetryMultiConf{ 0.72f };	// 多行阈值放宽：det+rec 本来就比单行更吃上下文
 	constexpr int kThreads{ 2 };			// onnxruntime 每次 Run 的线程数（实测最优，见文件末）
 
 	// ---- 会话 ----
@@ -79,21 +81,12 @@ namespace {
 
 	// ---- 小工具 ----
 
-	// 图里有几"行"文字 —— 靠水平投影数，不靠宽高比。
-	//
-	// ⚠️ 宽高比判不出这件事（2026-10-12 实测）：976×192 那种 5 行短文本比值 5.08，
-	// 和"一行长句"完全重叠，被当成单行整幅送进 rec，rec 只认一行的，直接吐空
-	// （界面上就是"没有识别到文字"，38ms 就返回）。改成逐行数前景像素、数连续的段：
-	// 几段就是几行。一行字从上到下笔画是连着的，行间的空白把它断开 —— 行距只要
-	// 有 2 个像素就能分开（要求空白连着两行才算断，挡抗锯齿的淡影）
-	int countTextLines(const int w, const int h, const BYTE* data)
+	float edgeMedianLuma(const int w, const int h, const BYTE* data)
 	{
-		if (w <= 0 || h <= 0 || !data) return 1;
+		if (w <= 0 || h <= 0 || !data) return 255.f;
 		auto lumOf = [](const BYTE* p) {
 			return 0.114f * p[0] + 0.587f * p[1] + 0.299f * p[2];	// BGRA
 		};
-		// 背景亮度取四边一圈的中位数：文档图大片是白底、文字是少数，边上一圈基本
-		// 落在背景上（比"取全图众数"便宜，也不怕标题占掉大半幅）
 		std::vector<float> edge;
 		edge.reserve((size_t)w * 2 + (size_t)h * 2);
 		for (int x = 0; x < w; ++x) {
@@ -105,7 +98,25 @@ namespace {
 			edge.push_back(lumOf(data + ((size_t)y * w + w - 1) * 4));
 		}
 		std::nth_element(edge.begin(), edge.begin() + edge.size() / 2, edge.end());
-		const float bg = edge[edge.size() / 2];
+		return edge[edge.size() / 2];
+	}
+
+	// 图里有几"行"文字 —— 靠水平投影数，不靠宽高比。
+	//
+	// ⚠️ 宽高比判不出这件事（2026-10-12 实测）：976×192 那种 5 行短文本比值 5.08，
+	// 和"一行长句"完全重叠，被当成单行整幅送进 rec，rec 只认一行的，直接吐空
+	// （界面上就是"没有识别到文字"，38ms 就返回）。改成逐行数前景像素、数连续的段：
+	// 几段就是几行。一行字从上到下笔画是连着的，行间的空白把它断开 —— 行距只要
+	// 有 2 个像素就能分开（要求空白连着两行才算断，挡抗锯齿的淡影）
+	int countTextLines(const int w, const int h, const BYTE* data)
+	{
+		if (w <= 0 || h <= 0 || !data) return 1;
+		// 背景亮度取四边一圈的中位数：文档图大片是白底、文字是少数，边上一圈基本
+		// 落在背景上（比"取全图众数"便宜，也不怕标题占掉大半幅）
+		auto lumOf = [](const BYTE* p) {
+			return 0.114f * p[0] + 0.587f * p[1] + 0.299f * p[2];	// BGRA
+		};
+		const float bg = edgeMedianLuma(w, h, data);
 		const float tol = std::max(40.f, bg * 0.25f);	// 与背景差多少算文字
 
 		const int minPix = std::max(2, w / 100);	// 一行至少得有这么多像素，挡噪点
@@ -126,6 +137,74 @@ namespace {
 			}
 		}
 		return std::max(lines, 1);
+	}
+
+	struct RetryImage
+	{
+		int w{ 0 }, h{ 0 };
+		int padX{ 0 }, padY{ 0 };
+		std::vector<BYTE> data;
+	};
+
+	RetryImage buildRetryImage(const int w, const int h, const BYTE* data)
+	{
+		RetryImage out;
+		if (w <= 0 || h <= 0 || !data) return out;
+		const float edgeBg = edgeMedianLuma(w, h, data);
+		const bool invert = edgeBg < 110.f;	// 深色界面里常是亮字暗底，翻成暗字亮底更稳
+		const int padX = std::clamp(w / 24, 8, 24);
+		const int padY = std::clamp(h / 3, 8, 28);
+		const int nw = w + padX * 2;
+		const int nh = h + padY * 2;
+		float bg = invert ? (255.f - edgeBg) : edgeBg;
+		bg = std::clamp(bg, 0.f, 255.f);
+		const BYTE bg8 = (BYTE)(bg + 0.5f);
+		out.w = nw;
+		out.h = nh;
+		out.padX = padX;
+		out.padY = padY;
+		out.data.assign((size_t)nw * nh * 4, 0xFF);
+		for (size_t i = 0; i < out.data.size(); i += 4) {
+			out.data[i] = bg8;
+			out.data[i + 1] = bg8;
+			out.data[i + 2] = bg8;
+		}
+		auto clampByte = [](float v) {
+			if (v < 0.f) v = 0.f;
+			if (v > 255.f) v = 255.f;
+			return (BYTE)(v + 0.5f);
+		};
+		for (int y = 0; y < h; ++y) {
+			for (int x = 0; x < w; ++x) {
+				const BYTE* src = data + ((size_t)y * w + x) * 4;
+				float lum = 0.114f * src[0] + 0.587f * src[1] + 0.299f * src[2];
+				if (invert) lum = 255.f - lum;
+				// 只做一档温和拉伸：把低对比文字再往背景两侧拉开一点，别上二值化把细笔画打碎
+				lum = bg + (lum - bg) * 1.35f;
+				BYTE v = clampByte(lum);
+				BYTE* dst = out.data.data() + ((size_t)(y + padY) * nw + (x + padX)) * 4;
+				dst[0] = v;
+				dst[1] = v;
+				dst[2] = v;
+				dst[3] = 0xFF;
+			}
+		}
+		return out;
+	}
+
+	void unpadBoxes(std::vector<OcrModelBox>& boxes, const int padX, const int padY,
+		const int w, const int h)
+	{
+		for (auto& b : boxes) {
+			const auto left = b.x - (float)padX;
+			const auto top = b.y - (float)padY;
+			const auto right = left + b.w;
+			const auto bottom = top + b.h;
+			b.x = std::clamp(left, 0.f, (float)w - 1.f);
+			b.y = std::clamp(top, 0.f, (float)h - 1.f);
+			b.w = std::max(std::clamp(right, 0.f, (float)w) - b.x, 1.f);
+			b.h = std::max(std::clamp(bottom, 0.f, (float)h) - b.y, 1.f);
+		}
 	}
 
 	std::wstring toWide(const std::string& s)
@@ -392,6 +471,96 @@ namespace {
 		q = out;
 	}
 
+	struct QuadMetrics
+	{
+		float left{ 0 }, top{ 0 }, right{ 0 }, bottom{ 0 };
+		float cx{ 0 }, cy{ 0 };
+		float w{ 0 }, h{ 0 };
+		float angle{ 0 };	// 顶边方向，弧度
+	};
+
+	QuadMetrics quadMetrics(const Quad& q)
+	{
+		QuadMetrics m;
+		m.left = std::min(std::min(q.x[0], q.x[1]), std::min(q.x[2], q.x[3]));
+		m.top = std::min(std::min(q.y[0], q.y[1]), std::min(q.y[2], q.y[3]));
+		m.right = std::max(std::max(q.x[0], q.x[1]), std::max(q.x[2], q.x[3]));
+		m.bottom = std::max(std::max(q.y[0], q.y[1]), std::max(q.y[2], q.y[3]));
+		m.cx = (m.left + m.right) / 2.f;
+		m.cy = (m.top + m.bottom) / 2.f;
+		auto len = [](const float x0, const float y0, const float x1, const float y1) {
+			const auto dx = x1 - x0, dy = y1 - y0;
+			return std::sqrt(dx * dx + dy * dy);
+		};
+		m.w = (len(q.x[0], q.y[0], q.x[1], q.y[1]) + len(q.x[3], q.y[3], q.x[2], q.y[2])) / 2.f;
+		m.h = (len(q.x[0], q.y[0], q.x[3], q.y[3]) + len(q.x[1], q.y[1], q.x[2], q.y[2])) / 2.f;
+		m.angle = std::atan2(q.y[1] - q.y[0], q.x[1] - q.x[0]);
+		return m;
+	}
+
+	float angleDiff(const float a, const float b)
+	{
+		auto d = std::fabs(a - b);
+		while (d > 3.14159265f) d -= 3.14159265f * 2.f;
+		return std::fabs(d);
+	}
+
+	// det 在截图里偶尔会把同一行横向切成两三个相邻的小框；逐框送 rec 会变慢，
+	// 而且上下文变短后更容易丢空格/错字。这里只合并"几乎贴在一起"的水平相邻框：
+	// 间距稍大就宁可不合，避免把表格的邻列、或者本来分开的两块内容并成一行。
+	bool canMergeNeighborQuad(const Quad& a, const Quad& b)
+	{
+		const auto ma = quadMetrics(a);
+		const auto mb = quadMetrics(b);
+		const auto h = std::max(ma.h, mb.h);
+		if (h < 1.f) return false;
+		// 只动接近水平的文字，旋转 / 竖排还是保留原框，别为了省一次 rec 把方向搞坏
+		constexpr float kMaxAbsAngle{ 15.f * 3.14159265f / 180.f };
+		constexpr float kMaxAngleDiff{ 10.f * 3.14159265f / 180.f };
+		if (std::fabs(ma.angle) > kMaxAbsAngle || std::fabs(mb.angle) > kMaxAbsAngle) return false;
+		if (angleDiff(ma.angle, mb.angle) > kMaxAngleDiff) return false;
+		// 高度差太大通常不是同一行；y 中心与垂直重叠同时约束，防止串到上下两行
+		if (std::min(ma.h, mb.h) / std::max(ma.h, mb.h) < 0.7f) return false;
+		if (std::fabs(ma.cy - mb.cy) > 0.25f * h) return false;
+		const auto overlap = std::min(ma.bottom, mb.bottom) - std::max(ma.top, mb.top);
+		if (overlap < 0.7f * std::min(ma.h, mb.h)) return false;
+		// 只合并几乎挨着的相邻框：留一点负值给 det 的轻微外扩重叠，正值只放到半个字高
+		const auto gap = mb.left - ma.right;
+		return gap >= -0.15f * h && gap <= 0.45f * h;
+	}
+
+	Quad mergeNeighborQuad(const Quad& a, const Quad& b)
+	{
+		const auto ma = quadMetrics(a);
+		const auto mb = quadMetrics(b);
+		Quad q;
+		const auto left = std::min(ma.left, mb.left);
+		const auto right = std::max(ma.right, mb.right);
+		const auto top = std::min(ma.top, mb.top);
+		const auto bottom = std::max(ma.bottom, mb.bottom);
+		q.x[0] = left; q.y[0] = top;
+		q.x[1] = right; q.y[1] = top;
+		q.x[2] = right; q.y[2] = bottom;
+		q.x[3] = left; q.y[3] = bottom;
+		return q;
+	}
+
+	std::vector<Quad> mergeNeighborQuads(std::vector<Quad> quads)
+	{
+		if (quads.size() < 2) return quads;
+		std::vector<Quad> merged;
+		merged.reserve(quads.size());
+		merged.push_back(quads[0]);
+		for (size_t i = 1; i < quads.size(); ++i) {
+			if (canMergeNeighborQuad(merged.back(), quads[i])) {
+				merged.back() = mergeNeighborQuad(merged.back(), quads[i]);
+				continue;
+			}
+			merged.push_back(quads[i]);
+		}
+		return merged;
+	}
+
 	// 矩形内概率图的均值。DBNet 用它过滤掉"看着像字其实不是"的那些团
 	//
 	// 矩形的外扩（unclip）不需要 pyclipper：**输入本来就是矩形**时，polygon 偏移
@@ -546,7 +715,7 @@ namespace {
 				else break;
 			}
 		}
-		return quads;
+		return mergeNeighborQuads(std::move(quads));
 	}
 
 	// ---- rec ----
@@ -556,6 +725,40 @@ namespace {
 		std::vector<std::pair<float, float>> span;	// 每个字在"行宽"上的起止（0~1）
 		float conf{ 0.f };
 	};
+
+	struct PassStats
+	{
+		bool oneLine{ false };
+		int quads{ 0 };			// 检出来多少行框
+		int textLines{ 0 };		// rec 真的吐出过文字的行数（不管置信度）
+		int acceptedLines{ 0 };	// 置信度过线、最终纳入结果的行数
+		int textChars{ 0 };
+		float confSum{ 0.f };
+
+		float avgConf() const { return textLines > 0 ? confSum / textLines : 0.f; }
+		bool empty() const { return acceptedLines == 0 || textChars == 0; }
+	};
+
+	bool shouldRetry(const PassStats& s)
+	{
+		if (s.empty()) return true;
+		if (s.oneLine) return s.avgConf() < kRetrySingleConf;
+		if (s.avgConf() < kRetryMultiConf) return true;
+		// 行框很多但过线的很少，常见于深色截图 / 低对比度 / 边缘裁得太紧
+		return s.quads >= 2 && s.acceptedLines * 2 < s.quads;
+	}
+
+	bool retryBeats(const PassStats& base, const PassStats& retry)
+	{
+		if (retry.empty()) return false;
+		if (base.empty()) return true;
+		if (retry.acceptedLines > base.acceptedLines && retry.avgConf() + 0.02f >= base.avgConf()) return true;
+		if (retry.textChars >= base.textChars + std::max(2, base.textChars / 5)
+			&& retry.avgConf() + 0.02f >= base.avgConf()) return true;
+		if (retry.avgConf() > base.avgConf() + 0.08f
+			&& retry.textChars * 5 >= base.textChars * 4) return true;
+		return false;
+	}
 
 	bool recognizeQuad(const int w, const int h, const BYTE* data, const Quad& q, RecOut& out)
 	{
@@ -846,33 +1049,68 @@ OcrModel::Err OcrModel::recognize(const std::wstring& root, const std::wstring& 
 	const auto err = ensureLocked(root, name);
 	if (err != Err::ok) return err;
 	try {
-		out.clear();
-		// 图里有几行字？矮的也得数 —— 小字号的两行（h 不到 48）同样是多行，
-		// 整幅送 rec 一样吐空（见 countTextLines / kDetMinH）
-		const bool oneLine = countTextLines(w, h, data) <= 1;
-		if (oneLine) {
-			// 整张图就是一行：直接拉直送 rec，det 那一步纯属添乱（见常量区的实测）
-			Quad q;
-			q.x[0] = 0; q.y[0] = 0;
-			q.x[1] = (float)w - 1; q.y[1] = 0;
-			q.x[2] = (float)w - 1; q.y[2] = (float)h - 1;
-			q.x[3] = 0; q.y[3] = (float)h - 1;
-			RecOut rec;
-			if (recognizeQuad(w, h, data, q, rec) && !rec.text.empty())
-				splitWords(rec, q, 0, out);
-			return Err::ok;
-		}
-		// 多行：det 找行框、逐个送 rec。
-		// ⚠️ 别想着并行 rec —— 试过（每线程一份 rec 会话，4 路×2 线程、8 路×1 线程
-		// 都试了），8 核上**反而更慢**：rec 是内存带宽受限，多线程只增加争抢。
-		// 实测整屏 25 行：串行 5.5s，并行 6.3~7.2s（2026-10-12）
-		const auto quads = detect(w, h, data);
-		for (int i = 0; i < (int)quads.size(); ++i) {
-			RecOut rec;
-			if (!recognizeQuad(w, h, data, quads[i], rec)) continue;
-			if (rec.text.empty() || rec.conf < kMinConf) continue;
-			splitWords(rec, quads[i], i, out);
-		}
+			auto runPass = [&](const int pw, const int ph, BYTE* pdata, std::vector<OcrModelBox>& boxes) {
+				PassStats stats;
+				boxes.clear();
+				// 图里有几行字？矮的也得数 —— 小字号的两行（h 不到 48）同样是多行，
+				// 整幅送 rec 一样吐空（见 countTextLines / kDetMinH）
+				stats.oneLine = countTextLines(pw, ph, pdata) <= 1;
+				if (stats.oneLine) {
+					// 整张图就是一行：直接拉直送 rec，det 那一步纯属添乱（见常量区的实测）
+					Quad q;
+					q.x[0] = 0; q.y[0] = 0;
+					q.x[1] = (float)pw - 1; q.y[1] = 0;
+					q.x[2] = (float)pw - 1; q.y[2] = (float)ph - 1;
+					q.x[3] = 0; q.y[3] = (float)ph - 1;
+					stats.quads = 1;
+					RecOut rec;
+					if (recognizeQuad(pw, ph, pdata, q, rec) && !rec.text.empty()) {
+						stats.textLines = 1;
+						stats.textChars = (int)rec.text.size();
+						stats.confSum = rec.conf;
+						if (rec.conf >= kMinConf) {
+							stats.acceptedLines = 1;
+							splitWords(rec, q, 0, boxes);
+						}
+					}
+					return stats;
+				}
+				// 多行：det 找行框、逐个送 rec。
+				// ⚠️ 别想着并行 rec —— 试过（每线程一份 rec 会话，4 路×2 线程、8 路×1 线程
+				// 都试了），8 核上**反而更慢**：rec 是内存带宽受限，多线程只增加争抢。
+				// 实测整屏 25 行：串行 5.5s，并行 6.3~7.2s（2026-10-12）
+				const auto quads = detect(pw, ph, pdata);
+				stats.quads = (int)quads.size();
+				for (int i = 0; i < (int)quads.size(); ++i) {
+					RecOut rec;
+					if (!recognizeQuad(pw, ph, pdata, quads[i], rec) || rec.text.empty()) continue;
+					++stats.textLines;
+					stats.textChars += (int)rec.text.size();
+					stats.confSum += rec.conf;
+					if (rec.conf < kMinConf) continue;
+					++stats.acceptedLines;
+					splitWords(rec, quads[i], i, boxes);
+				}
+				return stats;
+			};
+
+			std::vector<OcrModelBox> best;
+			auto stats = runPass(w, h, data, best);
+			if (shouldRetry(stats)) {
+				// 首轮可疑时再跑一遍增强图：给紧裁边缘留白、把低对比截图轻拉开一点；
+				// 平常清晰截图不走这里，避免把所有识别都拖慢
+				auto retryImg = buildRetryImage(w, h, data);
+				if (!retryImg.data.empty()) {
+					std::vector<OcrModelBox> retry;
+					auto retryStats = runPass(retryImg.w, retryImg.h, retryImg.data.data(), retry);
+					if (retryBeats(stats, retryStats)) {
+						unpadBoxes(retry, retryImg.padX, retryImg.padY, w, h);
+						best = std::move(retry);
+						stats = retryStats;
+					}
+				}
+			}
+			out = std::move(best);
 		return Err::ok;
 	}
 	catch (...) {
