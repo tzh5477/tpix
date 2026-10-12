@@ -43,9 +43,13 @@ namespace {
 	// 可 tpix 里用户框的往往就是**一行字**（如 286×23）—— 一放大就是 30 倍，
 	// 概率图糊掉、一行字被劈成好几框，实测只有 6/56 全对、3.9 秒一张。
 	// 同一批样本：det（不放大）38/56、225ms；**整图直接 rec 48/56、73ms**。
-	// 所以矮的、扁的一律不走 det
-	constexpr int kSingleLineH{ 48 };		// 高度不到这么多就当成一行
-	constexpr float kSingleLineRatio{ 5.f };	// 或者宽高比超过这么多（很扁的一条）
+	// 所以"只有一行"的一律不走 det
+	//
+	// ⚠️ "只有一行"当初是用宽高比（>5 就算一行）判的，2026-10-12 证明是错的：
+	// 976×192 的 5 行短文本比值 5.08，照样落进"一行"的区间，整幅送 rec 吐空
+	// （界面上就是"没有识别到文字"）。现在交给 countTextLines() 真数行数。
+	// 也**不能**按"矮就一定是单行"短路 —— 小字号的两行（如 300×40）一样是多行
+	constexpr int kDetMinH{ 128 };		// det 输入的高度下限，不到就放大（见 detect）
 	// det 输入的最长边上限。超过就等比缩到这个数（**只缩不放**，理由同上）
 	constexpr int kDetLimit{ 960 };
 	constexpr float kDetThresh{ 0.2f };		// 概率图二值化阈值（官方 yml）
@@ -58,7 +62,7 @@ namespace {
 	constexpr int kRecMinW{ 320 };
 	constexpr int kRecMaxW{ 3200 };		// 官方给出的动态上限，再宽没意义
 	constexpr float kMinConf{ 0.5f };		// 行框认出来的字置信度低于这个就丢（官方默认）
-	constexpr int kThreads{ 2 };			// onnxruntime 线程数；识别是短活，别占满
+	constexpr int kThreads{ 2 };			// onnxruntime 每次 Run 的线程数（实测最优，见文件末）
 
 	// ---- 会话 ----
 	//
@@ -74,6 +78,55 @@ namespace {
 	std::wstring loadedName;
 
 	// ---- 小工具 ----
+
+	// 图里有几"行"文字 —— 靠水平投影数，不靠宽高比。
+	//
+	// ⚠️ 宽高比判不出这件事（2026-10-12 实测）：976×192 那种 5 行短文本比值 5.08，
+	// 和"一行长句"完全重叠，被当成单行整幅送进 rec，rec 只认一行的，直接吐空
+	// （界面上就是"没有识别到文字"，38ms 就返回）。改成逐行数前景像素、数连续的段：
+	// 几段就是几行。一行字从上到下笔画是连着的，行间的空白把它断开 —— 行距只要
+	// 有 2 个像素就能分开（要求空白连着两行才算断，挡抗锯齿的淡影）
+	int countTextLines(const int w, const int h, const BYTE* data)
+	{
+		if (w <= 0 || h <= 0 || !data) return 1;
+		auto lumOf = [](const BYTE* p) {
+			return 0.114f * p[0] + 0.587f * p[1] + 0.299f * p[2];	// BGRA
+		};
+		// 背景亮度取四边一圈的中位数：文档图大片是白底、文字是少数，边上一圈基本
+		// 落在背景上（比"取全图众数"便宜，也不怕标题占掉大半幅）
+		std::vector<float> edge;
+		edge.reserve((size_t)w * 2 + (size_t)h * 2);
+		for (int x = 0; x < w; ++x) {
+			edge.push_back(lumOf(data + (size_t)x * 4));
+			edge.push_back(lumOf(data + ((size_t)(h - 1) * w + x) * 4));
+		}
+		for (int y = 0; y < h; ++y) {
+			edge.push_back(lumOf(data + (size_t)y * w * 4));
+			edge.push_back(lumOf(data + ((size_t)y * w + w - 1) * 4));
+		}
+		std::nth_element(edge.begin(), edge.begin() + edge.size() / 2, edge.end());
+		const float bg = edge[edge.size() / 2];
+		const float tol = std::max(40.f, bg * 0.25f);	// 与背景差多少算文字
+
+		const int minPix = std::max(2, w / 100);	// 一行至少得有这么多像素，挡噪点
+		int lines = 0;
+		bool in = false;
+		int gap = 0;
+		for (int y = 0; y < h; ++y) {
+			const BYTE* p = data + (size_t)y * w * 4;
+			int cnt = 0;
+			for (int x = 0; x < w; ++x, p += 4)
+				if (std::abs(lumOf(p) - bg) > tol) ++cnt;
+			if (cnt >= minPix) {
+				if (!in) { ++lines; in = true; }
+				gap = 0;
+			}
+			else if (in && ++gap > 1) {
+				in = false;
+			}
+		}
+		return std::max(lines, 1);
+	}
 
 	std::wstring toWide(const std::string& s)
 	{
@@ -415,10 +468,18 @@ namespace {
 	// ---- det ----
 	std::vector<Quad> detect(const int w, const int h, const BYTE* data)
 	{
-		// 只缩不放：见 kSingleLineH 处的实测。缩完按官方规则取整到 32 的倍数
-		float ratio{ 1.f };
+		// det 的输入尺寸：默认只缩不放（见常量区的实测），缩完按官方规则取整到 32 的倍数。
+		// ⚠️ 唯一的例外是"太矮"的图要放大 —— 网络下采样 32 倍，高不到 kDetMinH 的话
+		// 特征图只剩两三格，两行小字整个检不出来（实测 300×40 的两行原样进去一个框
+		// 都没有、放大 2 倍后 100% 正确）。放大倍率同时受长边上限约束，别把宽度撑爆
 		const int maxSide = std::max(w, h);
+		float ratio{ 1.f };
 		if (maxSide > kDetLimit) ratio = (float)kDetLimit / (float)maxSide;
+		if ((float)h * ratio < (float)kDetMinH) {
+			const float up = std::min((float)kDetMinH / ((float)h * ratio),
+				(float)kDetLimit / ((float)maxSide * ratio));
+			ratio *= std::max(up, 1.f);
+		}
 		const int rw = std::max(32, (int)llround(w * ratio / 32) * 32);
 		const int rh = std::max(32, (int)llround(h * ratio / 32) * 32);
 		std::vector<float> input;
@@ -786,9 +847,11 @@ OcrModel::Err OcrModel::recognize(const std::wstring& root, const std::wstring& 
 	if (err != Err::ok) return err;
 	try {
 		out.clear();
-		const bool oneLine = h < kSingleLineH || (float)w / (float)h > kSingleLineRatio;
+		// 图里有几行字？矮的也得数 —— 小字号的两行（h 不到 48）同样是多行，
+		// 整幅送 rec 一样吐空（见 countTextLines / kDetMinH）
+		const bool oneLine = countTextLines(w, h, data) <= 1;
 		if (oneLine) {
-			// 整张图就是一行：直接拉直送 rec，det 那一步纯属添乱（见 kSingleLineH 处实测）
+			// 整张图就是一行：直接拉直送 rec，det 那一步纯属添乱（见常量区的实测）
 			Quad q;
 			q.x[0] = 0; q.y[0] = 0;
 			q.x[1] = (float)w - 1; q.y[1] = 0;
@@ -799,6 +862,10 @@ OcrModel::Err OcrModel::recognize(const std::wstring& root, const std::wstring& 
 				splitWords(rec, q, 0, out);
 			return Err::ok;
 		}
+		// 多行：det 找行框、逐个送 rec。
+		// ⚠️ 别想着并行 rec —— 试过（每线程一份 rec 会话，4 路×2 线程、8 路×1 线程
+		// 都试了），8 核上**反而更慢**：rec 是内存带宽受限，多线程只增加争抢。
+		// 实测整屏 25 行：串行 5.5s，并行 6.3~7.2s（2026-10-12）
 		const auto quads = detect(w, h, data);
 		for (int i = 0; i < (int)quads.size(); ++i) {
 			RecOut rec;
