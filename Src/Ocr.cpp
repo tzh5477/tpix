@@ -418,40 +418,32 @@ void Ocr::setModel(const std::wstring& name)
 	Setting::get()->setToolStr(L"ocr", L"model", name);
 }
 
-std::vector<OcrModelChoice> Ocr::aiModelChoices()
+std::vector<OcrModelChoice> Ocr::aiModelChoices(const std::wstring& scenario)
 {
-	// 只列出配置过的大模型（不含本地离线模型）。翻译窗与识别窗的「模型」下拉共用：
-	// 选中的落盘都走 Setting::setScenario(<场景>, providerId, model)。
+	// **只列这一档场景在设置里绑的那一个模型**（AI 对话 / 翻译 / 文字识别 / 表格识别 各一份
+	// 独立绑定，见 WinSettingAi）。早先这里把"所有已配接口下的所有模型"都摊出来，结果窗的
+	// 下拉一长串，用户以为那是模型总目录，随手一选就把设置页的绑定改掉了 —— 结果窗只该做
+	// "在设置绑的模型之间换个引擎试试"，挑模型是设置页的事。
+	//
+	// getScenarioProvider / getScenarioModel 自带兜底（没绑过就退到第 0 个接口与它当前那个
+	// 模型），所以拿到的正是设置页那两格现在显示的东西 —— 两处必须一致。接口或模型任一为空
+	// （一个接口都没配）就返回空，下拉里自然不出现 AI 那一项
 	std::vector<OcrModelChoice> items;
-	// 设置里配过的每一个接口。拉过模型清单就用清单；没拉过（刚填好还没点
-	// 「连接验证」）至少把他手填的那个列出来，否则这里会一片空、用户以为没配
-	auto providers = Setting::get()->getAiProviders();
-	// 配了两个以上接口时得把接口名缀在模型后面，否则两家都叫 gpt-4o 这种名字时
-	// 列表里两行一模一样，点哪一行纯靠猜
-	const bool multi = providers.size() > 1u;
-	for (auto& p : providers) {
-		std::vector<std::wstring> models = p.models;
-		if (models.empty() && !p.model.empty()) models.push_back(p.model);
-		const auto pname = Setting::providerName(p);
-		for (auto& mm : models) {
-			if (mm.empty()) continue;
-			bool dup{ false };
-			for (auto& e : items) {
-				if (e.ai && e.providerId == p.id && e.model == mm) { dup = true; break; }
-			}
-			if (dup) continue;
-			OcrModelChoice c;
-			c.ai = true;
-			c.providerId = p.id;
-			c.model = mm;
-			c.label = multi ? (mm + L" · " + pname) : mm;
-			items.push_back(std::move(c));
-		}
-	}
+	auto setting = Setting::get();
+	const auto pid = setting->getScenarioProvider(scenario);
+	const auto model = setting->getScenarioModel(scenario);
+	if (pid.empty() || model.empty()) return items;
+	OcrModelChoice c;
+	c.ai = true;
+	c.providerId = pid;
+	c.model = model;
+	// 只列一项，不必再缀接口名 —— 那是"两个接口下有同名模型、需要区分是哪一家"时的做法
+	c.label = model;
+	items.push_back(std::move(c));
 	return items;
 }
 
-std::vector<OcrModelChoice> Ocr::modelChoices()
+std::vector<OcrModelChoice> Ocr::modelChoices(const std::wstring& scenario)
 {
 	std::vector<OcrModelChoice> items;
 	// 1) 本地离线模型。listModels 会把内置那几代**即使还没下下来**也列出来
@@ -463,8 +455,8 @@ std::vector<OcrModelChoice> Ocr::modelChoices()
 		c.label = OcrModel::modelLabel(m);
 		items.push_back(std::move(c));
 	}
-	// 2) 大模型：设置里配过的每一个接口
-	for (auto& c : aiModelChoices()) items.push_back(std::move(c));
+	// 2) 大模型：只有这一档场景在设置里绑的那一个（理由见 aiModelChoices）
+	for (auto& c : aiModelChoices(scenario)) items.push_back(std::move(c));
 	return items;
 }
 

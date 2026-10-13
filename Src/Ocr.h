@@ -115,15 +115,21 @@ public:
 	// 下拉、结果弹窗都该用显示名，内部名只留给存盘与目录寻址
 	static std::wstring modelLabel(const std::wstring& name);
 	static void setModel(const std::wstring& name);
-	// 「识别模型」下拉该列出来的全部候选：本地离线模型的每一代（含还没下载的，
-	// 选中即去下），**加上**设置里配过的每个大模型接口下的模型 —— 用户遇到
-	// "这个模型认得不准"时，就在这一张表里换一个再认一遍。
+	// 「识别模型」下拉的候选：本地离线模型的每一代（含还没下载的，选中即去下），
+	// **加上这一档场景在设置里绑定的那一个大模型**（scenario = AiScenario::recognize / table）。
+	//
+	// 大模型**只列绑定的那一个**，不列"所有已配接口下的所有模型"：设置页才是挑模型的地方
+	// （AI 对话 / 翻译 / 文字识别 / 表格识别 各一档独立绑定，见 WinSettingAi），结果窗
+	// 只是"现场换个引擎再认一遍"。早先这里把全量铺出来，列表一长，用户会拿它当模型总目录，
+	// 随手一选就把设置页的绑定改掉了（与设置页显示的那一格对不上，还以为是设置没生效）。
+	//
 	// 界面拿到后按 ai 分流落盘：ai=false 走 Ocr::setModel(model)；
-	// ai=true 走 Setting::setScenario(<recognize|table>, providerId, model)
-	static std::vector<OcrModelChoice> modelChoices();
-	// 只列大模型候选（不含本地离线模型）。翻译窗的「翻译模型」下拉与识别窗共用同一套
-	// 落盘逻辑（Setting::setScenario(<translate>, providerId, model)），只是场景不同
-	static std::vector<OcrModelChoice> aiModelChoices();
+	// ai=true 走 Setting::setScenario(scenario, providerId, model)
+	static std::vector<OcrModelChoice> modelChoices(const std::wstring& scenario);
+	// 只列大模型候选（不含本地离线模型）—— 同样只有该场景绑定的那一个。
+	// 翻译窗的「翻译模型」下拉用它（scenario = AiScenario::translate），与识别窗共用同一套
+	// 落盘逻辑（Setting::setScenario），只是场景不同。没配到模型时返回空，界面自然不出现
+	static std::vector<OcrModelChoice> aiModelChoices(const std::wstring& scenario);
 	// 一次性迁移：把老用户内部的「PP-OCRv6」这个名字（ocr\PP-OCRv6\ 目录 + 存盘的
 	// ocr.model）改成真实模型名「PP-OCRv6-small」。在 App 启动、Setting 之后调一次即可，
 	// 内部两处都做"新名不存在才动手"，幂等、可重复跑

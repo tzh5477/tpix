@@ -244,10 +244,11 @@ void WinOcr::onCreated()
 	}
 	applyLangBtn();
 
-	// 识别模型。**一张表里既有本地离线模型、也有配过的大模型**，
+	// 识别模型。**本地离线模型每一代 + 本场景（文字 / 表格）在设置里绑的那一个大模型**，
 	// 显示的都是具体名字（PP-OCRv6-small / PP-OCRv6-tiny / agnes-2.5-pro …）：
 	// 用户的实际诉求是"这个模型认得不准，换一个再认一遍"，笼统的
-	// "系统识别 / 大模型识别"两档给不出"换哪一个"的答案
+	// "系统识别 / 大模型识别"两档给不出"换哪一个"的答案。
+	// 大模型只列绑定的那一个 —— 换接口 / 换模型是设置页的事，这里只切换引擎
 	engineBtn = bottom->makeChild<Ling::Button>();
 	engineBtn->setHeight(30.f);
 	// 按钮上显示当前用的那个模型名，名字可能较长（agnes-image-2.5-flash 有 22 字符），
@@ -257,7 +258,7 @@ void WinOcr::onCreated()
 	engineBtn->setBorder(1.f, 0xE0E0E0FF);
 	engineBtn->setHoverBg(0xF2F2F2FF);
 	engineBtn->onClick.add([this](Ling::Button* b) {
-		auto choices = Ocr::modelChoices();
+		auto choices = Ocr::modelChoices(curScenario());
 		std::vector<std::wstring> labels;
 		labels.reserve(choices.size());
 		for (auto& c : choices) labels.push_back(c.label);

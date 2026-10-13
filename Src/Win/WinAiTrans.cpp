@@ -251,7 +251,9 @@ void WinAiTrans::onCreated()
 	//      用户点上去当然没有任何响应（作者报的就是这个）；
 	//   ② 下拉里得有当前那条路。火山引擎没有"模型"概念，但它是一条独立的路，必须作为
 	//      第 0 项列出来，否则正走火山时点开是一片空，更像坏了。
-	// 候选模型与识别窗的「识别模型」同源（Ocr::aiModelChoices），只是场景换成 translate
+	// 候选只有两个：火山引擎 + **设置里「翻译使用」绑的那一个模型**（Ocr::aiModelChoices
+	// 已按场景过滤，见 Ocr.cpp）。不再把"所有已配接口下的所有模型"铺出来 —— 那是设置页的
+	// 活，这里只做"在设置绑的模型和火山之间换一下"，列表与人手一多就会误改设置页的绑定
 	srcBtn = actRow->makeChild<Ling::Button>();
 	srcBtn->setHeight(28.f);
 	srcBtn->setWidth(170.f);
@@ -260,7 +262,7 @@ void WinAiTrans::onCreated()
 	srcBtn->setBorder(1.f, 0xE0E0E0FF);
 	srcBtn->setHoverBg(0xF2F2F2FF);
 	srcBtn->onClick.add([this](Ling::Button* b) {
-		auto choices = Ocr::aiModelChoices();
+		auto choices = Ocr::aiModelChoices(std::wstring{ AiScenario::translate });
 		std::vector<std::wstring> labels;
 		labels.reserve(choices.size() + 1);
 		labels.push_back(std::wstring{ L"API " } + Lang::get(L"ai.providerVolc"));
