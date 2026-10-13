@@ -282,6 +282,7 @@
     <ClCompile Include="Win\WinSetting.cpp" />
     <ClCompile Include="Win\WinSettingShortcut.cpp" />
     <ClCompile Include="Win\WinSettingBall.cpp" />
+    <ClCompile Include="Win\WinSettingTextRec.cpp" />
     <ClCompile Include="BallAction.cpp" />
     <ClCompile Include="Win\CapVideo.cpp" />
   </ItemGroup>
@@ -368,6 +369,7 @@
     <ClInclude Include="Win\WinSetting.h" />
     <ClInclude Include="Win\WinSettingShortcut.h" />
     <ClInclude Include="Win\WinSettingBall.h" />
+    <ClInclude Include="Win\WinSettingTextRec.h" />
     <ClInclude Include="BallAction.h" />
     <ClInclude Include="Win\CapVideo.h" />
     <ClInclude Include="Win\VideoGif.hpp" />

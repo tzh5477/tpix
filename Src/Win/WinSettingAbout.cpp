@@ -51,10 +51,13 @@ WinSettingAbout::WinSettingAbout(Ling::WinBase* parent):Ling::Node(parent)
     }
     // 项目简介：贴在两行信息下面的整宽文本。固定给两三行的高度 ——
     // 不设高的话 yoga 量不出文字高度， Label 会被压成一条缝
+    // ⚠️ 必须 setWrap(true)：描述文字很长时不换行，会按单行 intrinsic 宽度把整列
+    // 撑到 ~664 宽，连带把上面版本 / 项目两行的数值推到窗口右边界之外（见截图 1 的溢出）
     auto desc = makeChild<Ling::Label>();
     desc->setText(Lang::get(L"about.desc"));
     desc->setMarginTop(8.f);
     desc->setHeight(56.f);
+    desc->setWrap(true);
 }
 
 WinSettingAbout::~WinSettingAbout()
