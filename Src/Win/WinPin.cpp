@@ -3282,6 +3282,31 @@ void WinPin::startOcr()
 	// 不能等回填时再去读成员 —— 这中间用户可能正好剪了一刀，那个值已经不是当时那个了
 	const auto origin = drawing->imgOrigin;
 	auto lang = Setting::get()->getToolStr(L"ocr", L"lang", L"");
+	// 大模型路径：没有词框，合成一个覆盖全图的整段词，选文时整体选中即可
+	// （无法逐词定位是已知取舍 —— 用户选择"大模型"时已接受）。AI 服务自己异步，
+	// 直接在 UI 线程发起，收尾回调也在 UI 线程，可安全碰 UI
+	if (Ocr::useAi()) {
+		ocrRunning = true;
+		if (textSelect) refresh();
+		auto alive = ocrAlive;
+		Ocr::recognizeByAi(w, h, pixels.data(), false,
+			[this, alive, seq, origin, w, h](const std::wstring& text) {
+				// 窗口已关、或识别期间又起过一次（换底图 / 剪裁），老结果一概不认
+				if (!*alive || ocrSeq != seq) return;
+				ocrRunning = false;
+				if (text.empty()) {
+					if (textSelect) refresh();
+					return;
+				}
+				OcrWord word;
+				word.text = text;
+				word.x = 0; word.y = 0;
+				word.w = (float)w; word.h = (float)h;
+				std::vector<OcrWord> words{ word };
+				applyOcrWords(std::move(words), origin);
+			});
+		return;
+	}
 	ocrRunning = true;
 	// 状态条上那句"正在识别文字…"是由本标志驱动的，得让它立刻显出来
 	if (textSelect) refresh();

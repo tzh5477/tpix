@@ -244,21 +244,42 @@ void WinOcr::onCreated()
 	}
 	applyLangBtn();
 
-	// 识别引擎。系统离线 OCR 与大模型两条路并存：前者不联网不花钱，后者认得下的照片、
-	// 艺术字更好，也能直接把表格认出来。切完立刻重认一次（与语言、表格开关一致）
+	// 识别模型。**一张表里既有本地离线模型、也有配过的大模型**，
+	// 显示的都是具体名字（PP-OCRv6-small / PP-OCRv6-tiny / agnes-2.5-pro …）：
+	// 用户的实际诉求是"这个模型认得不准，换一个再认一遍"，笼统的
+	// "系统识别 / 大模型识别"两档给不出"换哪一个"的答案
 	engineBtn = bottom->makeChild<Ling::Button>();
 	engineBtn->setHeight(30.f);
-	engineBtn->setWidth(104.f);
+	// 按钮上显示当前用的那个模型名，名字可能较长（agnes-image-2.5-flash 有 22 字符），
+	// 放宽到 150 —— 再宽就会把右边的"复制"挤到窗口外（见下面那排宽度的配平）
+	engineBtn->setWidth(150.f);
+	engineBtn->setFontSize(13.f);
 	engineBtn->setBorder(1.f, 0xE0E0E0FF);
 	engineBtn->setHoverBg(0xF2F2F2FF);
 	engineBtn->onClick.add([this](Ling::Button* b) {
-		std::vector<std::wstring> items{ Lang::get(L"ocr.engineSys"), Lang::get(L"ocr.engineAi") };
-		SelectPopup::show(this, b, items, aiMode ? 1 : 0, [this](int idx) {
-			aiMode = idx == 1;
-			Setting::get()->setToolStr(L"ocr", L"engine", aiMode ? L"ai" : L"sys");
+		auto choices = Ocr::modelChoices();
+		std::vector<std::wstring> labels;
+		labels.reserve(choices.size());
+		for (auto& c : choices) labels.push_back(c.label);
+		// 选中的下标按 choices 算（-1 = 都不匹配），下标会原样回给 onPick
+		SelectPopup::show(this, b, labels, curChoiceIndex(choices), [this, choices](int idx) {
+			if (idx < 0 || idx >= (int)choices.size()) return;
+			const auto& c = choices[idx];
+			if (c.ai) {
+				aiMode = true;
+				Setting::get()->setToolStr(L"ocr", L"engine", L"ai");
+				// 只改**当前场景**（文字 / 表格）绑的模型：另一档是用户单独配的，别顺手覆盖
+				Setting::get()->setScenario(curScenario(), c.providerId, c.model);
+			}
+			else {
+				aiMode = false;
+				Setting::get()->setToolStr(L"ocr", L"engine", L"sys");
+				Ocr::setModel(c.model);
+			}
 			applyEngineBtn();
+			// 换完立刻用新模型重认一次 —— "换一个模型再试试"就是这个动作
 			startRecognize();
-		});
+		}, {}, 220.f);
 	});
 	aiMode = Setting::get()->getToolStr(L"ocr", L"engine", L"sys") == L"ai";
 	applyEngineBtn();
@@ -273,6 +294,9 @@ void WinOcr::onCreated()
 	tableBtn->onClick.add([this](Ling::Button*) {
 		tableMode = !tableMode;
 		applyTableBtn();
+		// 文字与表格是两个场景，各自可能绑不同的大模型 —— 引擎按钮上的名字得跟着换
+		//（本地模型没这回事，但统一走一次最省心）
+		applyEngineBtn();
 		startRecognize();
 	});
 	applyTableBtn();
@@ -480,10 +504,48 @@ void WinOcr::startAiRecognize()
 		});
 }
 
+std::wstring WinOcr::curScenario() const
+{
+	// 表格开关是唯一的分档依据：开就认表格、关就认整页文字。两者在设置里是两套
+	// 独立的"接口 + 模型"绑定（AiScenario::table / recognize）
+	return tableMode ? std::wstring{ AiScenario::table } : std::wstring{ AiScenario::recognize };
+}
+
+int WinOcr::curChoiceIndex(const std::vector<OcrModelChoice>& choices) const
+{
+	if (aiMode) {
+		const auto scenario = curScenario();
+		const auto pid = Setting::get()->getScenarioProvider(scenario);
+		const auto model = Setting::get()->getScenarioModel(scenario);
+		for (int i = 0; i < (int)choices.size(); ++i) {
+			if (choices[i].ai && choices[i].providerId == pid && choices[i].model == model) return i;
+		}
+		// 绑的那个接口已经被删了之类的：光按模型名再找一遍，总比不高亮强
+		for (int i = 0; i < (int)choices.size(); ++i) {
+			if (choices[i].ai && choices[i].model == model) return i;
+		}
+		return -1;
+	}
+	const auto cur = Ocr::curModel();
+	for (int i = 0; i < (int)choices.size(); ++i) {
+		if (!choices[i].ai && choices[i].model == cur) return i;
+	}
+	return -1;
+}
+
 void WinOcr::applyEngineBtn()
 {
 	if (!engineBtn) return;
-	engineBtn->setText(aiMode ? Lang::get(L"ocr.engineAi") : Lang::get(L"ocr.engineSys"));
+	// 按钮上直接显示"当前用的是哪个模型"，而不是笼统的"系统识别 / 大模型识别"：
+	// 本地离线那几代显示具体代次（PP-OCRv6-small / PP-OCRv6-tiny …）；
+	// 大模型显示**当前场景**（文字 / 表格）绑的那个模型名。没配置大模型时回落到通用文案
+	if (aiMode) {
+		auto m = Setting::get()->getScenarioModel(curScenario());
+		engineBtn->setText(m.empty() ? Lang::get(L"ocr.engineAi") : m);
+	}
+	else {
+		engineBtn->setText(Ocr::modelLabel(Ocr::curModel()));
+	}
 	// 语言包是系统离线 OCR 才有的概念：大模型用不上，内置模型（PP-OCRv6）是
 	// 多语种的也不用挑 —— 留着会让人以为它在生效
 	if (langBtn) {

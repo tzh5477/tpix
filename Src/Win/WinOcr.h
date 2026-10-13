@@ -32,6 +32,12 @@ private:
 	// 识别引擎：系统自带的离线 OCR，或者大模型（见 aiMode）。两者不是谁替代谁 ——
 	// 前者不用联网也不花钱，后者对排版乱的图、以及"顺带把表格认出来"更灵
 	void applyEngineBtn();
+	// 文字 / 表格是**两个场景**，各自可以绑不同的大模型（见 Setting::setScenario）。
+	// 下拉与按钮上的模型名要跟着当前这一档走，所以到处都得先问它
+	std::wstring curScenario() const;
+	// 「识别模型」下拉的当前项下标（-1 = 都不匹配，列表里不高亮）。本地模型按内部名
+	// 比对、大模型按（接口, 模型）比对 —— 只看模型名会在两家的模型重名时指错行
+	int curChoiceIndex(const std::vector<OcrModelChoice>& choices) const;
 	// 用大模型认这一张图。走的是对话那条已经做好的图通路（AiService::Msg 的 image），
 	// 输出要靠提示词约束成纯文本 / TSV 表格
 	void startAiRecognize();
@@ -54,7 +60,9 @@ private:
 	std::vector<OcrLang> langs;
 	Ling::Button* langBtn{ nullptr };
 	Ling::Button* engineBtn{ nullptr };
-	// false = 系统离线 OCR；true = 大模型。存在 toolPin.ocr.engine 里（与语言同一处）
+	// false = 本地离线模型；true = 大模型。存在 toolPin.ocr.engine 里（与语言同一处）。
+	// ⚠️ 它只说"走哪条路"，**具体是哪个模型**另有出处：本地那代在 toolPin.ocr.model，
+	// 大模型在场景配置里（当前是文字还是表格场景见 curScenario）
 	bool aiMode{ false };
 	AiService::TaskPtr aiTask{ nullptr };
 	// 窗口关掉之后迟到的回调不能再碰这些节点（postDone 是"取消也照送"的语义）

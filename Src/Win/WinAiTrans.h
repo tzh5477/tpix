@@ -3,6 +3,7 @@
 #include <memory>
 #include <string>
 #include "../AiService.h"
+#include "../Ocr.h"
 
 // 翻译窗。左上是语言方向，中间是原文与译文，下面是动作按钮。
 //
@@ -24,13 +25,15 @@ private:
 	// 控件是在 onCreated 里建出来的，而 onCreated 在构造函数里就跑完了
 	void applyPreset(const std::wstring& text);
 	void applyLangBtns();
+	// 行尾那枚按钮上的字 + 它的下拉内容：当前这一单走的是哪条路（火山 / 某个大模型）。
+	// 恒在、不藏 —— 见成员 srcBtn 的注释
+	void applySrcBtn();
+	// 下拉里高亮哪一项。下标按 applySrcBtn 那份列表算：第 0 项是火山引擎，之后才是
+	// choices 里的模型，所以这里回的是 choices 的下标 +1
+	int curSrcIndex(const std::vector<OcrModelChoice>& choices) const;
 	// 把目标语言切到 code 并同步按钮显示（"自动检测"推出的目标语言走这里）
 	void setToLang(const std::wstring& code);
 	void refreshResult(const std::wstring& text);
-	// 把当前这一单翻译走的是哪条路写进 srcLabel：
-	// 大模型 = 「LLM 接口名：模型名」，火山 = 「API 火山引擎翻译」。
-	// 建窗时写一次；每次点翻译再写一次（设置可能在窗口开着的时候被改过）
-	void refreshSrcLabel();
 	void run();
 	void setBusy(bool on);
 	// 当前选中的源 / 目标语言代码
@@ -45,10 +48,14 @@ private:
 	// 而译文经常很长、用户还想抠其中一段
 	Ling::TextBox* resultBox{ nullptr };
 	Ling::Label* statusLabel{ nullptr };
-	// 行尾那枚：当前翻译走的接口（见 refreshSrcLabel）
-	Ling::Label* srcLabel{ nullptr };
 	Ling::Button* fromBtn{ nullptr };
 	Ling::Button* toBtn{ nullptr };
+	// 行尾那枚（见 applySrcBtn）：当前这一单翻译走的是哪条路 —— 火山引擎 / 某个大模型。
+	// 它同时是**切换入口**：点开的下拉第 0 项固定是火山引擎，之后是已配的全部大模型，
+	// 选中即换路并立刻用新路把当前原文重翻一次。
+	// 必须恒在 —— 早先的写法是"走火山引擎就把按钮藏起来、换一行静态文字"，而那行字
+	// 是 Label、点不动，用户点上去毫无反应，看着就是"这个下拉坏了"
+	Ling::Button* srcBtn{ nullptr };
 	Ling::Button* runBtn{ nullptr };
 	AiService::TaskPtr task{ nullptr };
 	bool busy{ false };

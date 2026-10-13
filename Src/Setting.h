@@ -52,6 +52,24 @@ public:
 	static void dispose();
 	static Setting* get();
 	std::filesystem::path getDataPath();
+	// 数据目录的**当前配置值**（来自 exe 同目录 data.json），与 getDataPath() 可能不同：
+	// 改完数据目录要重启才生效，那之前 getDataPath() 还是旧值。设置页回显用它 ——
+	// 用户刚选完新目录，界面必须立刻跟着变，不然就是"改了没反应"（重开设置页也一样）。
+	// 解析不出 / 配的目录不可用时回落 getDataPath()
+	std::wstring pendingDataPath();
+	// 默认数据目录（%appdata%\tpix）。设置页的「恢复默认」要知道搬回哪儿去
+	static std::wstring defaultDataPath();
+	// 数据目录默认在 %appdata%\tpix（Roaming，见 initDataPath）。C 盘吃紧时想把它
+	// 整个挪到大分区：在 **exe 同目录**放一份 data.json（{"path":"D:\\tpix"}），
+	// 重启后生效。之所以不放 config.json 里 —— config 自己就住在数据目录里，
+	// 得先知道数据目录在哪儿才找得到它。传空串 = 恢复默认（删掉那份 data.json）。
+	// 返回 false = 没写进去（exe 目录只读）：调用方别当成功，界面也别回显新目录
+	bool setDataPath(const std::wstring& dir);
+	// 当前是不是正用着 data.json 指定的自定义数据目录。设置页据此决定「恢复默认」
+	// 有没有意义。无状态实现：重新读一次那份文件再和**默认目录**比 ——
+	// 不能和 dataPath 成员比：改完 data.json 后成员要重启才变，会把"刚设了自定义目录"
+	// 误判成"还是默认"（10-12 实测踩到：用户改完点恢复默认，弹的是"已在用默认目录"）
+	bool isCustomDataPath();
 	const JsonObject getConfigObj();
 	void setShortcutKey(const std::wstring& type, const std::vector<std::wstring>& keys);
 	std::wstring getShortcutKey(const std::wstring& type);
@@ -239,6 +257,12 @@ private:
 	// 顺带保证至少有一个接口：界面上总得有一行可以编辑
 	void ensureProviders();
 	std::filesystem::path initDataPath();
+	// exe 同目录那份"数据目录搬家"配置文件（data.json）的路径。放 exe 旁边而不是放
+	// config.json 里：config 自己就住在数据目录里，得先知道数据目录在哪儿才找得到它
+	std::filesystem::path dataDirFile();
+	// 启动时保证 exe 同目录有一份 data.json：没有就按当前生效的目录落一份。
+	// 用户之后改那份文件里的 path 就能把整个数据目录搬走，不必进界面点「更改」
+	void ensureDataDirFile();
 	// 决定配置文件用哪一份：exe 同目录有 config.json 就用它（绿色版，配置跟着程序走），
 	// 否则用 %appdata%\tpix\config.json。二者只认一个，读哪儿就写哪儿。
 	std::filesystem::path initConfigPath();

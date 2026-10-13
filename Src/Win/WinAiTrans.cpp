@@ -2,6 +2,7 @@
 #include <algorithm>
 #include "../AiTranslate.h"
 #include "../Lang.h"
+#include "../Ocr.h"
 #include "../Setting.h"
 #include "../SelectPopup.h"
 #include "WinAiTrans.h"
@@ -237,19 +238,53 @@ void WinAiTrans::onCreated()
 		if (!result.empty()) Ling::Util::setTextToClipboard(result);
 	});
 
+	// 状态字（"检测到：英语" / 错误提示）。占着 flexGrow，把行尾那枚按钮推到最右
 	statusLabel = actRow->makeChild<Ling::Label>();
 	statusLabel->setMarginLeft(8.f);
 	statusLabel->setFlexGrow(1.f);
 	statusLabel->setFontSize(12.f);
 	statusLabel->setColor(0x888888FF);
 
-	// 行尾那枚：这单翻译走的是哪条路（见 refreshSrcLabel）。statusLabel 占着 flexGrow，
-	// 它自然被推到行尾
-	srcLabel = actRow->makeChild<Ling::Label>();
-	srcLabel->setMarginLeft(8.f);
-	srcLabel->setFontSize(12.f);
-	srcLabel->setColor(0x888888FF);
-	refreshSrcLabel();
+	// 行尾那枚「翻译模型」：既是"这一单走的是哪条路"的指示，也是**切换入口**。
+	// 两件事必须一起成立，否则就是"点了没反应"：
+	//   ① 恒在。早先走火山引擎时把它藏了、换一行静态文字，而那行是 Label、点不动 ——
+	//      用户点上去当然没有任何响应（作者报的就是这个）；
+	//   ② 下拉里得有当前那条路。火山引擎没有"模型"概念，但它是一条独立的路，必须作为
+	//      第 0 项列出来，否则正走火山时点开是一片空，更像坏了。
+	// 候选模型与识别窗的「识别模型」同源（Ocr::aiModelChoices），只是场景换成 translate
+	srcBtn = actRow->makeChild<Ling::Button>();
+	srcBtn->setHeight(28.f);
+	srcBtn->setWidth(170.f);
+	srcBtn->setMarginLeft(8.f);
+	srcBtn->setFontSize(13.f);
+	srcBtn->setBorder(1.f, 0xE0E0E0FF);
+	srcBtn->setHoverBg(0xF2F2F2FF);
+	srcBtn->onClick.add([this](Ling::Button* b) {
+		auto choices = Ocr::aiModelChoices();
+		std::vector<std::wstring> labels;
+		labels.reserve(choices.size() + 1);
+		labels.push_back(std::wstring{ L"API " } + Lang::get(L"ai.providerVolc"));
+		for (auto& c : choices) labels.push_back(c.label);
+		// 高亮下标与 labels 同一套（火山引擎占 0，模型往后挪一位）
+		SelectPopup::show(this, b, labels, curSrcIndex(choices), [this, choices](int idx) {
+			if (idx < 0) return;
+			auto setting = Setting::get();
+			if (idx == 0) {
+				setting->setAiStr(L"transProvider", L"volc");
+			}
+			else {
+				if (idx - 1 >= (int)choices.size()) return;
+				const auto& c = choices[idx - 1];
+				setting->setAiStr(L"transProvider", L"model");
+				// 只改「翻译」这一档绑的（接口 + 模型）：对话 / 识别 / 表格是各自单独绑的，别顺手覆盖
+				setting->setScenario(std::wstring{ AiScenario::translate }, c.providerId, c.model);
+			}
+			applySrcBtn();
+			// 换完立刻用新路把当前原文重翻一次 —— "换一个模型试试"就是这个动作
+			if (!input->getText().empty()) run();
+		}, {}, 220.f);
+	});
+	applySrcBtn();
 
 	// 结果区。用 TextBox 而不是 Label：Label 既不会折行、也没法选中一段来复制，
 	// 而译文常常很长。滚动由 TextBox 自己带，不必再套 ScrollerBox
@@ -320,21 +355,37 @@ void WinAiTrans::refreshResult(const std::wstring& text)
 	resultBox->setText(text);
 }
 
-void WinAiTrans::refreshSrcLabel()
+void WinAiTrans::applySrcBtn()
 {
-	if (!srcLabel) return;
+	if (!srcBtn) return;
 	auto setting = Setting::get();
-	if (setting->getAiStr(L"transProvider", L"volc") == L"model") {
-		// 大模型那条路用的是「翻译」场景自己绑的那套接口 + 模型（credFor 的兜底与
-		// AiTranslate::ready 背后是同一套解析，显示的就是真正要发请求的那一家）
-		auto cred = setting->credFor(std::wstring{ AiScenario::translate });
-		std::wstring desc = L"LLM " + cred.providerName;
-		if (!cred.model.empty()) desc += L"：" + cred.model;
-		srcLabel->setText(desc);
+	// 火山引擎那条是固定的一路机器翻译、没有模型概念，按钮上直接点明走的是哪一家
+	if (setting->getAiStr(L"transProvider", L"volc") != L"model") {
+		srcBtn->setText(std::wstring{ L"API " } + Lang::get(L"ai.providerVolc"));
+		return;
 	}
-	else {
-		srcLabel->setText(std::wstring{ L"API " } + Lang::get(L"ai.providerVolc"));
+	// 大模型那条：显示「翻译」场景当前绑的模型名（与识别窗的「识别模型」同源）。
+	// 一个接口都没配时给个占位把按钮画出来 —— 反正点开还有火山引擎那一项可选
+	auto m = setting->getScenarioModel(std::wstring{ AiScenario::translate });
+	srcBtn->setText(m.empty() ? Lang::get(L"ai.transModel") : m);
+}
+
+int WinAiTrans::curSrcIndex(const std::vector<OcrModelChoice>& choices) const
+{
+	if (Setting::get()->getAiStr(L"transProvider", L"volc") != L"model") return 0;
+	const auto scenario = std::wstring{ AiScenario::translate };
+	const auto pid = Setting::get()->getScenarioProvider(scenario);
+	const auto model = Setting::get()->getScenarioModel(scenario);
+	// 下标整体 +1：第 0 项被火山引擎占了
+	for (int i = 0; i < (int)choices.size(); ++i) {
+		if (choices[i].ai && choices[i].providerId == pid && choices[i].model == model) return i + 1;
 	}
+	// 绑的那个接口已经被删了之类的：光按模型名再找一遍，总比不高亮强
+	for (int i = 0; i < (int)choices.size(); ++i) {
+		if (choices[i].ai && choices[i].model == model) return i + 1;
+	}
+	// 一个模型都没配时，下拉里只有火山引擎那一项
+	return choices.empty() ? 0 : 1;
 }
 
 void WinAiTrans::setBusy(const bool on)
@@ -345,8 +396,8 @@ void WinAiTrans::setBusy(const bool on)
 
 void WinAiTrans::run()
 {
-	// 设置可能在窗口开着的时候被改过，每次发车前把接口那枚刷一遍
-	refreshSrcLabel();
+	// 设置可能在窗口开着的时候被改过，每次发车前把行尾那枚（路 + 模型名）刷一遍
+	applySrcBtn();
 	auto text = input->getText();
 	// 首尾空白不算内容：OCR 出来的文字常常带一堆换行，全送去翻就是白白花钱
 	while (!text.empty() && (text.front() == L'\n' || text.front() == L' ' || text.front() == L'\r')) text.erase(0, 1);

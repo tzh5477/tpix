@@ -153,12 +153,20 @@ namespace {
             ShotHistory::get()->addImage(ShotHistory::Source::Shot, w, h, pixels.data());
             return;
         }
-        // 内置模型（PP-OCRv6）优先，它不挑系统语言包、缺文件会自己下，所以这块基本恒真；
-        // 只有模型这条路也走不通（下不来、坏了）且系统没装语言包时，才退回外部插件
-        if (!Ocr::isAvailable()) {
-            Util::openWithImageReader(w, h, pixels.data());
-            return;
-        }
+		// 大模型优先：AI 服务自己异步收发，直接在 UI 线程发起即可（不必另起线程），
+		// 累积出的整段文字回 UI 线程后再写剪贴板
+		if (Ocr::useAi()) {
+			Ocr::recognizeByAi(w, h, pixels.data(), false, [](const std::wstring& text) {
+				if (!text.empty()) Ling::Util::setTextToClipboard(text);
+			});
+			return;
+		}
+		// 内置模型（PP-OCRv6）优先，它不挑系统语言包、缺文件会自己下，所以这块基本恒真；
+		// 只有模型这条路也走不通（下不来、坏了）且系统没装语言包时，才退回外部插件
+		if (!Ocr::isAvailable()) {
+			Util::openWithImageReader(w, h, pixels.data());
+			return;
+		}
         // 识别要几百毫秒到几秒，不能压在 UI 线程上；结果回 UI 线程再写剪贴板
         auto lang = Setting::get()->getToolStr(L"ocr", L"lang", L"");
         std::thread([data = std::move(pixels), w, h, lang = std::move(lang)]() mutable {
