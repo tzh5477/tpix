@@ -9,6 +9,7 @@
 #include "Win/WinHistory.h"
 #include "Win/WinBall.h"
 #include "Win/WinOverlay.h"
+#include "Win/WinTextPin.h"
 #include "PinSource.h"
 #include "App.h"
 
@@ -26,6 +27,7 @@ namespace {
     constexpr int focusShortcutMsgId{ 107 };
     constexpr int aiTransShortcutMsgId{ 108 };
     constexpr int aiChatShortcutMsgId{ 109 };
+    constexpr int pinTextShortcutMsgId{ 110 };
 
     struct ShortcutDef { std::wstring_view type; int msgId; std::wstring_view def; };
     // 一张表管住"配置键名 → 消息 id → 默认组合"，加一个可配快捷键的动作只改这里一行。
@@ -36,6 +38,7 @@ namespace {
         { L"history",   historyShortcutMsgId,   L"Ctrl+Alt+H" },
         { L"ball",      ballShortcutMsgId,      L"" },
         { L"pinClip",   pinClipShortcutMsgId,   L"" },
+        { L"pinText",   pinTextShortcutMsgId,   L"" },
         { L"ruler",     rulerShortcutMsgId,     L"" },
         { L"crosshair", crosshairShortcutMsgId, L"" },
         { L"focus",     focusShortcutMsgId,     L"" },
@@ -1123,6 +1126,12 @@ void Setting::initShortcutKeys()
             break;
         case pinClipShortcutMsgId:
             PinSource::fromClipboard();
+            break;
+        case pinTextShortcutMsgId:
+            // 选中文字 → 文本贴图：与 AI 翻译 / 对话同一条取字路（摘走前台窗口里选中的那段，
+            // 再按热键顺序把模组键等松开才注入 Ctrl+C）。取不到字就什么都不做 ——
+            // 用户没选中东西时弹一扇空窗比不弹更让人困惑
+            if (auto text = Util::copyFromForeground(); !text.empty()) WinTextPin::init(text);
             break;
         case rulerShortcutMsgId:
             WinOverlay::toggle(OverlayMode::Ruler);
