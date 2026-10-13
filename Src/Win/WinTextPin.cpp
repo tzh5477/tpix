@@ -11,6 +11,8 @@ namespace {
 	// 关闭按钮宽度（逻辑像素），与 onCreated 里 setWidth 的那个值保持一致 ——
 	// onHitTest 要靠它把那枚按钮从"标题栏拖拽区"里挖出来，否则点关闭会被当成拖窗
 	constexpr float kCloseW{ 30.f };
+	// 标题栏与文本区之间那条分隔线的高度（逻辑像素）。layout 里算文本区高度要减掉它
+	constexpr float kTitleLineH{ 1.f };
 }
 
 std::vector<std::unique_ptr<WinTextPin>> WinTextPin::winTextPins;
@@ -78,20 +80,32 @@ void WinTextPin::onCreated()
 {
 	disableBorderRadius();
 	enableShadow();
+	// 底色与翻译窗 / 识别窗同一套（白）。原来这里是"深色标题栏 + 白字"，
+	// 与其它弹窗摆在一起一眼就看得出不一样（作者报的"标题背景色与其它弹窗不同"）
+	body->setBg(Ling::Color(0xFFFFFFFF));
 	body->setFlexDirection(Ling::FlexDirection::Column);
 
-	// 标题栏：深色一条，左边标题、右边关闭按钮。点住它拖动整扇窗
+	// 标题栏：浅灰一条，左边标题、右边关闭按钮。点住它拖动整扇窗。
+	// 底色取识别窗标题行那款浅灰（0xF7F7F8）：标题栏与下面的文本区都是白底的话，
+	// 就看不出哪一条能拖了。深色底换成浅底之后，标题与 × 的墨色也要一起翻成深色
 	titleBar = body->makeChild<Ling::Node>();
 	titleBar->setHeight(kTitleH);
-	titleBar->setBg(Ling::Color(0x2B2B2BFF));
+	titleBar->setBg(Ling::Color(0xF7F7F8FF));
 	titleBar->setFlexDirection(Ling::FlexDirection::Row);
 	titleBar->setAlignItems(Ling::Align::Stretch);
 
 	titleLabel = titleBar->makeChild<Ling::Label>();
 	titleLabel->setText(L"文本");
-	titleLabel->setColor(Ling::Color(0xFFFFFFFF));
+	// 字号与翻译窗 / 识别窗的标题一致（14）
+	titleLabel->setFontSize(14.f);
+	titleLabel->setColor(Ling::Color(0x333333FF));
 	titleLabel->setPaddingLeft(10.f);
 	titleLabel->setFlexGrow(1.f);
+	// 标题要在标题栏里**垂直居中**，才与右边的 × 同一条水平线。标题栏是 Row + Stretch，
+	// 标题 Label 于是被拉到整条高度，而 Label 内层（默认 Column）的 justifyContent 是
+	// FlexStart —— 文字就贴在整条的最上沿。别的窗口的标题行靠 Row 上的 Align::Center 居中，
+	// 这里是 Stretch，只能由 Label 自己居中
+	titleLabel->setJustifyContent(Ling::Justify::Center);
 
 	closeBtn = titleBar->makeChild<Ling::Button>();
 	closeBtn->setText(L"×");
@@ -99,9 +113,17 @@ void WinTextPin::onCreated()
 	closeBtn->setHeight(kTitleH);
 	closeBtn->setBg(Ling::Color(0));
 	closeBtn->setHoverBg(Ling::Color(0xE81123FF));
-	closeBtn->setColor(Ling::Color(0xFFFFFFFF));
+	// 常态深墨（浅底上要看得见）、悬停翻白（压在红底上），与其它弹窗的 × 同款
+	closeBtn->setColor(Ling::Color(0x333333FF));
 	closeBtn->setHoverColor(Ling::Color(0xFFFFFFFF));
 	closeBtn->onClick.add([this](Ling::Button*) { close(); });
+
+	// 标题区与文本区之间的分隔线。原来靠"标题栏是深色"天然分界，底色翻浅之后补一条，
+	// 与识别窗（标题行 / 内容区之间同样有一条）同款。⚠️ layout 算文本区高度时要减掉它
+	auto titleLine = body->makeChild<Ling::Node>();
+	titleLine->setHeight(kTitleLineH);
+	titleLine->setWidthPercent(100.f);
+	titleLine->setBg(Ling::Color(0xE0E0E0FF));
 
 	// 文本区：真控件，双击选词 / 三击选段 / Ctrl+A C X V 全自带。
 	// 宽高不在这里定死，交给 layout() —— Ling::TextBox 构造函数里写死了 setWidth(240)，
@@ -118,11 +140,12 @@ void WinTextPin::onCreated()
 
 void WinTextPin::layout()
 {
-	// 文本区尺寸跟着窗口走：宽度撑满，高度 = 窗口高 - 标题栏高（w/h 是物理像素，除以 dpi
-	// 换成 Node 要的逻辑像素）。建窗与每次拖边框缩放都会走到这里
+	// 文本区尺寸跟着窗口走：宽度撑满，高度 = 窗口高 - 标题栏高 - 分隔线（w/h 是物理像素，
+	// 除以 dpi 换成 Node 要的逻辑像素）。建窗与每次拖边框缩放都会走到这里
+	// ⚠️ 那条 1px 的分隔线也是 body 的孩子，忘了减就会让内容比窗口高出 1px
 	if (textBox) {
 		float tw = w / dpi;
-		float th = h / dpi - kTitleH;
+		float th = h / dpi - kTitleH - kTitleLineH;
 		textBox->setWidth(tw > 1.f ? tw : 1.f);
 		textBox->setHeight(th > 1.f ? th : 1.f);
 	}
