@@ -15,6 +15,11 @@
 namespace {
 	std::unique_ptr<WinOcr> winOcr;
 
+	// 拖边框缩放时的最小尺寸（逻辑像素）。Ling 默认的最小跟踪尺寸是 800×600、
+	// 比这个窗还大，必须放开；但也不能放到 1×1（原来就是 1）—— 缩成一条缝之后
+	// 底下那排按钮会叠在一起，连右上角关窗那枚都点不到
+	constexpr int kMinW{ 320 }, kMinH{ 240 };
+
 	// 让模型看图识字用的三段提示词。它们是**给模型看的协议**，不是给用户看的文案，
 	// 所以不进语言包 —— 换了界面语言也不该让识别结果的格式跟着变；
 	// 表格那条要求输出 TSV，是因为粘贴要的就是它能直接落成一张表（见 parseTsvText）
@@ -352,6 +357,12 @@ LRESULT WinOcr::onHitTest(const POINT pos)
 {
 	POINT pt = pos;
 	ScreenToClient(hwnd, &pt);
+	// 四条边 / 四个角交给系统做窗口缩放（拖边框改大小）：识别结果一长就得一直滚，
+	// 窗口能拉大才读得顺（作者报的"无法拖动"）。判据与翻译窗同款，且**放在标题栏之前** ——
+	// 标题行只有 36 逻辑像素高，四角那 4px 缩放带落在它的范围里，反过来的话
+	// 右上角会被判成"拖窗"，边框反而抓不住
+	auto border = borderHitTest(pt);
+	if (border != HTCLIENT) return border;
 	// 右边 42 留给关闭按钮：那一块要按成 HTCLIENT，否则点 × 会变成拖窗口，点不掉
 	if (pt.y > 0 && pt.y < 36 * dpi && pt.x < w - 42 * dpi) return HTCAPTION;
 	return HTCLIENT;
@@ -360,9 +371,10 @@ LRESULT WinOcr::onHitTest(const POINT pos)
 void WinOcr::onMinMaxInfo(MINMAXINFO* mmi)
 {
 	// 同 ToolMain / ToolSub / WinPin：Ling 默认的最小跟踪尺寸是 800×600，
-	// 比这个窗大得多，不放开的话 setSize 会被系统按回去
-	mmi->ptMinTrackSize.x = 1;
-	mmi->ptMinTrackSize.y = 1;
+	// 比这个窗大得多，不放开的话 setSize 会被系统按回去。
+	// 放开的下限取 kMinW/kMinH，不是"随便缩"—— 再小按钮行就挤成一团了
+	mmi->ptMinTrackSize.x = (LONG)(kMinW * dpi);
+	mmi->ptMinTrackSize.y = (LONG)(kMinH * dpi);
 }
 
 std::wstring WinOcr::curLangTag() const
