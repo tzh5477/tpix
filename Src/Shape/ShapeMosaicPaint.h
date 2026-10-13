@@ -22,6 +22,29 @@ public:
 	// 十行文字里文字只占很少像素，取均值会偏灰，取众数才稳定命中底色。
 	// 返回 false 表示外面那圈没取到（整块被窗口边界裁没了时退化成含选区一起取，见实现）
 	bool sampleBgColor(const D2D1_RECT_F bounds, const int ringPx, D2D1_COLOR_F& out);
+	// 把 bounds 这块画面读回来（**不**马赛克），坐标换算与取像素完全沿用 makeMosaicBrush
+	// 那条管线，区别只在于这里不动像素。给调用方自己做像素分析用。
+	//
+	// 为什么不是"按需一小块一小块读"：智能打码要对**每个字**各算一份"墨的列投影"，
+	// 逐字各走一趟 GPU 离屏重现 + 拷回太贵 —— 一次读整块，调用方在内存里按行切
+	bool readback(const D2D1_RECT_F bounds, std::vector<BYTE>& pixels, UINT32& pitch,
+		UINT32& width, UINT32& height, D2D1_POINT_2F& origin);
+	// 量出"落在 band 这一行里、以 seedX 为中心的那一团墨"的左右边界（图像 x，含端点）。
+	//
+	// 为什么需要它：rec 给的字框是**按相邻峰值中点把整行均分**出来的（见 OcrModel::splitWords），
+	// 每个字拿到的是"一格"而不是"笔画本身"。宽窄差得多的两个字挨着时，格边界会切到宽字身上 ——
+	// "A1234567" 里数字 1 的那一格左边界落在 A 的右腿上（实测偏 19px），照框打码就把邻字啃掉一块。
+	// 这里以"这个字真正的峰值中心"（OcrWord::cx）当种子，按列数墨、向两侧扩，遇到 blank 个
+	// 连续空列就停 —— 既不会把邻字的笔画算进来，也不会在字内笔画之间那点小缝里断开。
+	//
+	// **墨是相对底色判的**，不是写死一个亮度阈值：截图可能是深色主题（底暗字亮），
+	// "暗于 110 算墨"那种判据会把整片底当成字。底色取 band 内亮度的众数，偏离它超过 kInkDelta 才算墨。
+	//
+	// pixels/pitch/width/height/origin 是 readback 那一份；band 与 seedX 是**图像坐标**。
+	// 返回 false 表示这一格里一点墨都没量到（或整个 band 落在缓冲之外），调用方据此回落识别框
+	static bool inkRunInBand(const std::vector<BYTE>& pixels, const UINT32 pitch, const UINT32 width,
+		const UINT32 height, const D2D1_POINT_2F origin, const int seedX, const int bandTop,
+		const int bandBottom, const int blank, const int maxExtend, int& outLeft, int& outRight);
 private:
 	// 用 d2d->deviceContext 做离屏绘制是安全的：它是全项目共享的资源工厂，
 	// 没有任何地方给它 SetTarget / BeginDraw（窗口绘制走的是各自 surface 或 swap chain 的 context）。

@@ -11,6 +11,14 @@ struct OcrModelBox
 {
 	std::wstring text;
 	float x{ 0 }, y{ 0 }, w{ 0 }, h{ 0 };
+	// **峰值中心**（CTC 对齐里这个字胜出的那几帧的中点）在原图里的 x，见 OcrModel.cpp 的 splitWords。
+	//
+	// ⚠️ 与 x 不是一回事：x/w 是"这个字在行内占的那**一格**"（按相邻峰值中点切出来的），
+	// 而 cx 落在**这个字自己的笔画上**。宽窄差得多的两个字挨在一起时，格边界会切到宽字身上 ——
+	// 实测 "A1234567" 里数字 1 的那一格左边界落在 A 的右腿上（偏了 19px，照框打码就把 A 啃掉一块）。
+	// 要按笔画本身做精修（智能打码，见 ShapeMosaicRect::buildSmartMasks）就得拿 cx 当种子。
+	// 词框那条路没有"一个字"的概念，cx 给的是这一段的中点，调用方别当笔画中心用
+	float cx{ 0 };
 	// 第几行（从上到下、行内从左到右）。同一行的词这个数一样，调用方拿它分行
 	int line{ 0 };
 };
@@ -57,9 +65,15 @@ public:
 	// 下载要几秒（tiny 6MB）到几十秒（small 31MB），调用方得放后台线程
 	// （里面走 WinRT 的 HttpClient，线程还得先 init_apartment）。文件本来就在的秒返
 	static Err fetch(const std::wstring& root, const std::wstring& name);
-	// 认一张 BGRA top-down 的图，返回按阅读顺序排好的词。可能耗时几百毫秒，别在 UI 线程调
+	// 认一张 BGRA top-down 的图，返回按阅读顺序排好的词。可能耗时几百毫秒，别在 UI 线程调。
+	//
+	// chars 不是 nullptr 时，顺带把**字符级**的框也写进去：每项的 text 是一个字，
+	// 位置就是那个字在行内占的那一段（rec 的 CTC 对齐给的，见 OcrModel.cpp 的 splitWords）。
+	// 给"只对数字打码"这类需要落到字一级的用处 —— 词框只能告诉调用方"这一段里有数字"，
+	// 落到字上才能把 A1234567 里的 A 摘出去
 	static Err recognize(const std::wstring& root, const std::wstring& name,
-		const int w, const int h, BYTE* data, std::vector<OcrModelBox>& out);
+		const int w, const int h, BYTE* data, std::vector<OcrModelBox>& out,
+		std::vector<OcrModelBox>* chars = nullptr);
 	// 当前会话用的是哪一代；没建过给空
 	static std::wstring curModel();
 	// 放掉会话（退出时调，同 Table 的做法，不调也没事）

@@ -18,6 +18,10 @@ struct OcrWord
 {
 	std::wstring text;
 	float x{ 0 }, y{ 0 }, w{ 0 }, h{ 0 };
+	// 这个字的**峰值中心** x（与 x 同一套坐标系）。只有内置模型给出的**字符级**框
+	// （recognizeWords 的 chars）才有值，见 OcrModel.h 的 OcrModelBox::cx；
+	// 词框那条路（含系统 OCR / 大模型）一律是 0 —— 用到它之前先确认手里这份是字符级框
+	float cx{ 0 };
 };
 
 // 「识别模型」下拉里的一项。两条路并在一张列表里：
@@ -148,8 +152,13 @@ public:
 	// 同上，但逐个词给出位置。词比行细，跨格的那些行也能拆开归位。
 	// 坐标是**原图**那套（内部放大过，已换算回来），可以直接拿去和形状/格子比对。
 	// 可能耗时几百毫秒到几秒，别在 UI 线程上直接调
+	//
+	// chars 不是 nullptr 时顺带把**字符级**的框也写进去（每项 text 是一个字，位置是那个字
+	// 在行内占的那一段）。只有内置模型那条路给得出 —— 它是 rec 的 CTC 对齐算出来的（见
+	// OcrModel::recognize 的说明）；系统 OCR 与大模型那两条路拿不到，chars 留空。
+	// 智能打码靠它把 "A1234567" 里的 A 摘出去、只打数字
 	static std::vector<OcrWord> recognizeWords(const int w, const int h, BYTE* data,
-		const std::wstring& langTag = L"");
+		const std::wstring& langTag = L"", std::vector<OcrWord>* chars = nullptr);
 	// 走大模型识别（异步）。把图交给 AiScenario::recognize / table 绑定的接口，
 	// 累积出的整段文字通过 onDone 回 UI 线程交付。cred 没配齐（没选接口 / 模型）时
 	// onDone 拿到空串。这是 useAi() 为 true 时各 OCR 入口的统一替代实现：调用方据此

@@ -63,6 +63,16 @@ void Canvas::setEditingShape(ShapeBase* shape)
 	host->setEditingShape(shape);
 }
 
+const std::vector<OcrWord>& Canvas::getOcrWords() const
+{
+	return host->getOcrWords();
+}
+
+const std::vector<OcrWord>& Canvas::getOcrChars() const
+{
+	return host->getOcrChars();
+}
+
 void Canvas::replaceBasePixels(const std::vector<BYTE>& px, int w, int h)
 {
 	host->replaceBasePixels(px, w, h);

@@ -212,6 +212,7 @@ namespace {
 			const auto bottom = top + b.h;
 			b.x = std::clamp(left, 0.f, (float)w - 1.f);
 			b.y = std::clamp(top, 0.f, (float)h - 1.f);
+			b.cx = std::clamp(b.cx - (float)padX, 0.f, (float)w - 1.f);
 			b.w = std::max(std::clamp(right, 0.f, (float)w) - b.x, 1.f);
 			b.h = std::max(std::clamp(bottom, 0.f, (float)h) - b.y, 1.f);
 		}
@@ -896,8 +897,12 @@ namespace {
 	// 断词只认空格（字典末位那个字符）。也试过"空隙偏大就切一刀"，但尖峰之间的
 	// 空档本来就有一两帧，阈值怎么调都会在中文里乱切，得不偿失 —— 认不出空格时
 	// 就整行当一个词，中文本来也该是这样
+	//
+	// ⚠️ 代价（给字符级框的调用方）：格是**均分**的，宽窄差得多的两个字挨在一起时，
+	// 格边界会切到宽字身上 —— "A1234567" 里 1 的格左边界落在 A 的右腿上（实测 19px）。
+	// 所以字符级框另外带一个 `cx`（这个字真正的峰值中心），要落到笔画上就靠它当种子
 	void splitWords(const RecOut& rec, const Quad& q, const int line,
-		std::vector<OcrModelBox>& out)
+		std::vector<OcrModelBox>& out, std::vector<OcrModelBox>* chars = nullptr)
 	{
 		const int n = (int)rec.text.size();
 		if (n == 0) return;
@@ -922,6 +927,8 @@ namespace {
 			box.w = std::max((b - a) * std::sqrt(ux * ux + uy * uy), 1.f);
 			box.h = std::sqrt(vx * vx + vy * vy);
 			box.line = line;
+			// 峰值中心默认取这一段的中点；字符级框会把它改写成那个字真正的峰值中心（见下）
+			box.cx = q.x[0] + ((a + b) / 2.f) * ux;
 			return box;
 		};
 		int start{ 0 };
@@ -932,6 +939,16 @@ namespace {
 			out.push_back(std::move(box));
 		};
 		for (int i = 0; i < n; ++i) {
+			// 字符级框：空格不占可见位置，不给它框。
+			// 用同一套 left/right —— 相邻两字的区间正好接在一起，拼在同一行上一个字也不缺
+			if (chars && rec.text[i] != L' ') {
+				auto cb = boxAt(left(i), right(i));
+				cb.text = rec.text.substr(i, 1);
+				// 格是"按相邻峰值中点均分"出来的、峰值中心不是：笔画精修要的是后者。
+				// c[i] 就是这一帧段的中点（0~1 的横向比例），换回原图像素即得
+				cb.cx = q.x[0] + c[i] * ux;
+				chars->push_back(std::move(cb));
+			}
 			if (rec.text[i] != L' ') continue;
 			flush(i);
 			start = i + 1;
@@ -1094,16 +1111,19 @@ OcrModel::Err OcrModel::fetch(const std::wstring& root, const std::wstring& name
 }
 
 OcrModel::Err OcrModel::recognize(const std::wstring& root, const std::wstring& name,
-	const int w, const int h, BYTE* data, std::vector<OcrModelBox>& out)
+	const int w, const int h, BYTE* data, std::vector<OcrModelBox>& out,
+	std::vector<OcrModelBox>* chars)
 {
 	if (w <= 0 || h <= 0 || !data) return Err::runtime;
 	std::lock_guard lock{ mtx };
 	const auto err = ensureLocked(root, name);
 	if (err != Err::ok) return err;
 	try {
-			auto runPass = [&](const int pw, const int ph, BYTE* pdata, std::vector<OcrModelBox>& boxes) {
+			auto runPass = [&](const int pw, const int ph, BYTE* pdata, std::vector<OcrModelBox>& boxes,
+				std::vector<OcrModelBox>* chars) {
 				PassStats stats;
 				boxes.clear();
+				if (chars) chars->clear();
 				// 图里有几行字？矮的也得数 —— 小字号的两行（h 不到 48）同样是多行，
 				// 整幅送 rec 一样吐空（见 countTextLines / kDetMinH）
 				stats.oneLine = countTextLines(pw, ph, pdata) <= 1;
@@ -1122,7 +1142,7 @@ OcrModel::Err OcrModel::recognize(const std::wstring& root, const std::wstring& 
 						stats.confSum = rec.conf;
 						if (rec.conf >= kMinConf) {
 							stats.acceptedLines = 1;
-							splitWords(rec, q, 0, boxes);
+							splitWords(rec, q, 0, boxes, chars);
 						}
 					}
 					return stats;
@@ -1141,28 +1161,33 @@ OcrModel::Err OcrModel::recognize(const std::wstring& root, const std::wstring& 
 					stats.confSum += rec.conf;
 					if (rec.conf < kMinConf) continue;
 					++stats.acceptedLines;
-					splitWords(rec, quads[i], i, boxes);
+					splitWords(rec, quads[i], i, boxes, chars);
 				}
 				return stats;
 			};
 
-			std::vector<OcrModelBox> best;
-			auto stats = runPass(w, h, data, best);
+			// chars 要走两次 pass，所以先收到本地、最后才交出去（retry 赢了就换掉）
+			std::vector<OcrModelBox> best, bestChars;
+			auto stats = runPass(w, h, data, best, chars ? &bestChars : nullptr);
 			if (shouldRetry(stats)) {
 				// 首轮可疑时再跑一遍增强图：给紧裁边缘留白、把低对比截图轻拉开一点；
 				// 平常清晰截图不走这里，避免把所有识别都拖慢
 				auto retryImg = buildRetryImage(w, h, data);
 				if (!retryImg.data.empty()) {
-					std::vector<OcrModelBox> retry;
-					auto retryStats = runPass(retryImg.w, retryImg.h, retryImg.data.data(), retry);
+					std::vector<OcrModelBox> retry, retryChars;
+					auto retryStats = runPass(retryImg.w, retryImg.h, retryImg.data.data(), retry,
+						chars ? &retryChars : nullptr);
 					if (retryBeats(stats, retryStats)) {
 						unpadBoxes(retry, retryImg.padX, retryImg.padY, w, h);
+						unpadBoxes(retryChars, retryImg.padX, retryImg.padY, w, h);
 						best = std::move(retry);
+						bestChars = std::move(retryChars);
 						stats = retryStats;
 					}
 				}
 			}
 			out = std::move(best);
+			if (chars) *chars = std::move(bestChars);
 		return Err::ok;
 	}
 	catch (...) {

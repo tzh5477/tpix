@@ -264,10 +264,11 @@ namespace {
 	}
 
 	// 认一次。成了给词表；模型这条路走不通给 nullopt，调用方据此回落系统 OCR
-	std::optional<std::vector<OcrModelBox>> wordsByModel(const int w, const int h, BYTE* data)
+	std::optional<std::vector<OcrModelBox>> wordsByModel(const int w, const int h, BYTE* data,
+		std::vector<OcrModelBox>* chars = nullptr)
 	{
 		std::vector<OcrModelBox> boxes;
-		const auto err = OcrModel::recognize(modelRoot(), modelName(), w, h, data, boxes);
+		const auto err = OcrModel::recognize(modelRoot(), modelName(), w, h, data, boxes, chars);
 		switch (err) {
 		case OcrModel::Err::ok: lastState = OcrModelState::ok; break;
 		case OcrModel::Err::noModel: lastState = OcrModelState::noModel; break;
@@ -575,16 +576,26 @@ std::wstring Ocr::recognize(const int w, const int h, BYTE* data, const std::wst
 	return recognizeBySystem(w, h, data, langTag);
 }
 
-std::vector<OcrWord> Ocr::recognizeWords(const int w, const int h, BYTE* data, const std::wstring& langTag)
+std::vector<OcrWord> Ocr::recognizeWords(const int w, const int h, BYTE* data,
+	const std::wstring& langTag, std::vector<OcrWord>* chars)
 {
 	// 表格填字（Table::fillText）与贴图窗口的选文都走这里 —— 换模型这件事
 	// 对它们同样生效，不用各改一遍
-	if (auto boxes = wordsByModel(w, h, data)) {
+	std::vector<OcrModelBox> charBoxes;
+	if (auto boxes = wordsByModel(w, h, data, chars ? &charBoxes : nullptr)) {
 		std::vector<OcrWord> words;
 		words.reserve(boxes->size());
 		for (auto const& b : *boxes)
 			words.push_back({ b.text, b.x, b.y, b.w, b.h });
+		if (chars) {
+			chars->clear();
+			chars->reserve(charBoxes.size());
+			for (auto const& b : charBoxes)
+				chars->push_back({ b.text, b.x, b.y, b.w, b.h, b.cx });
+		}
 		return words;
 	}
+	// 回落到系统 OCR：它只给词，没有字符级框 —— chars 保持空，调用方按"拿不到"处理
+	if (chars) chars->clear();
 	return wordsBySystem(w, h, data, langTag);
 }
