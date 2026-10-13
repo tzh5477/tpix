@@ -26,10 +26,15 @@ public:
 	// minW 是列表的最小宽度（逻辑像素），给内容比按钮宽的那种列表用 —— 字体名能长到十几个字符。
 	// paintSample 传了就是"自绘项"（上面的 SamplePainter）。items 仍要照传：
 	// 档位数按它的长度算，宿主也还拿它当按钮上的兜底文字
+	// itemTips 与 items 一一对应，是每一档的说明文字：鼠标停在那一项上时弹出来。
+	// 按钮上只写得下一个图标的那几种（马赛克笔刷模式）靠它把名称补上 ——
+	// 图标本身看不出"矩形马赛克 / 涂抹马赛克 / 智能擦除"哪个是哪个。
+	// 传空 vector 或某一项传空串就是那一项不提示
 	static void show(Ling::WinBase* owner, Ling::Node* anchor,
 		const std::vector<std::wstring>& items, int cur,
 		std::function<void(int)> onPick, const std::wstring& fontFamily = {},
-		float minW = 0.f, SamplePainter paintSample = {});
+		float minW = 0.f, SamplePainter paintSample = {},
+		const std::vector<std::wstring>& itemTips = {});
 	// 收起。点到列表外、宿主窗口被移动或销毁都会自动走到这里，一般不用外部调
 	static void close();
 	static bool isOpen();

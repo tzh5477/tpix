@@ -393,6 +393,21 @@ def icon_power(pen):
     seg(pen, CX, CY - 420, CX, CY + 40, w)
 
 
+def icon_smart(pen):
+    """马赛克「智能」那一档的图标：一大一小两颗四角星 —— 各种软件里表示
+    「AI / 交给程序自己判断」的通用符号。与「矩形」「涂抹」那两个沿用旧字形的
+    图标摆在同一排时，这枚新画的星一眼分得出来是"自动"那一档。"""
+    def sparkle(cx, cy, r, waist):
+        pen.moveTo((cx, cy - r))
+        pen.qCurveTo((cx + waist, cy - waist), (cx + r, cy))
+        pen.qCurveTo((cx + waist, cy + waist), (cx, cy + r))
+        pen.qCurveTo((cx - waist, cy + waist), (cx - r, cy))
+        pen.qCurveTo((cx - waist, cy - waist), (cx, cy - r))
+        pen.closePath()
+    sparkle(420, 430, 330, 62)
+    sparkle(770, 150, 140, 27)
+
+
 ICONS = [
     (0xE909, 'arrowPlain', icon_arrow_plain),
     (0xE90A, 'arrowTaper', icon_arrow_taper),
@@ -421,6 +436,8 @@ ICONS = [
     (0xE914, 'brush', icon_brush),
     # 悬浮球的「退出截图」（退出整个程序）
     (0xE915, 'power', icon_power),
+    # 马赛克那一档「智能」打码（ToolSub::showMosaicTools 的模式下拉）
+    (0xE916, 'smart', icon_smart),
 ]
 
 

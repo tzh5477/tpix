@@ -120,10 +120,17 @@ public:
 	// ToolMain 与 ToolSub 之间的间距，WinPin::layoutTools() 计算整组高度时要用
 	static constexpr float mainGap{ 2.f };
 public:
-	bool isGeomFill{ false }, isArrowFill{ true }, isNumberFill{ true }, isLineTransparent{ false }, isTextBold{ false }, isTextItalic{ false }, isEraserRect{ false };
-	// 马赛克模式 0 = 矩形马赛克，1 = 涂抹马赛克，2 = 智能擦除。
-	// 三者互斥，所以用一个整数而不是三个布尔 —— 布尔组合里会出现"既涂抹又擦除"这种不存在的状态
+	bool isGeomFill{ false }, isArrowFill{ true }, isNumberFill{ true }, isLineTransparent{ false }, isTextBold{ false }, isTextItalic{ false };
+	// 马赛克笔刷模式 0 = 矩形马赛克，1 = 涂抹马赛克。互斥，所以用一个整数而不是两个布尔。
+	// ⚠️ 智能打码（只打数字）**不在这里**：它不是笔刷模式、也不需要框选，
+	// 是工具条上那枚星形按钮点一下的一次动作（见 WinPin::mosaicAllDigits）
 	int mosaicMode{ 0 };
+	// 橡皮擦三档：0 矩形擦除（整块盖回底图）、1 涂抹擦除（一条笔刷盖回底图）、
+	// 2 智能擦除（打听选区周围那圈出现最多的颜色，用它整块盖住）。
+	// 「智能擦除」原来挂在马赛克的下拉里，2026-10-13 按作者要求搬到这里 ——
+	// 它本来就是"擦掉"，与橡皮擦是一家人；放在马赛克里既多占一格，语义也偏。
+	// 顺序即落盘值：新增的往末尾追加，插到中间会让老配置串档
+	int eraserMode{ 1 };
 	// 序号的编号样式（阿拉伯 / 字母小写 / 字母大写 / 罗马 / 中文）与外圈样式
 	// （无尾圆 / 无尾方 / 圆+箭头 / 方+箭头 / 无）。值与 ShapeNumber 的两个枚举一一对应，
 	// 转枚举行取 static_cast
@@ -219,11 +226,15 @@ private:
 	// 马赛克模式那一个跟序号没关系，不该顺带去遍历一遍 shape。
 	// paintSample：线条那三个下拉传"怎么画这一档"（见 SelectPopup::SamplePainter）——
 	// 它们要显示的是真实的线条而不是一个符号，按钮与列表里画的是同一份几何
+	// itemTips：与 items 一一对应的说明文字，鼠标停在列表那一项上时弹出来（同上）。
+	// 按钮上只有图标、看不出名称的那几种（马赛克笔刷模式）靠它把名称补上；
+	// 其余下拉的项本身就写着名字，传空即可
 	Ling::Button* makeSelectBtn(const std::wstring& tipKey, const std::wstring& cfgKey,
 		int* index, const std::vector<std::wstring>& items,
 		std::function<void()> onPicked = nullptr,
 		bool useIconFont = false, bool refreshNumbers = true,
-		SelectPopup::SamplePainter paintSample = {});
+		SelectPopup::SamplePainter paintSample = {},
+		const std::vector<std::wstring>& itemTips = {});
 	// pin 面板用的文字开关：跟 makeToggleBtn 一样的两态配色，但按钮上写的是字（圆角 / 锁定 / 穿透）
 	// 而不是图标 —— 图标字体里没有锁、穿透这类符号，硬猜码位只会显示成方块。
 	// apply 由调用方给，开关翻转后直接调 WinPin 上对应的 setter

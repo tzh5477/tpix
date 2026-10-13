@@ -700,16 +700,45 @@ void ToolSub::setNumberVal(int val)
 
 void ToolSub::showMosaicTools()
 {
-	// 这两种模式没有颜色按钮、窗口窄，initSize 要居中对齐到按钮上
+	// 这组没有颜色按钮、窗口窄，initSize 要居中对齐到按钮上
 	beginTool(L"mosaic");
-	initSize(1, false, true);
-	// 三个模式共用一个循环按钮：矩形马赛克 / 涂抹马赛克 / 智能擦除。
-	// 三个图标码位都是项目里已经在用的（矩形填充、线条、橡皮擦），不存在画成豆腐块的风险
-	static const wchar_t* mosaicIcons[]{ L"\ue602", L"\ue601", L"\ue6be" };
-	// 按钮上显示的是当前模式，选项同样是这三个图标，所以列表要用图标字体
+	// 两格：左边是笔刷模式下拉（矩形马赛克 / 涂抹马赛克），右边是「智能打码」那枚动作按钮
+	initSize(2, false, true);
+	// 笔刷模式只剩两档。「智能擦除」原来在这里当第三档（2），2026-10-13 搬去橡皮擦了
+	//（见 showEraserTools）—— 它干的是"拿背景色整块盖住"，本来就是擦除。
+	// 老配置里存着的 2（以及更早版本里 3 = 智能打码）都不再是有效档位，先归一化回矩形 ——
+	// 不然下拉会把越界值夹到"涂抹"，显示的和存的对不上
+	if (Setting::get()->getToolNum(L"mosaic", L"mode", 0.f) >= 2.f) {
+		Setting::get()->setToolNum(L"mosaic", L"mode", 0.f);
+	}
+	// 两个图标码位是项目里已经在用的（矩形填充、线条）
+	static const wchar_t* mosaicIcons[]{ L"\ue602", L"\ue601" };
+	// 按钮上显示的是当前模式，选项同样是这两个图标，所以列表要用图标字体
 	std::vector<std::wstring> modeItems;
 	for (auto c : mosaicIcons) modeItems.push_back(std::wstring{ c });
-	makeSelectBtn(L"tool.mosaicMode", L"mode", &mosaicMode, modeItems, nullptr, true, false);
+	// 两档的 makeSelectBtn 走"单击即切换"，不再弹列表 —— itemTips 这时用不上，
+	// 留着是给"以后再添一档"备的（那时候它会自动变成下拉）
+	std::vector<std::wstring> modeTips{
+		Lang::get(L"tool.mosaicRect"), Lang::get(L"tool.mosaicSmear") };
+	makeSelectBtn(L"tool.mosaicMode", L"mode", &mosaicMode, modeItems, nullptr, true, false,
+		{}, modeTips);
+	// 智能打码：按一下扫全图，把认出来的数字全部打码、其它内容原样保留。
+	// 星形字形是这一轮新补的（见 Doc/tools/mkicons.py 的 icon_smart），不会是豆腐块。
+	// 与「智能擦除」区分开：那个是拿选区的背景色整块盖住（把内容藏了），
+	// 这个是只把数字糊掉、别的字留着
+	auto smartBtn = contentNode->makeChild<Ling::Button>();
+	smartBtn->setText(L"\ue916");
+	smartBtn->setFontFamily(L"icon");
+	smartBtn->setHeight(btnSize - 2.5);
+	smartBtn->setFlexGrow(1.f);
+	smartBtn->setFontSize(13.f);
+	smartBtn->setBg(0);
+	smartBtn->setHoverBg(0xF2F2F2ff);
+	// 提示只写名称：这一枚与别的工具图标一样，悬停出名字就够了。原来那句
+	// "一键识别图中所有数字并打码（无需框选）"太占地方（作者要求收掉），
+	// 完整语义留在上面这段注释里
+	tip->bind(smartBtn, Lang::get(L"tool.mosaicSmart"));
+	smartBtn->onClick.add([this](Ling::Button*) { win->mosaicAllDigits(); });
 	initSlider();
 	makeApplyAllBtn();
 }
@@ -717,8 +746,27 @@ void ToolSub::showMosaicTools()
 void ToolSub::showEraserTools()
 {
 	beginTool(L"eraser");
+	// 一格：擦除类型下拉（矩形擦除 / 涂抹擦除 / 智能擦除）
 	initSize(1, false, true);
-	makeToggleBtn(L"\ue602", &isEraserRect, L"tool.rectFill", L"rect");
+	// 老配置里橡皮擦是"矩形 / 涂抹"两态，存在 toolPin.eraser.rect 这个布尔里；
+	// 加上智能擦除之后改成三档、落在 toolPin.eraser.mode。缺哪补哪 ——
+	// 只在 mode 还没写过时迁一次，否则每次开面板都会把用户后来的选择覆盖掉
+	auto setting = Setting::get();
+	if (setting->getToolNum(L"eraser", L"mode", -1.f) < 0.f) {
+		// rect=true 是矩形（0）、false 是涂抹（1）；老配置里没这一项时按原来的默认（涂抹）
+		setting->setToolNum(L"eraser", L"mode",
+			setting->getToolFlag(L"eraser", L"rect", false) ? 0.f : 1.f);
+	}
+	// 顺序即 eraserMode 的落盘值：矩形擦除（矩形填充）/ 涂抹擦除（线条）/ 智能擦除（橡皮/魔术棒）
+	static const wchar_t* eraserIcons[]{ L"\ue602", L"\ue601", L"\ue6be" };
+	std::vector<std::wstring> eraserItems;
+	for (auto c : eraserIcons) eraserItems.push_back(std::wstring{ c });
+	// 列里一格只有一个符号，"矩形擦除 / 涂抹擦除 / 智能擦除"哪个是哪个光看图标分不出来，
+	// 靠悬停提示补上名称（顺序与 eraserIcons 一致，也就是 eraserMode 的落盘值）
+	std::vector<std::wstring> eraserTips{
+		Lang::get(L"tool.eraserRect"), Lang::get(L"tool.eraserSmear"), Lang::get(L"tool.eraserSmart") };
+	makeSelectBtn(L"tool.eraserMode", L"mode", &eraserMode, eraserItems, nullptr, true, false,
+		{}, eraserTips);
 	initSlider();
 	makeApplyAllBtn();
 }
@@ -1239,7 +1287,7 @@ void ToolSub::migrateGeomCfg()
 Ling::Button* ToolSub::makeSelectBtn(const std::wstring& tipKey, const std::wstring& cfgKey,
 	int* index, const std::vector<std::wstring>& items,
 	std::function<void()> onPicked, bool useIconFont, bool refreshNumbers,
-	SelectPopup::SamplePainter paintSample)
+	SelectPopup::SamplePainter paintSample, const std::vector<std::wstring>& itemTips)
 {
 	// 与 makeToggleBtn 同理：上一次的选择在配置文件里，取回来盖掉内存里那份。
 	// 夹值域是因为配置文件可能被手工改坏，而这个值要用来取 items，越界就取到表外了
@@ -1284,7 +1332,7 @@ Ling::Button* ToolSub::makeSelectBtn(const std::wstring& tipKey, const std::wstr
 	}
 	// index 与 items 捕获到 lambda 里，按钮重建时会跟着 contentNode 一起销毁，
 	// 而 ToolSub 与 WinPin 同生命周期，index 指向的成员不会先没
-	btn->onClick.add([this, index, items, cfgKey, btn, switchTo, onPicked, refreshNumbers, useIconFont, paintSample](Ling::Button*) {
+	btn->onClick.add([this, index, items, itemTips, cfgKey, btn, switchTo, onPicked, refreshNumbers, useIconFont, paintSample](Ling::Button*) {
 		// 列表可能翻到按钮上方，那时它正好压在悬停提示的位置上，先把提示收掉
 		tip->hide();
 		SelectPopup::show(this, btn, items, *index,
@@ -1300,7 +1348,7 @@ Ling::Button* ToolSub::makeSelectBtn(const std::wstring& tipKey, const std::wstr
 				if (refreshNumbers) win->refreshNumberShapes();
 				if (onPicked) onPicked();
 			},
-			useIconFont ? std::wstring{ L"icon" } : std::wstring{}, 0.f, paintSample);
+			useIconFont ? std::wstring{ L"icon" } : std::wstring{}, 0.f, paintSample, itemTips);
 	});
 	return btn;
 }

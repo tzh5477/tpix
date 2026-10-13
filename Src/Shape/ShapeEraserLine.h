@@ -1,7 +1,8 @@
 #pragma once
 #include <include/Ling.h>
 #include "ShapeLineBase.h"
-// 涂抹橡皮擦。工具条上那个矩形/涂抹开关决定走 ShapeEraserRect 还是这一类。
+// 涂抹橡皮擦。橡皮擦面板的"涂抹擦除"档走这一类（见 ToolSub::eraserMode 的 1 档），
+// 另外两档（矩形 / 智能擦除）走 ShapeEraserRect 与 ShapeMosaicRect。
 //
 // "擦除"不是真的擦掉，是用原始底图把这条笔画盖回原样。
 // 首尾夹点、拖端点、整体平移都在 ShapeLineBase，这里只管"什么时候算擦除生效"
