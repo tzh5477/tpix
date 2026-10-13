@@ -9,6 +9,7 @@
 #include <mutex>
 #include <onnxruntime_cxx_api.h>
 #include <winrt/Windows.Web.Http.h>
+#include <winrt/Windows.Web.Http.Headers.h>
 #include <winrt/Windows.Storage.Streams.h>
 #include "Table.h"
 #include "Lang.h"
@@ -20,6 +21,7 @@ namespace {
 	using namespace winrt::Windows::Foundation;
 	using namespace winrt::Windows::Storage::Streams;
 	using namespace winrt::Windows::Web::Http;
+	using namespace winrt::Windows::Web::Http::Headers;	// HttpProductInfoHeaderValue
 
 	// slanet-plus 的输入边长，模型里写死的，RapidTable 也是这个数
 	constexpr int side{ 488 };
@@ -59,6 +61,10 @@ namespace {
 		err = Lang::get(L"ocr.tableNoModel");
 		try {
 			HttpClient client;
+			// 同 OcrModel::download：WinRT 的 HttpClient 默认不带 User-Agent，
+			// modelscope 的 CDN 对空 UA 回 403（HTTP_E_STATUS_FORBIDDEN）。补一个
+			client.DefaultRequestHeaders().UserAgent().Append(
+				HttpProductInfoHeaderValue{ L"tpix" });
 			auto buffer = client.GetBufferAsync(Uri{ modelUrl }).get();
 			std::vector<BYTE> bytes(buffer.Length());
 			DataReader::FromBuffer(buffer).ReadBytes(bytes);

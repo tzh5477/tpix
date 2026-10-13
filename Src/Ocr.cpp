@@ -7,6 +7,7 @@
 #include <algorithm>
 #include "OcrModel.h"
 #include "Setting.h"
+#include "AiService.h"
 
 using namespace winrt;
 using namespace winrt::Windows::Graphics::Imaging;
@@ -312,6 +313,62 @@ bool ocrNeedSpace(wchar_t left, wchar_t right, float relGap)
 	return relGap >= 0.20f;
 }
 
+namespace {
+	// 让大模型看图识字用的三段提示词（与 WinOcr 里那套协议一致，且只能给模型看、
+	// 不进语言包 —— 换界面语言不该改变识别结果的格式）
+	constexpr const wchar_t* kAiPromptSys{
+		L"你是一个精确的 OCR 引擎，严格按用户的格式要求输出图片里的内容。" };
+	constexpr const wchar_t* kAiPromptText{
+		L"请完整识别这张图片里的文字，按原有的阅读顺序与分段输出，保留换行。"
+		L"只输出识别到的原文，不要翻译、不要解释、不要加任何说明，也不要用代码块包裹。" };
+	constexpr const wchar_t* kAiPromptTable{
+		L"请识别这张图片里的表格，用制表符分隔的纯文本输出：第一行是表头，之后每行一条记录，"
+		L"相邻单元格之间用一个制表符，行与行之间换行；单元格内部不要出现制表符与换行。"
+		L"只输出表格内容，不要解释。" };
+}
+
+bool Ocr::useAi()
+{
+	return Setting::get()->getToolStr(L"ocr", L"engine", L"sys") == L"ai";
+}
+
+void Ocr::recognizeByAi(const int w, const int h, const BYTE* data, bool asTable,
+	std::function<void(const std::wstring&)> onDone)
+{
+	if (!onDone) return;
+	if (!data || w <= 0 || h <= 0) { onDone(L""); return; }
+	const auto scenario = asTable ? std::wstring{ AiScenario::table }
+		: std::wstring{ AiScenario::recognize };
+	// 解成接口地址 / 密钥 / 模型；没配齐就空手回去，调用方按"没识别到"处理
+	auto cred = Setting::get()->credFor(scenario);
+	if (!cred.ok) { onDone(L""); return; }
+	std::vector<AiService::Msg> msgs;
+	AiService::Msg sys;
+	sys.role = AiService::Role::System;
+	sys.content = kAiPromptSys;
+	AiService::Msg user;
+	user.role = AiService::Role::User;
+	user.content = asTable ? kAiPromptTable : kAiPromptText;
+	// 同步拷一份像素进请求体（编 PNG / base64 由 AiService 负责），调用方随后即可释放缓冲
+	user.image.assign(data, data + (size_t)w * h * 4);
+	user.imgW = w;
+	user.imgH = h;
+	msgs.push_back(std::move(sys));
+	msgs.push_back(std::move(user));
+	auto acc = std::make_shared<std::wstring>();
+	// 流式累积，收尾时一次性交付。回调都在 UI 线程，可直接碰 UI
+	AiService::chat(cred, msgs,
+		[acc](const std::wstring& delta) { *acc += delta; },
+		[acc, onDone](const std::wstring& err) {
+			(void)err;
+			// 模型回的东西首尾常带空白（粘了段说明、多打了几个换行），剥干净再用
+			auto s = *acc;
+			while (!s.empty() && (s.front() == L'\n' || s.front() == L' ')) s.erase(0, 1);
+			while (!s.empty() && (s.back() == L'\n' || s.back() == L' ')) s.pop_back();
+			onDone(s);
+		});
+}
+
 bool Ocr::isAvailable()
 {
 	// 内置模型这条路不挑系统语言包（缺文件会自己下），所以选中的那代能用就总有一条路；
@@ -350,10 +407,89 @@ std::wstring Ocr::curModel()
 	return modelName();
 }
 
+std::wstring Ocr::modelLabel(const std::wstring& name)
+{
+	return OcrModel::modelLabel(name);
+}
+
 void Ocr::setModel(const std::wstring& name)
 {
 	// 换掉之后下一次识别才会重建会话：OcrModel 内部按名字认，名字变了自然重来
 	Setting::get()->setToolStr(L"ocr", L"model", name);
+}
+
+std::vector<OcrModelChoice> Ocr::aiModelChoices()
+{
+	// 只列出配置过的大模型（不含本地离线模型）。翻译窗与识别窗的「模型」下拉共用：
+	// 选中的落盘都走 Setting::setScenario(<场景>, providerId, model)。
+	std::vector<OcrModelChoice> items;
+	// 设置里配过的每一个接口。拉过模型清单就用清单；没拉过（刚填好还没点
+	// 「连接验证」）至少把他手填的那个列出来，否则这里会一片空、用户以为没配
+	auto providers = Setting::get()->getAiProviders();
+	// 配了两个以上接口时得把接口名缀在模型后面，否则两家都叫 gpt-4o 这种名字时
+	// 列表里两行一模一样，点哪一行纯靠猜
+	const bool multi = providers.size() > 1u;
+	for (auto& p : providers) {
+		std::vector<std::wstring> models = p.models;
+		if (models.empty() && !p.model.empty()) models.push_back(p.model);
+		const auto pname = Setting::providerName(p);
+		for (auto& mm : models) {
+			if (mm.empty()) continue;
+			bool dup{ false };
+			for (auto& e : items) {
+				if (e.ai && e.providerId == p.id && e.model == mm) { dup = true; break; }
+			}
+			if (dup) continue;
+			OcrModelChoice c;
+			c.ai = true;
+			c.providerId = p.id;
+			c.model = mm;
+			c.label = multi ? (mm + L" · " + pname) : mm;
+			items.push_back(std::move(c));
+		}
+	}
+	return items;
+}
+
+std::vector<OcrModelChoice> Ocr::modelChoices()
+{
+	std::vector<OcrModelChoice> items;
+	// 1) 本地离线模型。listModels 会把内置那几代**即使还没下下来**也列出来
+	//    （选中它会自己去下），所以这里不用另外补
+	for (auto& m : OcrModel::listModels(modelRoot())) {
+		OcrModelChoice c;
+		c.ai = false;
+		c.model = m;
+		c.label = OcrModel::modelLabel(m);
+		items.push_back(std::move(c));
+	}
+	// 2) 大模型：设置里配过的每一个接口
+	for (auto& c : aiModelChoices()) items.push_back(std::move(c));
+	return items;
+}
+
+void Ocr::migrate()
+{
+	// 一次性迁移：把老用户内部的「PP-OCRv6」这个名字改成真实模型名「PP-OCRv6-small」。
+	// 之前内部名与显示名故意分开（显示 PP-OCRv6-small、内部 PP-OCRv6），是为了不破坏
+	// 老用户已经下好的 ocr\PP-OCRv6\ 与存盘的 ocr.model=PP-OCRv6；现在统一成真实名，
+	// 必须把这两处一起搬，否则：① 目录不重命名的老用户会被当成"没下过"去重新下载；
+	// ② config 里 PP-OCRv6 指不到目录，识别直接走不通。两处都做"新名不存在才动手"，幂等。
+	std::error_code ec;
+	const std::filesystem::path dir = std::filesystem::path{ modelRoot() };
+	const auto oldDir = dir / L"PP-OCRv6";
+	const auto newDir = dir / L"PP-OCRv6-small";
+	if (std::filesystem::is_directory(oldDir, ec) && !std::filesystem::exists(newDir, ec)) {
+		std::filesystem::rename(oldDir, newDir, ec);
+	}
+	auto s = Setting::get();
+	const auto m = s->getToolStr(L"ocr", L"model", L"");
+	if (m == L"PP-OCRv6") s->setToolStr(L"ocr", L"model", L"PP-OCRv6-small");
+}
+
+std::wstring Ocr::modelDir()
+{
+	return modelRoot();
 }
 
 std::vector<OcrLang> Ocr::languages()

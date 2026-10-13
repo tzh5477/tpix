@@ -7,6 +7,7 @@
 #include <onnxruntime_cxx_api.h>
 #include <winrt/Windows.Storage.Streams.h>
 #include <winrt/Windows.Web.Http.h>
+#include <winrt/Windows.Web.Http.Headers.h>
 #include "OcrModel.h"
 
 namespace {
@@ -14,6 +15,7 @@ namespace {
 	using namespace winrt::Windows::Foundation;	// Uri 在这个命名空间里
 	using namespace winrt::Windows::Storage::Streams;
 	using namespace winrt::Windows::Web::Http;
+	using namespace winrt::Windows::Web::Http::Headers;	// HttpProductInfoHeaderValue
 
 	// ---- 内置模型清单 ----
 	//
@@ -23,18 +25,26 @@ namespace {
 	// 不必改代码 —— 清单只负责"目录是空的时去哪儿下"
 	struct ModelDef
 	{
-		const wchar_t* name;
+		const wchar_t* name;	// 目录名 = config 存盘值 = 内部标识（与 label 一致：PP-OCRv6-small）
+		const wchar_t* label;	// 显示名：下拉 / 结果弹窗用。与 name 相同，便于运维与问题排查
 		const wchar_t* det;
 		const wchar_t* rec;
 	};
 
 	constexpr ModelDef kModelDefs[]{
-		{ L"PP-OCRv6",
+		{ L"PP-OCRv6-small", L"PP-OCRv6-small",
 		  L"https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/master/onnx/PP-OCRv6/det/PP-OCRv6_det_small.onnx",
 		  L"https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/master/onnx/PP-OCRv6/rec/PP-OCRv6_rec_small.onnx" },
+		// tiny 档：1.5M 参数，比 small 快一截、精度低一截，给"small 嫌慢"的用户一个选项。
+		// 目录名与 small 各是各的一对 onnx，互不干扰（small=PP-OCRv6-small、tiny=PP-OCRv6-tiny）。
+		// 字典不用额外给：tiny 的 rec 自带 6904 字的 character 元数据（small 是 18708），
+		// loadDict 从模型里读，跟着模型走
+		{ L"PP-OCRv6-tiny", L"PP-OCRv6-tiny",
+		  L"https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/master/onnx/PP-OCRv6/det/PP-OCRv6_det_tiny.onnx",
+		  L"https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/master/onnx/PP-OCRv6/rec/PP-OCRv6_rec_tiny.onnx" },
 	};
-	// 认不出目录名时按它下载。与 kModelDefs[0] 保持一致
-	constexpr std::wstring_view kDefModel{ L"PP-OCRv6" };
+	// 认不出目录名时按它下载。与 kModelDefs[0] 保持一致（真实模型名）
+	constexpr std::wstring_view kDefModel{ L"PP-OCRv6-small" };
 	constexpr size_t kMinModelBytes{ 1024 * 1024 };	// 比这小基本是下回来一个错误页
 
 	// ---- 两条路线的分界（2026-10-11 实测，56 张紧裁单行样本）----
@@ -245,6 +255,12 @@ namespace {
 	{
 		try {
 			HttpClient client;
+			// ⚠️ WinRT 的 HttpClient 默认**不带** User-Agent 头，而 modelscope 的 LFS CDN
+			// 对空 UA 一律回 403：GetBufferAsync 抛 HTTP_E_STATUS_FORBIDDEN(0x80190193)，
+			// 外面只看到"下载失败"。curl 自带 UA 所以复现不了（2026-10-12 实测：
+			// 空 UA 403、带任意 UA 200）。补一个就行，别的一切照旧
+			client.DefaultRequestHeaders().UserAgent().Append(
+				HttpProductInfoHeaderValue{ L"tpix" });
 			auto buffer = client.GetBufferAsync(Uri{ url }).get();
 			std::vector<BYTE> bytes(buffer.Length());
 			DataReader::FromBuffer(buffer).ReadBytes(bytes);
@@ -1030,6 +1046,14 @@ std::vector<std::wstring> OcrModel::listModels(const std::wstring& root)
 	return names;
 }
 
+// 内部名（目录名 / config 存盘值，如 PP-OCRv6）↔ 显示名（如下拉里看到的 PP-OCRv6-small）。
+// 用户自建目录不在清单里，没有预置 label，直接用目录名本身
+std::wstring OcrModel::modelLabel(const std::wstring& name)
+{
+	for (auto& d : kModelDefs) if (name == d.name) return d.label;
+	return name;
+}
+
 std::wstring OcrModel::defaultModel()
 {
 	return std::wstring{ kDefModel };
@@ -1039,6 +1063,34 @@ OcrModel::Err OcrModel::ensure(const std::wstring& root, const std::wstring& nam
 {
 	std::lock_guard lock{ mtx };
 	return ensureLocked(root, name);
+}
+
+bool OcrModel::hasFiles(const std::wstring& root, const std::wstring& name)
+{
+	std::error_code ec;
+	const std::filesystem::path dir = std::filesystem::path{ root } / name;
+	if (!std::filesystem::is_directory(dir, ec)) return false;
+	std::filesystem::path detPath, recPath;
+	return findOnnx(dir, L"det", detPath) && findOnnx(dir, L"rec", recPath);
+}
+
+OcrModel::Err OcrModel::fetch(const std::wstring& root, const std::wstring& name)
+{
+	std::lock_guard lock{ mtx };
+	const std::filesystem::path dir = std::filesystem::path{ root } / name;
+	std::filesystem::path detPath, recPath;
+	const bool hasDet = findOnnx(dir, L"det", detPath);
+	const bool hasRec = findOnnx(dir, L"rec", recPath);
+	// 文件本来就在（用户自己放的 / 上一轮下过）：秒返，不碰网络
+	if (hasDet && hasRec) return Err::ok;
+	const auto def = findDef(name);
+	// 缺文件又不在内置清单里（用户自己起的目录名）：没得下
+	if (!def) return Err::noModel;
+	if (!hasDet && !download(def->det, dir / std::filesystem::path{ def->det }.filename()))
+		return Err::download;
+	if (!hasRec && !download(def->rec, dir / std::filesystem::path{ def->rec }.filename()))
+		return Err::download;
+	return Err::ok;
 }
 
 OcrModel::Err OcrModel::recognize(const std::wstring& root, const std::wstring& name,

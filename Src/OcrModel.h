@@ -43,11 +43,20 @@ public:
 	// root 目录下每个子目录算一个模型，里面有 det / rec 两个 onnx 就算可用。
 	// 按名字排（PP-OCRv6 在 PP-OCRv7 前面 —— 默认选第一个）
 	static std::vector<std::wstring> listModels(const std::wstring& root);
+	// 内部名（目录名 / config 存盘值，如 PP-OCRv6）↔ 显示名（下拉 / 结果弹窗看到的
+	// PP-OCRv6-small）。用户自建目录不在清单里，没有预置 label，直接返回名字本身
+	static std::wstring modelLabel(const std::wstring& name);
 	// 内置清单里登记的默认模型名
 	static std::wstring defaultModel();
 	// 建好会话。缺文件就按内置清单下载；已经建过的同一代不会重建。
 	// 要联网下载时会走 WinRT 的 HttpClient —— 调用线程得已经 init_apartment（同 Table）
 	static Err ensure(const std::wstring& root, const std::wstring& name);
+	// 模型文件下全了没有（不下载、不建会话）。设置页据此决定要不要提示去下载
+	static bool hasFiles(const std::wstring& root, const std::wstring& name);
+	// 只把文件下全，不建会话。设置页选中一个还没下载的内置代次时用：
+	// 下载要几秒（tiny 6MB）到几十秒（small 31MB），调用方得放后台线程
+	// （里面走 WinRT 的 HttpClient，线程还得先 init_apartment）。文件本来就在的秒返
+	static Err fetch(const std::wstring& root, const std::wstring& name);
 	// 认一张 BGRA top-down 的图，返回按阅读顺序排好的词。可能耗时几百毫秒，别在 UI 线程调
 	static Err recognize(const std::wstring& root, const std::wstring& name,
 		const int w, const int h, BYTE* data, std::vector<OcrModelBox>& out);
