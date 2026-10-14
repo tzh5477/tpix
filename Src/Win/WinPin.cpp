@@ -1043,7 +1043,7 @@ D2D1_RECT_F WinPin::batchRotateRect() const
 	if (b.right <= b.left) return D2D1::RectF(0.f, 0.f, 0.f, 0.f);
 	auto ds{ 6.f * dpi };
 	auto rad{ ds * 0.9f };
-	auto gap{ ds * 3.f };
+	auto gap{ ds * 2.f };
 	auto cx{ b.right + gap }, cy{ b.bottom + gap };
 	auto img = getImgSize();
 	if (img.width > 0 && cx + rad > (float)img.width) cx = b.right - gap;
