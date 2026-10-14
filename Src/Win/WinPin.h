@@ -106,6 +106,11 @@ public:
 	void ocrToWindow();
 	// 二维码识别：同样在当前这张图上解，解出来弹窗问要不要复制（与截图界面那一枚一致）
 	void decodeQr();
+	// 智能打码（工具条马赛克那一排上的星形按钮）。**一次动作，不是一个模式** ——
+	// 按一下就把整张图里的数字全部打码、其它内容原样保留，落成一步可撤销的标注。
+	// 不需要用户先框选：范围就是整张底图（见实现里"整图"那一段）。
+	// 识别还没跑完时先把意图记下，等结果回来再打（否则刚截完图就点会什么都没发生）
+	void mosaicAllDigits();
 	// 所有 ShapeText 共用的文本输入框，第一次用到时才建。
 	// 共用而不是一个 shape 一个：TextBox 构造时会往窗口的十来个事件上挂回调，
 	// N 个实例意味着每次鼠标移动都要跑 N 遍，而同一时刻只可能有一个 ShapeText 在编辑。
@@ -121,6 +126,14 @@ public:
 	const std::wstring& curToolId() const override;
 	ToolMain* getToolMain() override { return toolMain.get(); }
 	ToolSub* getToolSub() override { return toolSub.get(); }
+	// 后台认出来的词框（标注坐标系）。智能打码借它挑出选区里的数字 ——
+	// 空表示还没认完或这张图里没字，两种情况这一笔都打不出东西（见 ShapeMosaicRect::buildSmart）
+	const std::vector<OcrWord>& getOcrWords() const override { return ocrWords; }
+	// 同一批字里的**字符级**框（每项一个字）。词框只能说"这一段里有数字"，
+	// 落到字上才能把 "A1234567" 的 A 摘出去、只打那七个数字 —— 智能打码要的正是这个。
+	// 只有内置模型那条路给得出来（rec 的 CTC 对齐），系统 OCR / 大模型那两条是空的，
+	// 调用方据此回落"整段打码"
+	const std::vector<OcrWord>& getOcrChars() const override { return ocrChars; }
 	void requestRefresh() override;
 	// 换掉整张底图的像素（撤销 / 重做到"搬过画面"的那一步）。定义在 cpp 里：
 	// 它要做的不只是写位图，还得把认过的词一并作废重认
@@ -285,9 +298,13 @@ private:
 	// 起一次后台识别。换底图 / 剪完一刀都会重认，seq 让老结果自己作废
 	void startOcr();
 	void clearOcr();
+	// 智能打码真正落地的那一步：把整张底图的数字框算出来、造一笔 ShapeMosaicRect 提交进图层。
+	// 与鼠标那条路分开是因为它不经过 press / drag / up —— 几何是现成的（整图）
+	void applySmartMosaic();
 	// 识别结果回填（UI 线程）。origin 是起识别那一刻的 Canvas::imgOrigin —— 词框坐标要从
-	// 底图像素换算到标注坐标系，剪裁正好在这中间发生时得用当时那个值
-	void applyOcrWords(std::vector<OcrWord> words, POINT origin);
+	// 底图像素换算到标注坐标系，剪裁正好在这中间发生时得用当时那个值。
+	// chars 是同一批字的字符级框（只有内置模型给得出，别的时候是空的）
+	void applyOcrWords(std::vector<OcrWord> words, std::vector<OcrWord> chars, POINT origin);
 	// 把底图像素读一份到内存（BGRA、top-down、行紧凑），喂给识别引擎
 	bool readBasePixels(std::vector<BYTE>& pixels, int& w, int& h);
 	// 标注坐标 → 选区的"插入点"下标（0..ocrWords.size()）。与文本编辑器同一套：
@@ -627,11 +644,17 @@ private:
 	// 识别出来的词，坐标已经换算到标注坐标系（与 shape 同一套）—— 剪裁只改 imgOrigin，
 	// 所以剪完这一刀之后词框仍然贴在原来的字上。顺序就是阅读顺序：行自上而下、行内从左到右
 	std::vector<OcrWord> ocrWords;
+	// 同一批结果的字符级框（每项一个字），与 ocrWords 同时回填、同一套坐标系。
+	// 词框给不出"段内哪个字是数字"，智能打码只打数字靠的是它
+	std::vector<OcrWord> ocrChars;
 	// 行分组。[first, first+count) 是同一行，也正好是 ocrWords 里连续的一段；
 	// 复制时靠它决定词与词之间是补空格还是换行
 	struct OcrLine { int first{ 0 }, count{ 0 }; };
 	std::vector<OcrLine> ocrLines;
 	bool ocrRunning{ false };
+	// 用户点了「智能打码」但识别还没回来时记在这儿；applyOcrWords 收尾时补做。
+	// 不留这个标记的话，"刚截完图马上点智能打码"会因为词框还没到而静默什么都不做
+	bool smartMosaicPending{ false };
 	// 每起一次识别就 ++，回填时对不上就丢掉 —— 换底图 / 剪裁会再起一次，老结果不能盖上去
 	int ocrSeq{ 0 };
 	// 后台线程只拿得到裸 this，而窗口关掉之后这个对象下一轮消息循环就没了。

@@ -282,6 +282,9 @@ namespace {
 			t->setFontSize(12.f);
 			t->setColor(0x888888FF);
 			t->setHeight(titleH);
+			// 与 WinTextPin 的标题栏同一个坑：Label 给了确定高度而不说怎么对齐，
+			// 内层默认顶到最上沿。这里居中后才与"取色器"那一行的观感一致
+			t->setJustifyContent(Ling::Justify::Center);
 			// 第一排标题（常用色）上面已经吃了 info 那一段的 gap，这里再补一点点就够
 			t->setMarginTop(tight);
 			t->setFlexShrink(0.f);

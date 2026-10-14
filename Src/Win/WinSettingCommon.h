@@ -28,8 +28,6 @@ private:
 	void initHistoryCtrls();
 	// 贴图持久化开关：退出时存、启动时恢复
 	void initPinCtrls();
-	// OCR 默认识别语言。与 WinOcr 窗口上的语言按钮共用 Setting 的 ocr 组
-	void initOcrCtrls();
 	// 配置备份与恢复：导出成一份 json / 从一份 json 导入
 	void initConfigCtrls();
 	// 导入导出失败时的提示（系统提示标题 + 一行说明）

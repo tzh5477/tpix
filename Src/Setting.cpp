@@ -9,6 +9,7 @@
 #include "Win/WinHistory.h"
 #include "Win/WinBall.h"
 #include "Win/WinOverlay.h"
+#include "Win/WinTextPin.h"
 #include "PinSource.h"
 #include "App.h"
 
@@ -26,6 +27,7 @@ namespace {
     constexpr int focusShortcutMsgId{ 107 };
     constexpr int aiTransShortcutMsgId{ 108 };
     constexpr int aiChatShortcutMsgId{ 109 };
+    constexpr int pinTextShortcutMsgId{ 110 };
 
     struct ShortcutDef { std::wstring_view type; int msgId; std::wstring_view def; };
     // 一张表管住"配置键名 → 消息 id → 默认组合"，加一个可配快捷键的动作只改这里一行。
@@ -36,6 +38,7 @@ namespace {
         { L"history",   historyShortcutMsgId,   L"Ctrl+Alt+H" },
         { L"ball",      ballShortcutMsgId,      L"" },
         { L"pinClip",   pinClipShortcutMsgId,   L"" },
+        { L"pinText",   pinTextShortcutMsgId,   L"" },
         { L"ruler",     rulerShortcutMsgId,     L"" },
         { L"crosshair", crosshairShortcutMsgId, L"" },
         { L"focus",     focusShortcutMsgId,     L"" },
@@ -83,6 +86,7 @@ namespace {
 
 Setting::Setting() :dataPath{ initDataPath() }, configPath{ initConfigPath() }
 {
+    ensureDataDirFile();
     if (std::filesystem::exists(configPath)) {
         auto content = Ling::Util::readFileText(configPath);
         if (content.empty() || content.find_first_not_of(L" \t\r\n") == std::wstring::npos) {
@@ -204,7 +208,28 @@ bool Setting::getAutoStart()
     return common && common.GetNamedBoolean(L"autoStart", false);
 }
 
-std::filesystem::path Setting::initDataPath()
+std::filesystem::path Setting::dataDirFile()
+{
+    wchar_t buffer[MAX_PATH]{};
+    GetModuleFileName(nullptr, buffer, MAX_PATH);
+    return std::filesystem::path{ buffer }.parent_path() / L"data.json";
+}
+
+void Setting::ensureDataDirFile()
+{
+    // 没有就建。写的是"当前实际生效的那个目录"—— 用户打开文件就知道现在数据落在哪、
+    // 要改成什么。写不进去（装在 Program Files 这类只读位置）就算了：saveFile 失败是
+    // 静默 return，配置仍在默认位置，不影响启动
+    std::error_code ec;
+    auto file = dataDirFile();
+    if (std::filesystem::exists(file, ec)) return;
+    JsonObject obj;
+    obj.SetNamedValue(L"path", JsonValue::CreateStringValue(dataPath.wstring()));
+    std::wstring str{ obj.Stringify() };
+    Ling::Util::saveFile(file.wstring(), str);
+}
+
+std::wstring Setting::defaultDataPath()
 {
     PWSTR pathTmp;
     auto hr = SHGetKnownFolderPath(FOLDERID_RoamingAppData, 0, nullptr, &pathTmp);
@@ -214,13 +239,95 @@ std::filesystem::path Setting::initDataPath()
     }
     auto dataPath = std::filesystem::path{ pathTmp };
     CoTaskMemFree(pathTmp);
-    dataPath.append("tpix");
-    if (!std::filesystem::exists(dataPath)) {
-        if (!std::filesystem::create_directories(dataPath)) {
-            _ASSERT_EXPR(FALSE, L"create data path，error");
+    dataPath.append(L"tpix");
+    return dataPath.wstring();
+}
+
+std::filesystem::path Setting::initDataPath()
+{
+    // 数据目录可以整个搬到大分区：exe 同目录放一份 data.json（{"path":"D:\\tpix"}）就换。
+    // 找不到 / 解析不了 / 配的目录建不出来都静默回落默认 —— 数据目录不靠谱会让
+    // 配置、历史、模型全都没处放，比"C 盘满"糟得多，不值得为它弹框
+    std::error_code ec;
+    auto file = dataDirFile();
+    if (std::filesystem::exists(file, ec)) {
+        auto text = Ling::Util::readFileText(file);
+        JsonObject obj{ nullptr };
+        if (JsonObject::TryParse(text, obj)) {
+            auto p = obj.GetNamedString(L"path", L"");
+            if (!p.empty()) {
+                // hstring 不能直接喂给 std::filesystem::path，走 c_str()
+                std::filesystem::path dir{ p.c_str() };
+                if (std::filesystem::exists(dir, ec) || std::filesystem::create_directories(dir, ec)) {
+                    if (std::filesystem::is_directory(dir, ec)) return dir;
+                }
+            }
         }
     }
-    return dataPath;
+    return defaultDataPath();
+}
+
+bool Setting::isCustomDataPath()
+{
+    // 与默认目录比，不与 dataPath 成员比（见头文件注释）。data.json 指向任何
+    // 非默认路径都算"自定义"—— 哪怕那个目录此刻不存在，清掉这份坏配置也正是
+    // 「恢复默认」的意义所在
+    std::error_code ec;
+    auto file = dataDirFile();
+    if (!std::filesystem::exists(file, ec)) return false;
+    auto text = Ling::Util::readFileText(file);
+    JsonObject obj{ nullptr };
+    if (!JsonObject::TryParse(text, obj)) return false;
+    auto p = obj.GetNamedString(L"path", L"");
+    if (p.empty()) return false;
+    return std::filesystem::path{ p.c_str() } != std::filesystem::path{ defaultDataPath() };
+}
+
+std::wstring Setting::pendingDataPath()
+{
+    // 与 initDataPath 同一套解析，但**不回落默认目录了事**：目录不可用时显示默认
+    // 会骗人（用户刚选的新目录打不开，界面却指回老地方，看着像选择没保存）。
+    // 所以只有"解析出来且目录真的可用"才采用，否则回落 getDataPath()
+    std::error_code ec;
+    auto file = dataDirFile();
+    if (std::filesystem::exists(file, ec)) {
+        auto text = Ling::Util::readFileText(file);
+        JsonObject obj{ nullptr };
+        if (JsonObject::TryParse(text, obj)) {
+            auto p = obj.GetNamedString(L"path", L"");
+            if (!p.empty()) {
+                std::wstring dir{ p.c_str() };   // GetNamedString 给的是 hstring，显式转
+                std::filesystem::path d{ dir };
+                if (std::filesystem::is_directory(d, ec)) return dir;
+            }
+        }
+    }
+    return getDataPath().wstring();
+}
+
+bool Setting::setDataPath(const std::wstring& dir)
+{
+    auto file = dataDirFile();
+    if (dir.empty()) {
+        // 恢复默认：删掉 exe 同目录那份 data.json。删不掉（只读 / 被占用）就算了，
+        // 下次启动还是老样子，总比留一份指向别处的强
+        std::error_code ec;
+        std::filesystem::remove(file, ec);
+        return !std::filesystem::exists(file, ec);
+    }
+    JsonObject obj;
+    obj.SetNamedValue(L"path", JsonValue::CreateStringValue(dir));
+    // Stringify() 出来的是 winrt::hstring，saveFile 只收 std::wstring
+    std::wstring str{ obj.Stringify() };
+    Ling::Util::saveFile(file.wstring(), str);
+    // 回读校验：saveFile 失败是静默的（不抛异常、不返回值），不校验的话界面画上新
+    // 目录、重启一看还是老的，比不改更让人犯嘀咕。GetNamedString 给的是 hstring，
+    // 显式转成 wstring 再比
+    auto back = Ling::Util::readFileText(file);
+    JsonObject obj2{ nullptr };
+    if (!JsonObject::TryParse(back, obj2)) return false;
+    auto p = obj2.GetNamedString(L"path", L"");
+    return !p.empty() && std::wstring{ p.c_str() } == dir;
 }
 
 std::filesystem::path Setting::initConfigPath()
@@ -1019,6 +1126,12 @@ void Setting::initShortcutKeys()
             break;
         case pinClipShortcutMsgId:
             PinSource::fromClipboard();
+            break;
+        case pinTextShortcutMsgId:
+            // 选中文字 → 文本贴图：与 AI 翻译 / 对话同一条取字路（摘走前台窗口里选中的那段，
+            // 再按热键顺序把模组键等松开才注入 Ctrl+C）。取不到字就什么都不做 ——
+            // 用户没选中东西时弹一扇空窗比不弹更让人困惑
+            if (auto text = Util::copyFromForeground(); !text.empty()) WinTextPin::init(text);
             break;
         case rulerShortcutMsgId:
             WinOverlay::toggle(OverlayMode::Ruler);

@@ -1,5 +1,6 @@
 #pragma once
 #include <include/Ling.h>
+#include "Ocr.h"
 
 class History;
 class ShapeBase;
@@ -26,6 +27,14 @@ public:
 	virtual Ling::TextBox* getTextBox() = 0;
 	virtual void setEditingShape(ShapeBase* shape) = 0;
 	virtual void requestRefresh() = 0;
+	// 已经识别出来的词框（标注坐标系，与 shape 同一套）。智能打码靠它挑出选区里的数字 ——
+	// 认字这件事本来就是**画布级**的（贴图窗口一建起来就在后台认一遍整张底图），
+	// 不该让某一个 shape 自己去认一遍
+	virtual const std::vector<OcrWord>& getOcrWords() const = 0;
+	// 同一批结果的**字符级**框（每项一个字）。词框只说得出"这一段里有数字"，
+	// 要精确到"只打数字、把 A 和汉字摘出去"就得到字一级 —— 见 Ocr::recognizeWords 的说明。
+	// 拿不到时（系统 OCR / 大模型）是空的，调用方按"回落整段判"处理
+	virtual const std::vector<OcrWord>& getOcrChars() const = 0;
 	// 换掉整张底图的像素。「选择画布」搬画面 / 删内容改的是底图本体，撤销要退回去 ——
 	// 拍一份全屏底图 8 MB，不能每步都塞进 shape 快照里，于是只有真动过底图的那几步
 	// 带着像素（见 History::Step），回写这一下交给宿主（它才认识底图位图与 OCR 缓存）
@@ -85,6 +94,10 @@ public:
 	// 编辑中文字由这个文本框画，位置与样式由 shape 自己指定
 	Ling::TextBox* getTextBox() const;
 	void setEditingShape(ShapeBase* shape);
+	// 宿主已经认出来的词框。智能打码（ShapeMosaicRect）按它把选区里的数字挑出来
+	const std::vector<OcrWord>& getOcrWords() const;
+	// 同上，字符级（每项一个字）。有它就不用把整段一起打掉
+	const std::vector<OcrWord>& getOcrChars() const;
 	// 换掉整张底图的像素，转发给宿主（见 CanvasHost::replaceBasePixels）
 	void replaceBasePixels(const std::vector<BYTE>& px, int w, int h);
 	// 底图的像素尺寸，也就是导出图的尺寸

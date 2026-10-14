@@ -24,6 +24,7 @@
 #include "./Win/WinAiTrans.h"
 #include "./Win/WinBall.h"
 #include "./Win/WinSetting.h"
+#include "Ocr.h"
 
 std::unique_ptr<App> app;
 
@@ -189,6 +190,9 @@ App::App()
     // 录制中直接退出会让编码线程和 D3D 设备一起卡住，退出前先把录制停掉
     app->onBeforeQuit.add([]() { WinCap::stopIfRecording(); });
     Setting::init();
+    // 把老用户的内部模型名 PP-OCRv6 重命名成真实模型名 PP-OCRv6-small（目录 + 存盘值），
+    // 必须在 Setting 之后、任何 OCR 代码读模型之前跑：它要读数据目录与 config
+    Ocr::migrate();
     Lang::init();
     // 建在 Setting 之后：历史目录从数据目录来。剪贴板监听也在这里挂上，
     // 用完即走（--auto-quit）那条路同样要记历史，所以不跟着托盘走

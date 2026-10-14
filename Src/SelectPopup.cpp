@@ -2,8 +2,10 @@
 #include "Setting.h"
 #include <include/Ling.h>
 #include <algorithm>
+#include <cmath>
 #include "SelectPopup.h"
 #include "App.h"
+#include "Tip.h"
 
 namespace
 {
@@ -17,6 +19,11 @@ namespace
 	constexpr float listMaxH{ 460.f };
 	constexpr float listMinW{ 120.f };
 	constexpr float sampleListMinW{ 60.f };
+	// 纯图标项的列表（马赛克笔刷模式那三档）另有更窄的一条下限。
+	// 120 是给文字的：那时按钮上写的就是列表里那行字，列表得比按钮宽才放得下。
+	// 图标项一项就一个符号，按 120 开出来的列表比它上面那枚 30 来像素宽的按钮宽出三四倍，
+	// 摆在工具条下面很突兀 —— 收到 48，只比按钮宽一点点，一眼看得出是它弹出来的
+	constexpr float iconListMinW{ 48.f };
 
 	// 命中测试（Node::isPosIn）比的是 Node::x/y，而 ScrollerBox 里的内容只是 visual
 	// 被整体上移了 scrollY —— x/y 仍是没减滚动量的 yoga 坐标。列表一滚，所有项的
@@ -70,9 +77,11 @@ namespace
 	{
 	public:
 		Popup(std::vector<std::wstring> items, int cur, std::function<void(int)> onPick,
-			std::wstring fontFamily, SelectPopup::SamplePainter paintSample)
+			std::wstring fontFamily, SelectPopup::SamplePainter paintSample,
+			std::vector<std::wstring> itemTips)
 			: items{ std::move(items) }, cur{ cur }, onPick{ std::move(onPick) },
-			fontFamily{ std::move(fontFamily) }, paintSample{ std::move(paintSample) }
+			fontFamily{ std::move(fontFamily) }, paintSample{ std::move(paintSample) },
+			tips{ std::move(itemTips) }
 		{
 			// 不激活：弹出列表不该把输入焦点从宿主那儿抢走，否则文本框会丢光标、
 			// 贴图窗口也可能因为失焦把自己收了。TOPMOST 保证它盖在宿主之上
@@ -109,6 +118,11 @@ namespace
 			// 之前把坐标摆正、把"落在滚动条上"的那一下标记出来（见 syncHitCoords）
 			onMouseDown.add([this](POINT pos, bool) { syncHitCoords(pos); });
 			onMouseMove.add([this](POINT pos) { syncHitCoords(pos); });
+			// 每项名称的悬停气泡。只有调用方给了 itemTips 才建 —— 列表项写着名称的那些
+			// （"右上角""一、二、三"）再弹一个同名气泡是多余的，只有"一格一个图标"的
+			// 那几种才需要它把名称补上。Tip 要 hwnd，所以只能在 onCreated 里建。
+			// 气泡是本窗口的子窗口，随本窗口一起销毁（Tip 析构里还会再判一次 IsWindow）
+			if (!tips.empty()) tip = std::make_unique<Tip>(this);
 			body->setBg(0xFFFFFFFF);
 			body->setBorder(1.f, 0x597EF766);
 			list = body->makeChild<Ling::ScrollerBox>();
@@ -139,6 +153,7 @@ namespace
 					if (!fontFamily.empty()) btn->setFontFamily(fontFamily);
 				}
 				btn->onClick.add([this, i](Ling::Button*) { picked(i); });
+				if (tip && i < (int)tips.size() && !tips[i].empty()) tip->bind(btn, tips[i]);
 			}
 			refresh();
 		}
@@ -195,6 +210,11 @@ namespace
 		// 自绘项的那几格画布，与 items 一一对应（不自绘时是空的）
 		std::vector<Ling::Canvas*> samples;
 		SelectPopup::SamplePainter paintSample;
+		// 各项的悬停提示文字，与 items 一一对应。空 vector 表示这一列不弹气泡
+		std::vector<std::wstring> tips;
+		// 那串提示的气泡。只有 tips 非空时才建（见 onCreated）。
+		// 放在成员里而不是文件级的那个单例：气泡是**本窗口**的子窗口，宿主换了列表就得换一个
+		std::unique_ptr<Tip> tip;
 	};
 
 	LRESULT CALLBACK hookProc(int code, WPARAM wp, LPARAM lp)
@@ -212,7 +232,8 @@ namespace
 
 void SelectPopup::show(Ling::WinBase* owner, Ling::Node* anchor,
 	const std::vector<std::wstring>& items, int cur, std::function<void(int)> onPick,
-	const std::wstring& fontFamily, float minW, SamplePainter paintSample)
+	const std::wstring& fontFamily, float minW, SamplePainter paintSample,
+	const std::vector<std::wstring>& itemTips)
 {
 	if (items.empty() || !owner || !anchor) return;
 	// Node 的 x/y 是窗口内坐标，弹层要的是屏幕坐标 —— 宿主的窗口位置得先加上去。
@@ -229,8 +250,12 @@ void SelectPopup::show(Ling::WinBase* owner, Ling::Node* anchor,
 
 	auto dpi = owner->dpi > 0.f ? owner->dpi : 1.f;
 	// 列表宽度跟着按钮走，窄按钮也留个下限，不然"紧凑"两个字就把列表压成一条缝。
-	// minW 是调用方指定的下限（字体名比按钮宽得多）；自绘项走另一条更窄的下限
-	const float baseMinW{ paintSample ? sampleListMinW : listMinW };
+	// minW 是调用方指定的下限（字体名比按钮宽得多）；自绘项与图标项各走一条更窄的下限 ——
+	// 它们的一格要么是一张样例图、要么是一个符号，用不着 120 那么宽。
+	// 图标项认的就是"装了图标字体"这件事（调用方只有那一种会把族名传成 icon），
+	// 不另开一个布尔参数：多一个参数，几处调用就得跟着改，而判据本身只有一个
+	const float baseMinW = paintSample ? sampleListMinW
+		: (fontFamily == L"icon" ? iconListMinW : listMinW);
 	auto listW = std::max(std::max(anchor->w / dpi, baseMinW), minW);
 	auto listH = std::min(listMaxH, itemH * (float)items.size());
 	// 默认往下弹，底下放不下就翻到按钮上方。用按钮所在显示器的工作区判断，
@@ -248,7 +273,8 @@ void SelectPopup::show(Ling::WinBase* owner, Ling::Node* anchor,
 
 	anchorRect = RECT{ (int)(ox + anchor->x), (int)(oy + anchor->y),
 		(int)(ox + anchor->x + anchor->w), (int)(oy + anchor->y + anchor->h) };
-	popup = std::make_unique<Popup>(items, cur, std::move(onPick), fontFamily, std::move(paintSample));
+	popup = std::make_unique<Popup>(items, cur, std::move(onPick), fontFamily, std::move(paintSample),
+		itemTips);
 	// 这里刻意不走 popup->setSize / setPosition / show()：Ling 的 setSize / setPosition
 	// 用的是不带 SWP_NOACTIVATE 的 SetWindowPos，show() 是 ShowWindow(SW_SHOW)，
 	// 两个都会把这个带 WS_EX_NOACTIVATE 的窗口真正激活（连尚未显示、只是摆尺寸时都会），
@@ -260,10 +286,14 @@ void SelectPopup::show(Ling::WinBase* owner, Ling::Node* anchor,
 	// （实测：不带 SWP_NOACTIVATE 的 SetWindowPos 之后前台就是这个弹窗了，
 	//  带上的话新窗口可见、前台仍是宿主、宿主也不收 WM_KILLFOCUS）
 	// x/y/w/h 仍要写回成员：Ling 的命中判定与布局读的是它们
+	// 尺寸取整一律**向上**：SetWindowPos 收的是整数，直接截断会让窗口比算出来的矮半像素。
+	// 列表项高度是按 dpi 放大后给的（3 × 30 逻辑 = 90 → 112.5 物理），少这半像素就被
+	// ScrollerBox 判成"内容溢出"，右侧凭空多一条滚动条 —— 一列只有三个图标的下拉
+	// 本来就不宽，再被它占掉一格就更挤了（2026-10-13 实测，见 RUNBOOK 的截图验收）
 	popup->x = left;
 	popup->y = top;
-	popup->w = listW * dpi;   // 逻辑像素 → 物理像素，与 WinBase::setSize / setPosition 口径一致
-	popup->h = listH * dpi;
+	popup->w = std::ceilf(listW * dpi);   // 逻辑像素 → 物理像素，与 WinBase::setSize 口径一致
+	popup->h = std::ceilf(listH * dpi);
 	SetWindowPos(popup->hwnd, HWND_TOPMOST, left, top, (int)popup->w, (int)popup->h,
 		SWP_NOACTIVATE | SWP_SHOWWINDOW);
 	ownerWin = owner;

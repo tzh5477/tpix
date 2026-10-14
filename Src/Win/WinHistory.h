@@ -15,6 +15,9 @@ public:
 	static void applyTheme();
 private:
 	void onCreated() override;
+	// 窗口是 WS_POPUP 没有标题栏，拖边缩放全靠 hit test 返回 HT_* 交给系统
+	// （同 WinSetting::onHitTest 的做法）。顶栏全是控件，不给 HTCAPTION 拖拽区
+	LRESULT onHitTest(const POINT pos) override;
 	void initTabs(Ling::Node* parent);
 	void fillList();
 	// 两个 tab 的选中态配色。fillList 与 applyTheme 共用这一份 —— 各写一遍迟早对不上

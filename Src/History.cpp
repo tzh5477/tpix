@@ -209,16 +209,21 @@ ShapeBase* History::createShape(const std::wstring& state, const int& x, const i
 		shape = std::make_unique<ShapeText>(canvas);
 	}
 	else if (curId == L"mosaic") {
-		// 涂抹是笔刷路径，另三种（矩形马赛克、矩形马赛克 + 智能擦除）都走矩形几何 ——
-		// 智能擦除强制矩形，圆头的抗锯齿边缘会把底下的文字透出一圈脏边
+		// 涂抹是笔刷路径，另三种（矩形马赛克、智能擦除、智能打码）都走矩形几何 ——
+		// 后两种强制矩形：圆形抗锯齿的边缘会把底下的文字透出一圈脏边，
+		// 而智能打码的框本来就是照识别出来的词框摆的，横平竖直
 		auto mode = canvas->getToolSub()->mosaicMode;
 		if (mode == 1) shape = std::make_unique<ShapeMosaicLine>(canvas);
 		else shape = std::make_unique<ShapeMosaicRect>(canvas);
 	}
 	else if (curId == L"eraser") {
-		// 矩形擦除把整块盖回原样，涂抹擦除是一条笔刷
-		auto isRect = canvas->getToolSub()->isEraserRect;
-		if (isRect) shape = std::make_unique<ShapeEraserRect>(canvas);
+		// 橡皮擦三档：0 矩形擦除把整块盖回原样、1 涂抹擦除是一条笔刷、
+		// 2 智能擦除拿选区周围的背景色整块盖住（这一档原来挂在马赛克那边，
+		// 2026-10-13 按作者要求搬了过来）。它复用马赛克的矩形几何，所以构造时把
+		// "这次是擦除"显式传进去 —— 那个类不再自己去读配置猜
+		auto mode = canvas->getToolSub()->eraserMode;
+		if (mode == 2) shape = std::make_unique<ShapeMosaicRect>(canvas, true);
+		else if (mode == 0) shape = std::make_unique<ShapeEraserRect>(canvas);
 		else shape = std::make_unique<ShapeEraserLine>(canvas);
 	}
 	else if (curId == L"watermark") {

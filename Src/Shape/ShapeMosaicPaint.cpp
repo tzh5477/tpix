@@ -85,8 +85,7 @@ bool ShapeMosaicPaint::sampleBgColor(const D2D1_RECT_F bounds, const int ringPx,
 
 bool ShapeMosaicPaint::renderBackground(const D2D1_RECT_F bounds, const int expand, std::vector<BYTE>& pixels,
 	UINT32& pitch, UINT32& width, UINT32& height, D2D1_POINT_2F& origin)
-{
-	if (win->getWidth() <= 0 || win->getHeight() <= 0) return false;
+{	if (win->getWidth() <= 0 || win->getHeight() <= 0) return false;
 	if (!win->screenImg) return false;
 
 	auto d2d = Ling::D2D::get();
@@ -160,6 +159,100 @@ bool ShapeMosaicPaint::renderBackground(const D2D1_RECT_F bounds, const int expa
 	pitch = mapped.pitch;
 	width = localSize.width;
 	height = localSize.height;
+	return true;
+}
+
+bool ShapeMosaicPaint::readback(const D2D1_RECT_F bounds, std::vector<BYTE>& pixels, UINT32& pitch,
+	UINT32& width, UINT32& height, D2D1_POINT_2F& origin)
+{
+	// expand 传 0：这里要的就是"框住 bounds 的那块"，四周不外扩
+	return renderBackground(bounds, 0, pixels, pitch, width, height, origin);
+}
+
+// 一个像素算不算"墨"：亮度偏离这一段底色超过这么多。
+// 60 是实测挑出来的：正文与底色的差动辄 200 以上，而抗锯齿边、纸张噪点都在 40 以内，
+// 取 60 两者都照顾得到（取 110 那种"绝对暗"判据在深色主题上会让整片底变成墨）
+static constexpr int kInkDelta = 60;
+
+// 与 OcrModel 预处理用的是同一组权重（NTSC 那套），整个工程判亮度只此一处口径
+static int lumOf(const BYTE* px)
+{
+	return (int)(0.114f * px[0] + 0.587f * px[1] + 0.299f * px[2] + 0.5f);
+}
+
+bool ShapeMosaicPaint::inkRunInBand(const std::vector<BYTE>& pixels, const UINT32 pitch,
+	const UINT32 width, const UINT32 height, const D2D1_POINT_2F origin, const int seedX,
+	const int bandTop, const int bandBottom, const int blank, const int maxExtend,
+	int& outLeft, int& outRight)
+{
+	if (pixels.empty() || pitch == 0 || width == 0 || height == 0) return false;
+	if (blank < 1 || maxExtend < 1) return false;
+	const int top = (int)origin.y;
+	// band 与这一份像素完全不相交（字符框跑到选区外面去了）就没法量
+	if (bandBottom <= top || bandTop >= top + (int)height) return false;
+	const int r0 = std::clamp(bandTop - top, 0, (int)height - 1);
+	const int r1 = std::clamp(bandBottom - 1 - top, 0, (int)height - 1);
+	if (r0 > r1) return false;
+	const int minCol = (int)origin.x;
+	const int maxCol = minCol + (int)width - 1;
+
+	// 底色 = band 内亮度的众数。深色主题、浅色主题、灰底都靠它自己定，
+	// 所以下面不用"暗于某个值算墨"那种写死的判据
+	int hist[256]{};
+	for (int y = r0; y <= r1; ++y) {
+		const BYTE* row = pixels.data() + (size_t)y * pitch;
+		for (UINT32 x = 0; x < width; ++x) {
+			const BYTE* px = row + (size_t)x * 4;
+			if (px[3] < 128) continue;	// 全透明处没有颜色可言，别让它当上底色
+			++hist[lumOf(px)];
+		}
+	}
+	int bg{ 0 }, bgCount{ 0 };
+	for (int l = 0; l < 256; ++l) if (hist[l] > bgCount) { bgCount = hist[l]; bg = l; }
+	if (bgCount == 0) return false;	// 这一段一个不透明像素都没有
+
+	// 这一列在 band 里有没有墨。逐列现算 —— band 高几十行、要探的列也就几十列，
+	// 比另开一张列投影表省事，也不用管表的下标和图像坐标怎么对
+	auto inkAt = [&](const int x) {
+		if (x < minCol || x > maxCol) return false;
+		const size_t off = (size_t)(x - minCol) * 4;
+		for (int y = r0; y <= r1; ++y) {
+			const BYTE* px = pixels.data() + (size_t)y * pitch + off;
+			if (px[3] < 128) continue;
+			const int d = lumOf(px) - bg;
+			if (d > kInkDelta || d < -kInkDelta) return true;
+		}
+		return false;
+	};
+
+	// 种子列就是峰值中心。偶尔它落在字缝里（尖峰偏了，或者那一列正好被笔画让开），
+	// 就左右就近找一列有墨的顶上 —— 上限 maxExtend，还找不到就认这一格量不出来
+	int seed{ seedX };
+	if (!inkAt(seed)) {
+		bool found{ false };
+		for (int d = 1; d <= maxExtend && !found; ++d) {
+			if (inkAt(seedX - d)) { seed = seedX - d; found = true; }
+			else if (inkAt(seedX + d)) { seed = seedX + d; found = true; }
+		}
+		if (!found) return false;
+	}
+
+	// 从 seed 往 dir 方向走：连着 blank 个空列就认为这一团墨到头了。
+	// 记的是**最后一个有墨的列**，空列只是用来"看看后面还有没有"，不并进结果
+	const auto walk = [&](const int dir) {
+		int last{ seed }, probe{ seed }, gap{ 0 };
+		for (;;) {
+			const int x = probe + dir;
+			if (x < minCol || x > maxCol) break;
+			if (std::abs(x - seed) > maxExtend) break;
+			if (inkAt(x)) { last = x; gap = 0; }
+			else if (++gap >= blank) break;
+			probe = x;
+		}
+		return last;
+	};
+	outLeft = walk(-1);
+	outRight = walk(1);
 	return true;
 }
 

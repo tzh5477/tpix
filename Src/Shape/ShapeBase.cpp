@@ -68,10 +68,10 @@ D2D1_RECT_F ShapeBase::barRectFor(const D2D1_RECT_F& b, const D2D1_SIZE_U& img,
 		auto lo{ barW / 2.f }, hi{ (float)img.width - barW / 2.f };
 		cx = lo < hi ? std::clamp(cx, lo, hi) : (float)img.width / 2.f;
 	}
-	auto cy{ b.bottom + draggerSize * 2.2f + barH / 2.f };
+	auto cy{ b.bottom + draggerSize * 1.6f + barH / 2.f };
 	if (img.height > 0 && cy + barH / 2.f > (float)img.height) {
 		// 翻到框顶上；顶上也放不下（图很矮）就贴着图内夹住，宁可压在元素上也不能被裁掉
-		cy = b.top - draggerSize * 2.2f - barH / 2.f;
+		cy = b.top - draggerSize * 1.6f - barH / 2.f;
 		auto lo{ barH / 2.f }, hi{ (float)img.height - barH / 2.f };
 		cy = lo < hi ? std::clamp(cy, lo, hi) : (float)img.height / 2.f;
 	}
@@ -248,8 +248,9 @@ void ShapeBase::updateRotateDragger()
 		return;
 	}
 	auto rad{ draggerSize * 0.9f };
-	// 与 actionBtnRect 用同一个 gap（3.0f，见那里的说明）：三个角离框的距离一致，摆在一起才像一排
-	auto gap{ draggerSize * 3.0f };
+	// 离框角的距离（中心算）。原来是 3.0f，选中对象后旋转手柄离图形太远，作者要求缩短：
+	// 压到 2.0f（=12px），留出的内边距仍大于缩放手柄的半边(3px)，不会与角手柄重叠误触
+	auto gap{ draggerSize * 2.0f };
 	auto cx{ b.right + gap }, cy{ b.bottom + gap };
 	// 贴到画布下边缘 / 右边缘就翻到内侧 —— 否则手柄被裁掉，鼠标够不着也就没法转
 	auto img = win->getImgSize();

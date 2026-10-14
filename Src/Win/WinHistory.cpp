@@ -69,6 +69,8 @@ WinHistory::WinHistory() : Ling::WinBase()
 	});
 	setTitle(Lang::get(L"history.title"));
 	setSize(900.f, 620.f);
+	// 窗口可拖边缩放（onHitTest），但再小也至少要容得下两列卡片 + 顶栏
+	setMinSize(520.f, 430.f);
 	setCenter();
 	createNativeWindow();
 }
@@ -91,6 +93,15 @@ void WinHistory::dispose()
 	winHistory.reset();
 }
 
+LRESULT WinHistory::onHitTest(const POINT pos)
+{
+	// onHitTest 收到的是屏幕坐标，先换客户区再交给通用的八向边框判定；
+	// 命中边框后由系统接管缩放，窗口自身的鼠标事件不会被打扰
+	POINT pt = pos;
+	ScreenToClient(hwnd, &pt);
+	return borderHitTest(pt);
+}
+
 void WinHistory::onCreated()
 {
 	enableShadow();
@@ -111,6 +122,10 @@ void WinHistory::onCreated()
 	scroller->setWidthPercent(100.f);
 	scroller->content->setFlexDirection(Ling::FlexDirection::Row);
 	scroller->content->setFlexWrap(Ling::Wrap::Wrap);
+	// 每行放不满整数张卡片时，剩余宽度均匀摊进行首、卡片间、行尾 —— 不再全堆在
+	// 最右侧。yoga 对 wrap 是逐行应用 justify 的（含最后一行），单卡行的空档也对称。
+	// 卡片四边的 margin 保留，作为"行刚好塞满时"卡片之间的最小间距
+	scroller->content->setJustifyContent(Ling::Justify::SpaceEvenly);
 	scroller->content->setPadding(8.f, 8.f, 8.f, 8.f);
 	fillList();
 	// Esc 关窗，与其它弹出窗口一致（顶栏那个叉是鼠标路径，这是键盘路径）
@@ -228,20 +243,31 @@ Ling::Node* WinHistory::makeCard(Ling::Node* parent, const ShotHistory::Item& it
 	preview->setHeight(previewH);
 	preview->setWidthPercent(100.f);
 	preview->setAlignItems(Ling::Align::Center);
-	preview->setJustifyContent(Ling::Justify::Center);
+	// 文本条目是多行预览、顶端起排（长了往下溢出），图片条目铺满整块 —— 两种都不要垂直居中
+	preview->setJustifyContent(Ling::Justify::Start);
 	// 灰底只剩"图没加载出来"时的兜底：正常情况整块被 cover 的缩略图盖满
 	preview->setBg(0xF7F7F7FF);
+	// 溢出预览区的内容（折行文本的超高部分）从这里裁掉；圆角给 2 是为了换取 clipGeo
+	// 的创建，视觉上基本看不出来
+	preview->setBorderRadius(2.f);
 
 	Ling::Button* clickable{ nullptr };
 	if (item.isText) {
-		clickable = preview->makeChild<Ling::Button>();
-		// 只显示头一行，超出的用省略号收掉
+		// 多行预览：按预览区宽度折行铺开，超过预览区高度的行被裁掉。
+		// 只截 100 字封顶 —— 内层 Text 的 surface 高度跟随行数走，不设上限的
+		// 长文本会把 surface 撑到几千像素高
 		auto txt = item.text;
-		auto nl = txt.find_first_of(L"\r\n");
-		auto head = nl == std::wstring::npos ? txt : txt.substr(0, nl);
-		if (head.size() > 22) head = head.substr(0, 22) + L"...";
-		clickable->setText(head);
-		clickable->setFontSize(12.f);
+		if (txt.size() > 100) txt = txt.substr(0, 100) + L"...";
+		auto label = preview->makeChild<Ling::Label>();
+		label->setText(txt);
+		label->setFontSize(12.f);
+		// 不折行的话整行宽度会顺着 flex 传上去，把卡片横向撑爆 —— 旧版"截 22 字 +
+		// 按钮里一行居中"溢出卡片边界的根因就在这
+		label->setWrap(true);
+		// Label 的尺寸由内层 Text 量出来，折行宽度靠这个上限收进预览区
+		label->setMaxWidthPercent(100.f);
+		label->setMargin(8.f, 8.f, 8.f, 0.f);
+		clickable = preview->makeChild<Ling::Button>();
 	}
 	else {
 		auto thumb = ShotHistory::get()->thumbPath(item);
@@ -254,14 +280,12 @@ Ling::Node* WinHistory::makeCard(Ling::Node* parent, const ShotHistory::Item& it
 		}
 		// 按钮建在图之后，才压在图上接得到点击（Ling 没有 bringToFront）
 		clickable = preview->makeChild<Ling::Button>();
-		// 必须脱离 flex 流。preview 是"居中"的容器，两个各占 100% 高的兄弟会被拼成
-		// 204 逻辑高再整体居中 —— 图被顶到框上方 51 处（上半截被 Scroller 裁掉）、
-		// 按钮被推到框下方 51 处，框里下半截只剩预览区的灰底。作者报的"图片预览没有
-		// 占满预留的矩形框"正是这么来的：图只占满了框的上 88/127
-		clickable->setPositionType(Ling::Position::Absolute);
-		clickable->setPosition(Ling::Edge::Left, 0.f);
-		clickable->setPosition(Ling::Edge::Top, 0.f);
 	}
+	// 必须脱离 flex 流。preview 不再垂直居中了，但 clickable 要盖住整块预览区接点击，
+	// 在流内占 100% 高仍会把兄弟节点挤下去
+	clickable->setPositionType(Ling::Position::Absolute);
+	clickable->setPosition(Ling::Edge::Left, 0.f);
+	clickable->setPosition(Ling::Edge::Top, 0.f);
 	clickable->setSizePercent(100.f, 100.f);
 	clickable->setBg(0);
 	clickable->setHoverBg(0);

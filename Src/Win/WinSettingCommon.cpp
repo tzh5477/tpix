@@ -1,5 +1,7 @@
 ﻿#include "pch.h"
 #include <shobjidl.h>
+#include <shlobj.h>
+#include <filesystem>
 #include <algorithm>
 #include "../Lang.h"
 #include "../App.h"
@@ -22,8 +24,23 @@ namespace {
     // applyTheme 三处共用 —— 强调色改成跟主题色走之后，各写一份必然漏掉一处
     unsigned int kSwitchOnColor() { return (Setting::getThemeColor() << 8) | 0xFF; }
 
-    // 选目录对话框。返回 false 表示用户取消或调用失败，out 不动
-    bool pickFolder(HWND hwnd, std::wstring& out)
+    // 换数据目录时把旧目录整棵树复制过去。**只在目标是空目录时做** —— 非空说明用户
+    // 已经在那儿放了东西（或者搬过一次），硬塞会混。返回是否真的复制了
+    bool copyDataTree(const std::wstring& from, const std::wstring& to)
+    {
+        std::error_code ec;
+        if (!std::filesystem::is_empty(to, ec)) return false;
+        std::filesystem::create_directories(to, ec);
+        if (ec) return false;
+        std::filesystem::copy(from, to, std::filesystem::copy_options::recursive, ec);
+        return !ec;
+    }
+
+    // 选目录对话框。initial 是打开时应该停在那儿的目录，传空 = 不指定。
+    // **必须指定**：不指定的话系统按对话框类型记"最近访问过哪儿"，于是停在用户
+    // 上次碰过的另一个目录选择上（数据目录点开停在录制临时目录那儿就是这么来的）。
+    // 目录不存在时 SHCreateItemFromParsingName 会失败，静默不设、回落系统行为
+    bool pickFolder(HWND hwnd, std::wstring& out, const std::wstring& initial = L"")
     {
         Microsoft::WRL::ComPtr<IFileDialog> dialog;
         auto hr = CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER,
@@ -32,6 +49,13 @@ namespace {
         DWORD flags{ 0 };
         dialog->GetOptions(&flags);
         dialog->SetOptions(flags | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM);
+        if (!initial.empty()) {
+            Microsoft::WRL::ComPtr<IShellItem> item;
+            if (SUCCEEDED(SHCreateItemFromParsingName(initial.c_str(), nullptr,
+                    IID_PPV_ARGS(item.GetAddressOf())))) {
+                dialog->SetFolder(item.Get());
+            }
+        }
         if (FAILED(dialog->Show(hwnd))) return false;
         Microsoft::WRL::ComPtr<IShellItem> item;
         if (FAILED(dialog->GetResult(item.GetAddressOf()))) return false;
@@ -42,8 +66,9 @@ namespace {
         return true;
     }
     // 存 / 取一个配置文件的对话框。类型只给 json：配置就是这一份，选别的格式没有意义。
-    // 返回 false 表示用户取消或调用失败，out 不动
-    bool pickJsonFile(HWND hwnd, std::wstring& out, const bool save)
+    // initial 同 pickFolder：导出 / 导入都默认停在数据目录（config.json 的住处）
+    bool pickJsonFile(HWND hwnd, std::wstring& out, const bool save,
+        const std::wstring& initial = L"")
     {
         Microsoft::WRL::ComPtr<IFileDialog> dialog;
         auto hr = CoCreateInstance(save ? CLSID_FileSaveDialog : CLSID_FileOpenDialog, nullptr,
@@ -53,6 +78,13 @@ namespace {
         dialog->SetFileTypes(1, filter);
         dialog->SetDefaultExtension(L"json");
         if (save) dialog->SetFileName(L"tpix-config.json");
+        if (!initial.empty()) {
+            Microsoft::WRL::ComPtr<IShellItem> item;
+            if (SUCCEEDED(SHCreateItemFromParsingName(initial.c_str(), nullptr,
+                    IID_PPV_ARGS(item.GetAddressOf())))) {
+                dialog->SetFolder(item.Get());
+            }
+        }
         if (FAILED(dialog->Show(hwnd))) return false;
         Microsoft::WRL::ComPtr<IShellItem> item;
         if (FAILED(dialog->GetResult(item.GetAddressOf()))) return false;
@@ -81,7 +113,6 @@ WinSettingCommon::WinSettingCommon(Ling::WinBase* parent):Ling::Node(parent)
     initSaveCtrls();
     initHistoryCtrls();
     initPinCtrls();
-    initOcrCtrls();
     initConfigCtrls();
     // 窗口关掉时把还开着的列表一起收掉。列表是独立窗口，不会跟着本节点走
     win->onDestroy.add([]() {
@@ -459,7 +490,10 @@ void WinSettingCommon::initVideoCtrls()
     applyTempDir(dirBtn);
     dirBtn->onClick.add([this, applyTempDir](Ling::Button* btn) {
         std::wstring dir;
-        if (!pickFolder(win->hwnd, dir)) return;
+        auto cur = Setting::get()->getVideoTempDir();
+        // 空 = 没配过，实际落到数据目录（getRecordTempDir 的回落分支），对话框也停那儿
+        if (!pickFolder(win->hwnd, dir,
+                cur.empty() ? Setting::get()->getDataPath().wstring() : cur)) return;
         Setting::get()->setVideoTempDir(dir);
         applyTempDir(btn);
     });
@@ -496,9 +530,74 @@ void WinSettingCommon::initSaveCtrls()
     applyDir(dirBtn);
     dirBtn->onClick.add([this, applyDir](Ling::Button* btn) {
         std::wstring dir;
-        if (!pickFolder(win->hwnd, dir)) return;
+        auto cur = Setting::get()->getSaveDir();
+        // 空 = 没配过，Util::autoSavePath 会落到数据目录下的 screenshot，对话框也停那儿
+        auto init = cur.empty()
+            ? (Setting::get()->getDataPath() / L"screenshot").wstring()
+            : cur;
+        if (!pickFolder(win->hwnd, dir, init)) return;
         Setting::get()->setSaveDir(dir);
         applyDir(btn);
+    });
+
+    // 数据目录：配置 / 历史 / 模型（ocr\）都在它下面，默认 %appdata%\tpix（在 C 盘）。
+    // 与保存目录完全同款：一个按钮把当前值当文本显示，点开选目录。换它要写 exe 同目录的
+    // data.json 且重启才生效，所以换完弹一次提示
+    auto dataRow = makeRow(L"setting.dataDir");
+    auto dataBtn = dataRow->makeChild<Ling::Button>();
+    dataBtn->setHeight(28.f);
+    dataBtn->setWidth(240.f);
+    dataBtn->setBorder(1.f, 0xE0E0E0FF);
+    dataBtn->setHoverBg(0xFFFFFFFF);
+    auto applyDataDirText = [](Ling::Button* btn) {
+        // 显示"当前配置值"（data.json 里那个），不是 getDataPath()：后者是构造期定死的
+        // const 成员，改完 data.json 后要重启才变。用它回显的话，用户刚选完新目录、
+        // 甚至只是重开一次设置页，界面都跳回老目录 —— 看着就是"没改成功"
+        btn->setText(shortenPath(Setting::get()->pendingDataPath()));
+    };
+    applyDataDirText(dataBtn);
+    // 换目录的统一收尾：写盘 + 弹提示 + **立刻回显新目录**。复制旧数据只在目标是空
+    // 目录时做 —— 不复制的话重启后配置 / 历史 / 模型全变默认，那是"设置莫名其妙没了"
+    // 最常踩的坑；目标非空就不动，让用户自己决定怎么合
+    auto applyDataDir = [this, dataBtn](const std::wstring& dir) {
+        const auto oldDir = Setting::get()->getDataPath().wstring();
+        const bool moved = copyDataTree(oldDir, dir);
+        if (!Setting::get()->setDataPath(dir)) {
+            // 写盘失败（exe 装在只读位置）：data.json 没落成，重启也不会变。这时画上
+            // 新目录就是骗人，明确告知失败、保持原样
+            std::wstring warn{ L"Could not write data.json next to tpix.exe.\n\nThe data folder was NOT changed.\n\n" + dir };
+            MessageBox(win->hwnd, warn.c_str(), L"tpix", MB_OK | MB_ICONWARNING);
+            return;
+        }
+        std::wstring msg{ L"Data folder changed to:\n" + dir + L"\n\nRestart tpix for it to take effect.\n\n" };
+        msg += moved ? L"Existing data has been copied to the new folder."
+            : L"The target folder was not empty, so existing data was NOT copied.";
+        MessageBox(win->hwnd, msg.c_str(), L"tpix", MB_OK | MB_ICONINFORMATION);
+        // 成员 dataPath 要重启才变，所以直接把目标路径画上去，不等 applyDataDirText
+        dataBtn->setText(shortenPath(dir));
+    };
+    dataBtn->onClick.add([this, applyDataDir](Ling::Button* btn) {
+        std::wstring dir;
+        // 回显当前配置的数据目录（截图里那次停在录制临时目录，就是缺这个指定）
+        if (!pickFolder(win->hwnd, dir, Setting::get()->pendingDataPath())) return;
+        if (std::filesystem::path{ dir } == Setting::get()->getDataPath()) return;
+        applyDataDir(dir);
+    });
+    // 恢复默认摆在文本框后面。本来想"只在自定义目录时才摆"，但那样默认状态下这一行
+    // 只剩一个文本框、看不出还能恢复默认；常驻 + 已是默认时给个反馈更直白
+    auto resetDataBtn = dataRow->makeChild<Ling::Button>();
+    resetDataBtn->setHeight(28.f);
+    resetDataBtn->setWidth(88.f);
+    resetDataBtn->setMarginLeft(8.f);
+    resetDataBtn->setBorder(1.f, 0xE0E0E0FF);
+    resetDataBtn->setHoverBg(0xFFFFFFFF);
+    resetDataBtn->setText(Lang::get(L"setting.dataDirReset"));
+    resetDataBtn->onClick.add([this, applyDataDir](Ling::Button*) {
+        if (!Setting::get()->isCustomDataPath()) {
+            MessageBox(win->hwnd, L"Already using the default data folder.", L"tpix", MB_OK | MB_ICONINFORMATION);
+            return;
+        }
+        applyDataDir(Setting::defaultDataPath());
     });
 
     auto tplRow = makeRow(L"setting.saveNameTpl");
@@ -567,7 +666,7 @@ void WinSettingCommon::initConfigCtrls()
     exportBtn->setHoverBg(0xFFFFFFFF);
     exportBtn->onClick.add([this](Ling::Button*) {
         std::wstring path;
-        if (!pickJsonFile(win->hwnd, path, true)) return;
+        if (!pickJsonFile(win->hwnd, path, true, Setting::get()->getDataPath().wstring())) return;
         if (Setting::get()->exportConfig(path)) return;
         showConfigTip(L"setting.configExportFail");
     });
@@ -581,7 +680,7 @@ void WinSettingCommon::initConfigCtrls()
     importBtn->setHoverBg(0xFFFFFFFF);
     importBtn->onClick.add([this](Ling::Button*) {
         std::wstring path;
-        if (!pickJsonFile(win->hwnd, path, false)) return;
+        if (!pickJsonFile(win->hwnd, path, false, Setting::get()->getDataPath().wstring())) return;
         if (Setting::get()->importConfig(path)) {
             // 整页都是按旧配置显示出来的，就地改每一行的值不如重建一遍省事
             win->close();
@@ -596,45 +695,6 @@ void WinSettingCommon::showConfigTip(const std::wstring& key)
 {
     MessageBox(win->hwnd, Lang::get(key).data(),
         Lang::get(L"about.sysTip").data(), MB_OK | MB_ICONWARNING);
-}
-
-void WinSettingCommon::initOcrCtrls()
-{
-    // 识别模型。ocr\<名字>\ 下每有一对 det / rec 的 onnx 就多一项 ——
-    // 出了 PP-OCRv7 只要把两个文件丢进新目录，这里就能选，不用改代码
-    auto models = Ocr::models();
-    if (!models.empty()) {
-        auto cur = Ocr::curModel();
-        int idx{ 0 };
-        for (int i = 0; i < (int)models.size(); ++i) if (models[i] == cur) { idx = i; break; }
-        auto modelRow = makeRow(L"setting.ocrModel");
-        makeSelectBtn(modelRow, 160.f, models, idx, [models](int i) { Ocr::setModel(models[i]); });
-    }
-    // 语言包只对系统 OCR 有意义：内置模型是多语种的，选语言不起作用 ——
-    // 回了落到系统 OCR 才把这一行显示出来
-    if (Ocr::engine() != OcrEngine::System) return;
-    auto langs = Ocr::languages();
-    auto row = makeRow(L"setting.ocrLang");
-    if (langs.empty()) {
-        // 一个识别语言包都没装：这行只能当提示用，点开了也没得选
-        auto btn = row->makeChild<Ling::Button>();
-        btn->setHeight(28.f);
-        btn->setWidth(140.f);
-        btn->setBorder(1.f, 0xE0E0E0FF);
-        btn->setText(Lang::get(L"ocr.notInstalled"));
-        return;
-    }
-    // 空标签（跟随系统）是第 0 项，之后依次是每个已装的语言包
-    std::vector<std::wstring> items{ Lang::get(L"ocr.langAuto") };
-    for (auto const& lang : langs) items.push_back(lang.name);
-    auto tag = Setting::get()->getToolStr(L"ocr", L"lang", L"");
-    int idx{ 0 };
-    for (int i = 0; i < (int)langs.size(); ++i) {
-        if (langs[i].tag == tag) { idx = i + 1; break; }
-    }
-    makeSelectBtn(row, 140.f, items, idx, [langs](int i) {
-        Setting::get()->setToolStr(L"ocr", L"lang", i == 0 ? L"" : langs[i - 1].tag);
-    });
 }
 
 void WinSettingCommon::setAutoStartBtn(Ling::Button* btn)

@@ -10,6 +10,7 @@
 #include "WinSettingBall.h"
 #include "WinSettingAbout.h"
 #include "WinSettingAi.h"
+#include "WinSettingTextRec.h"
 
 std::unique_ptr<WinSetting> winSetting;
 
@@ -157,7 +158,12 @@ void WinSetting::makeContent(int index)
 		page->buildTrans();
 		content = page;
 	}
+	else if (index == 5) {
+		// 第 5 项：文本识别（识别模型 / 识别语言 / 模型目录 / 用大模型）
+		content = scroller->makeChild<WinSettingTextRec>();
+	}
 	else {
+		// 第 6 项：关于。放在最后一格 —— 与 initMenuItems 的顺序保持一致
 		content = scroller->makeChild<WinSettingAbout>();
 	}
 	// 顶部留白由上面那条头带负责，这里不再重复留一份（原先的 40 就是为了躲开关闭按钮）
@@ -195,6 +201,11 @@ void WinSetting::onCreated()
 	contentCol = body->makeChild<Ling::Node>();
 	contentCol->setFlexGrow(1.f);
 	contentCol->setHeightPercent(100.f);
+	// ⚠️ 必须允许收缩：Yoga 的 flexShrink 默认是 0（不是 CSS 的 1），不加这一句，
+	// 内容里只要有一样东西（关于页那行不换行的项目简介）的 intrinsic 宽度超过可用宽度，
+	// 整列就会被撑到那个宽度而溢出窗口。加了之后列被压回 520，配合 Label 的 setWrap
+	// 描述文字才会真正换行而不是撑破右边
+	contentCol->setFlexShrink(1.f);
 	contentCol->setFlexDirection(Ling::FlexDirection::Column);
 	auto header = contentCol->makeChild<Ling::Node>();
 	header->setWidthPercent(100.f);
@@ -225,7 +236,7 @@ void WinSetting::onCreated()
 }
 void WinSetting::initMenuItems(Ling::Node* menuBox)
 {
-	for (size_t i = 0; i < 6; i++)
+	for (size_t i = 0; i < 7; i++)
 	{
 		auto menuItem = menuBox->makeChild<Ling::Button>();
 		menuItem->setFontSize(14.f);
@@ -243,6 +254,10 @@ void WinSetting::initMenuItems(Ling::Node* menuBox)
 			menuItem->setText(Lang::get(L"setting.translation"));
 		}
 		else if (i == 5) {
+			menuItem->setText(Lang::get(L"setting.textrecognition"));
+		}
+		else if (i == 6) {
+			// 「关于」固定在最后一格（与 makeContent 的分支编号一一对应）
 			menuItem->setText(Lang::get(L"setting.about"));
 		}
 		else {
@@ -281,8 +296,8 @@ LRESULT WinSetting::onHitTest(const POINT pos)
 		return HTCAPTION;
 	}
 	// 菜单区：从顶部标题栏下沿（40）起，每项 40 高。这里也当拖拽区用。
-	// 菜单加到 6 项之后这个上界要跟着走，不然最后一项会被当成标题栏
-	if (pt.x > 0 && pt.y > 40*7*dpi && pt.x < 120 * dpi && pt.y < h) {
+	// 菜单加到 7 项之后这个上界要跟着走（40*8 = 第 7 项底沿），不然最后一项会被当成标题栏
+	if (pt.x > 0 && pt.y > 40*8*dpi && pt.x < 120 * dpi && pt.y < h) {
 		return HTCAPTION;
 	}
 	return HTCLIENT;

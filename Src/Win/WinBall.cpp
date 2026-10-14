@@ -37,6 +37,10 @@ namespace {
 	// 延时收起的定时器 id。要避开宿主窗口里其他人在用的（Tip 用 0x5100，
 	// ToolVideo 用 100，Ling 的 TextBox 从 0x4200 起）
 	constexpr UINT menuTimerId{ 0x5200 };
+	// 鼠标移开后展开条的滞留时间（ms）。球贴在屏幕边，光标从球上挪开时常要"借道"
+	// 它旁边过去（去点紧挨着的别的按钮 / 拖滚动条），一离开就收会让图标闪一下就没了；
+	// 给 1s 宽限，期间光标扫回来就当没离开（onTimer 里判 isMouseIn）
+	constexpr UINT leaveDelayMs{ 1000 };
 
 	LRESULT CALLBACK ballProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 	{
@@ -379,6 +383,9 @@ void WinBall::expand()
 
 void WinBall::collapse()
 {
+	// 不管是谁收的，挂在头上的收起定时器都没有存在意义了（点图标 / 换边 / 改配置
+	// 都会走到这儿）。定时器回调里也会先 kill 一次，重复杀是空操作
+	killTimer(menuTimerId);
 	if (!expanded) return;
 	expanded = false;
 	if (itemBox) itemBox->hide();
@@ -390,14 +397,11 @@ void WinBall::onMove(POINT pos)
 	// Ling 在鼠标离开窗口时发一个 (INT_MAX, INT_MAX)，正好当"移出去了"用
 	if (pos.x == INT_MAX) {
 		if (isMouseDown) return;
-		// 弹层（右键图标弹出的方向 / 秒数列表）还开着就先不收：收起会挪动本窗口，
-		// 而弹层订阅了宿主的移动事件、一挪就自己关了 —— 用户刚点开的列表会凭空消失。
-		// 等它关掉再由定时器收，中间最多差 200ms
-		if (SelectPopup::isOpen()) {
-			setTimer(200, menuTimerId);
-			return;
-		}
-		collapse();
+		// 不立刻收，挂个定时器等 leaveDelayMs 再收（见常量注释）。弹层（右键图标弹出的
+		// 方向 / 秒数列表）还开着时只等 200ms —— 那时鼠标在弹层上，没有"扫回来"
+		// 这回事；且收起会挪动本窗口，而弹层订阅了宿主的移动事件、一挪就自己关了，
+		// 用户刚点开的列表会凭空消失，所以必须等它先关
+		setTimer(SelectPopup::isOpen() ? 200 : leaveDelayMs, menuTimerId);
 		return;
 	}
 	if (isMouseDown) {
@@ -419,6 +423,10 @@ void WinBall::onMove(POINT pos)
 		}
 		return;
 	}
+	// 光标回来了：撤掉离开时挂的那个收起定时器。不撤的话 1s 后它会把刚重新展开的
+	// 图标条收掉（onTimer 里虽然也判 isMouseIn，但那是 Ling 维护的标志位，
+	// 不如在这儿当源消掉来得稳）
+	killTimer(menuTimerId);
 	if (!expanded) expand();
 }
 

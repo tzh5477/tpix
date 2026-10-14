@@ -241,7 +241,10 @@ void ShapeRectBase::makeRotateHint()
 		return;
 	}
 	auto rad{ draggerSize * 0.9f };
-	auto gap{ draggerSize * 3.f };
+	// 离框角的距离（中心算）。原来是 3.0f，选中对象后旋转图标离图形太远，作者要求缩短：
+	// 压到 2.0f（=12px），与 ShapeText 走的 ShapeBase::updateRotateDragger 同一个值，
+	// 内边距仍大于缩放手柄的半边(3px)，不会与角手柄重叠误触
+	auto gap{ draggerSize * 2.0f };
 	auto cx{ b.right + gap }, cy{ b.bottom + gap };
 	auto img = win->getImgSize();
 	if (img.width > 0 && cx + rad > (float)img.width) cx = b.right - gap;

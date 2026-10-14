@@ -7,6 +7,7 @@
 #include <onnxruntime_cxx_api.h>
 #include <winrt/Windows.Storage.Streams.h>
 #include <winrt/Windows.Web.Http.h>
+#include <winrt/Windows.Web.Http.Headers.h>
 #include "OcrModel.h"
 
 namespace {
@@ -14,6 +15,7 @@ namespace {
 	using namespace winrt::Windows::Foundation;	// Uri 在这个命名空间里
 	using namespace winrt::Windows::Storage::Streams;
 	using namespace winrt::Windows::Web::Http;
+	using namespace winrt::Windows::Web::Http::Headers;	// HttpProductInfoHeaderValue
 
 	// ---- 内置模型清单 ----
 	//
@@ -23,18 +25,26 @@ namespace {
 	// 不必改代码 —— 清单只负责"目录是空的时去哪儿下"
 	struct ModelDef
 	{
-		const wchar_t* name;
+		const wchar_t* name;	// 目录名 = config 存盘值 = 内部标识（与 label 一致：PP-OCRv6-small）
+		const wchar_t* label;	// 显示名：下拉 / 结果弹窗用。与 name 相同，便于运维与问题排查
 		const wchar_t* det;
 		const wchar_t* rec;
 	};
 
 	constexpr ModelDef kModelDefs[]{
-		{ L"PP-OCRv6",
+		{ L"PP-OCRv6-small", L"PP-OCRv6-small",
 		  L"https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/master/onnx/PP-OCRv6/det/PP-OCRv6_det_small.onnx",
 		  L"https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/master/onnx/PP-OCRv6/rec/PP-OCRv6_rec_small.onnx" },
+		// tiny 档：1.5M 参数，比 small 快一截、精度低一截，给"small 嫌慢"的用户一个选项。
+		// 目录名与 small 各是各的一对 onnx，互不干扰（small=PP-OCRv6-small、tiny=PP-OCRv6-tiny）。
+		// 字典不用额外给：tiny 的 rec 自带 6904 字的 character 元数据（small 是 18708），
+		// loadDict 从模型里读，跟着模型走
+		{ L"PP-OCRv6-tiny", L"PP-OCRv6-tiny",
+		  L"https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/master/onnx/PP-OCRv6/det/PP-OCRv6_det_tiny.onnx",
+		  L"https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/master/onnx/PP-OCRv6/rec/PP-OCRv6_rec_tiny.onnx" },
 	};
-	// 认不出目录名时按它下载。与 kModelDefs[0] 保持一致
-	constexpr std::wstring_view kDefModel{ L"PP-OCRv6" };
+	// 认不出目录名时按它下载。与 kModelDefs[0] 保持一致（真实模型名）
+	constexpr std::wstring_view kDefModel{ L"PP-OCRv6-small" };
 	constexpr size_t kMinModelBytes{ 1024 * 1024 };	// 比这小基本是下回来一个错误页
 
 	// ---- 两条路线的分界（2026-10-11 实测，56 张紧裁单行样本）----
@@ -202,6 +212,7 @@ namespace {
 			const auto bottom = top + b.h;
 			b.x = std::clamp(left, 0.f, (float)w - 1.f);
 			b.y = std::clamp(top, 0.f, (float)h - 1.f);
+			b.cx = std::clamp(b.cx - (float)padX, 0.f, (float)w - 1.f);
 			b.w = std::max(std::clamp(right, 0.f, (float)w) - b.x, 1.f);
 			b.h = std::max(std::clamp(bottom, 0.f, (float)h) - b.y, 1.f);
 		}
@@ -245,6 +256,12 @@ namespace {
 	{
 		try {
 			HttpClient client;
+			// ⚠️ WinRT 的 HttpClient 默认**不带** User-Agent 头，而 modelscope 的 LFS CDN
+			// 对空 UA 一律回 403：GetBufferAsync 抛 HTTP_E_STATUS_FORBIDDEN(0x80190193)，
+			// 外面只看到"下载失败"。curl 自带 UA 所以复现不了（2026-10-12 实测：
+			// 空 UA 403、带任意 UA 200）。补一个就行，别的一切照旧
+			client.DefaultRequestHeaders().UserAgent().Append(
+				HttpProductInfoHeaderValue{ L"tpix" });
 			auto buffer = client.GetBufferAsync(Uri{ url }).get();
 			std::vector<BYTE> bytes(buffer.Length());
 			DataReader::FromBuffer(buffer).ReadBytes(bytes);
@@ -880,8 +897,12 @@ namespace {
 	// 断词只认空格（字典末位那个字符）。也试过"空隙偏大就切一刀"，但尖峰之间的
 	// 空档本来就有一两帧，阈值怎么调都会在中文里乱切，得不偿失 —— 认不出空格时
 	// 就整行当一个词，中文本来也该是这样
+	//
+	// ⚠️ 代价（给字符级框的调用方）：格是**均分**的，宽窄差得多的两个字挨在一起时，
+	// 格边界会切到宽字身上 —— "A1234567" 里 1 的格左边界落在 A 的右腿上（实测 19px）。
+	// 所以字符级框另外带一个 `cx`（这个字真正的峰值中心），要落到笔画上就靠它当种子
 	void splitWords(const RecOut& rec, const Quad& q, const int line,
-		std::vector<OcrModelBox>& out)
+		std::vector<OcrModelBox>& out, std::vector<OcrModelBox>* chars = nullptr)
 	{
 		const int n = (int)rec.text.size();
 		if (n == 0) return;
@@ -906,6 +927,8 @@ namespace {
 			box.w = std::max((b - a) * std::sqrt(ux * ux + uy * uy), 1.f);
 			box.h = std::sqrt(vx * vx + vy * vy);
 			box.line = line;
+			// 峰值中心默认取这一段的中点；字符级框会把它改写成那个字真正的峰值中心（见下）
+			box.cx = q.x[0] + ((a + b) / 2.f) * ux;
 			return box;
 		};
 		int start{ 0 };
@@ -916,6 +939,16 @@ namespace {
 			out.push_back(std::move(box));
 		};
 		for (int i = 0; i < n; ++i) {
+			// 字符级框：空格不占可见位置，不给它框。
+			// 用同一套 left/right —— 相邻两字的区间正好接在一起，拼在同一行上一个字也不缺
+			if (chars && rec.text[i] != L' ') {
+				auto cb = boxAt(left(i), right(i));
+				cb.text = rec.text.substr(i, 1);
+				// 格是"按相邻峰值中点均分"出来的、峰值中心不是：笔画精修要的是后者。
+				// c[i] 就是这一帧段的中点（0~1 的横向比例），换回原图像素即得
+				cb.cx = q.x[0] + c[i] * ux;
+				chars->push_back(std::move(cb));
+			}
 			if (rec.text[i] != L' ') continue;
 			flush(i);
 			start = i + 1;
@@ -1030,6 +1063,14 @@ std::vector<std::wstring> OcrModel::listModels(const std::wstring& root)
 	return names;
 }
 
+// 内部名（目录名 / config 存盘值，如 PP-OCRv6）↔ 显示名（如下拉里看到的 PP-OCRv6-small）。
+// 用户自建目录不在清单里，没有预置 label，直接用目录名本身
+std::wstring OcrModel::modelLabel(const std::wstring& name)
+{
+	for (auto& d : kModelDefs) if (name == d.name) return d.label;
+	return name;
+}
+
 std::wstring OcrModel::defaultModel()
 {
 	return std::wstring{ kDefModel };
@@ -1041,17 +1082,48 @@ OcrModel::Err OcrModel::ensure(const std::wstring& root, const std::wstring& nam
 	return ensureLocked(root, name);
 }
 
+bool OcrModel::hasFiles(const std::wstring& root, const std::wstring& name)
+{
+	std::error_code ec;
+	const std::filesystem::path dir = std::filesystem::path{ root } / name;
+	if (!std::filesystem::is_directory(dir, ec)) return false;
+	std::filesystem::path detPath, recPath;
+	return findOnnx(dir, L"det", detPath) && findOnnx(dir, L"rec", recPath);
+}
+
+OcrModel::Err OcrModel::fetch(const std::wstring& root, const std::wstring& name)
+{
+	std::lock_guard lock{ mtx };
+	const std::filesystem::path dir = std::filesystem::path{ root } / name;
+	std::filesystem::path detPath, recPath;
+	const bool hasDet = findOnnx(dir, L"det", detPath);
+	const bool hasRec = findOnnx(dir, L"rec", recPath);
+	// 文件本来就在（用户自己放的 / 上一轮下过）：秒返，不碰网络
+	if (hasDet && hasRec) return Err::ok;
+	const auto def = findDef(name);
+	// 缺文件又不在内置清单里（用户自己起的目录名）：没得下
+	if (!def) return Err::noModel;
+	if (!hasDet && !download(def->det, dir / std::filesystem::path{ def->det }.filename()))
+		return Err::download;
+	if (!hasRec && !download(def->rec, dir / std::filesystem::path{ def->rec }.filename()))
+		return Err::download;
+	return Err::ok;
+}
+
 OcrModel::Err OcrModel::recognize(const std::wstring& root, const std::wstring& name,
-	const int w, const int h, BYTE* data, std::vector<OcrModelBox>& out)
+	const int w, const int h, BYTE* data, std::vector<OcrModelBox>& out,
+	std::vector<OcrModelBox>* chars)
 {
 	if (w <= 0 || h <= 0 || !data) return Err::runtime;
 	std::lock_guard lock{ mtx };
 	const auto err = ensureLocked(root, name);
 	if (err != Err::ok) return err;
 	try {
-			auto runPass = [&](const int pw, const int ph, BYTE* pdata, std::vector<OcrModelBox>& boxes) {
+			auto runPass = [&](const int pw, const int ph, BYTE* pdata, std::vector<OcrModelBox>& boxes,
+				std::vector<OcrModelBox>* chars) {
 				PassStats stats;
 				boxes.clear();
+				if (chars) chars->clear();
 				// 图里有几行字？矮的也得数 —— 小字号的两行（h 不到 48）同样是多行，
 				// 整幅送 rec 一样吐空（见 countTextLines / kDetMinH）
 				stats.oneLine = countTextLines(pw, ph, pdata) <= 1;
@@ -1070,7 +1142,7 @@ OcrModel::Err OcrModel::recognize(const std::wstring& root, const std::wstring& 
 						stats.confSum = rec.conf;
 						if (rec.conf >= kMinConf) {
 							stats.acceptedLines = 1;
-							splitWords(rec, q, 0, boxes);
+							splitWords(rec, q, 0, boxes, chars);
 						}
 					}
 					return stats;
@@ -1089,28 +1161,33 @@ OcrModel::Err OcrModel::recognize(const std::wstring& root, const std::wstring& 
 					stats.confSum += rec.conf;
 					if (rec.conf < kMinConf) continue;
 					++stats.acceptedLines;
-					splitWords(rec, quads[i], i, boxes);
+					splitWords(rec, quads[i], i, boxes, chars);
 				}
 				return stats;
 			};
 
-			std::vector<OcrModelBox> best;
-			auto stats = runPass(w, h, data, best);
+			// chars 要走两次 pass，所以先收到本地、最后才交出去（retry 赢了就换掉）
+			std::vector<OcrModelBox> best, bestChars;
+			auto stats = runPass(w, h, data, best, chars ? &bestChars : nullptr);
 			if (shouldRetry(stats)) {
 				// 首轮可疑时再跑一遍增强图：给紧裁边缘留白、把低对比截图轻拉开一点；
 				// 平常清晰截图不走这里，避免把所有识别都拖慢
 				auto retryImg = buildRetryImage(w, h, data);
 				if (!retryImg.data.empty()) {
-					std::vector<OcrModelBox> retry;
-					auto retryStats = runPass(retryImg.w, retryImg.h, retryImg.data.data(), retry);
+					std::vector<OcrModelBox> retry, retryChars;
+					auto retryStats = runPass(retryImg.w, retryImg.h, retryImg.data.data(), retry,
+						chars ? &retryChars : nullptr);
 					if (retryBeats(stats, retryStats)) {
 						unpadBoxes(retry, retryImg.padX, retryImg.padY, w, h);
+						unpadBoxes(retryChars, retryImg.padX, retryImg.padY, w, h);
 						best = std::move(retry);
+						bestChars = std::move(retryChars);
 						stats = retryStats;
 					}
 				}
 			}
 			out = std::move(best);
+			if (chars) *chars = std::move(bestChars);
 		return Err::ok;
 	}
 	catch (...) {

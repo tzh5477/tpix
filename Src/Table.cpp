@@ -5,9 +5,11 @@
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
+#include <limits>
 #include <mutex>
 #include <onnxruntime_cxx_api.h>
 #include <winrt/Windows.Web.Http.h>
+#include <winrt/Windows.Web.Http.Headers.h>
 #include <winrt/Windows.Storage.Streams.h>
 #include "Table.h"
 #include "Lang.h"
@@ -19,6 +21,7 @@ namespace {
 	using namespace winrt::Windows::Foundation;
 	using namespace winrt::Windows::Storage::Streams;
 	using namespace winrt::Windows::Web::Http;
+	using namespace winrt::Windows::Web::Http::Headers;	// HttpProductInfoHeaderValue
 
 	// slanet-plus 的输入边长，模型里写死的，RapidTable 也是这个数
 	constexpr int side{ 488 };
@@ -58,6 +61,10 @@ namespace {
 		err = Lang::get(L"ocr.tableNoModel");
 		try {
 			HttpClient client;
+			// 同 OcrModel::download：WinRT 的 HttpClient 默认不带 User-Agent，
+			// modelscope 的 CDN 对空 UA 回 403（HTTP_E_STATUS_FORBIDDEN）。补一个
+			client.DefaultRequestHeaders().UserAgent().Append(
+				HttpProductInfoHeaderValue{ L"tpix" });
 			auto buffer = client.GetBufferAsync(Uri{ modelUrl }).get();
 			std::vector<BYTE> bytes(buffer.Length());
 			DataReader::FromBuffer(buffer).ReadBytes(bytes);
@@ -220,6 +227,29 @@ namespace {
 		std::vector<std::vector<int>> grid;
 	};
 
+        std::wstring joinWords(const std::vector<OcrWord>& words, std::vector<int> ids)
+        {
+                std::sort(ids.begin(), ids.end(), [&](const int a, const int b) {
+                        const auto& A = words[a];
+                        const auto& B = words[b];
+                        if (std::fabs(A.y - B.y) > std::min(A.h, B.h) * 0.5f) return A.y < B.y;
+                        return A.x < B.x;
+                });
+                std::wstring text;
+                for (size_t i = 0; i < ids.size(); ++i) {
+                        if (i > 0 && !text.empty()) {
+                                const auto& prev = words[ids[i - 1]];
+                                const auto& cur = words[ids[i]];
+                                if (!prev.text.empty() && !cur.text.empty()) {
+                                        const float rel = (cur.x - (prev.x + prev.w)) / std::max(prev.h, cur.h);
+                                        if (ocrNeedSpace(prev.text.back(), cur.text.front(), rel)) text += L' ';
+                                }
+                        }
+                        text += words[ids[i]].text;
+                }
+                return text;
+        }
+
 	Decoded decode(const std::vector<float>& loc, const std::vector<float>& prob,
 		const int steps, const int w, const int h)
 	{
@@ -275,49 +305,158 @@ namespace {
 		return out;
 	}
 
-	// 整张图认一次，再把词按中心点落进各自的格子
-	void fillText(std::vector<Cell>& cells, const int w, const int h, BYTE* data,
-		const std::wstring& langTag)
+        bool hitsCell(const OcrWord& word, const Cell& c)
+        {
+                const auto cx = word.x + word.w / 2.f;
+                const auto cy = word.y + word.h / 2.f;
+                return cx >= c.x0 && cx <= c.x1 && cy >= c.y0 && cy <= c.y1;
+        }
+
+        // 整张图认一次，再把词按中心点落进各自的格子
+        void fillText(std::vector<Cell>& cells, const std::vector<OcrWord>& words)
 	{
-		auto words = Ocr::recognizeWords(w, h, data, langTag);
 		std::vector<std::vector<int>> hits(cells.size());
 		for (int i = 0; i < (int)words.size(); ++i) {
-			const auto cx = words[i].x + words[i].w / 2.f;
-			const auto cy = words[i].y + words[i].h / 2.f;
 			for (int k = 0; k < (int)cells.size(); ++k) {
-				const auto& c = cells[k];
-				if (cx >= c.x0 && cx <= c.x1 && cy >= c.y0 && cy <= c.y1) {
+                                if (hitsCell(words[i], cells[k])) {
 					hits[k].push_back(i);
 					break;
 				}
 			}
 		}
 		for (int k = 0; k < (int)cells.size(); ++k) {
-			// 同一格里按行、再按列排，读出来才跟看到的一样
-			std::sort(hits[k].begin(), hits[k].end(), [&](const int a, const int b) {
-				const auto& A = words[a];
-				const auto& B = words[b];
-				// 差得没到一个字高的一半，当成同一行，按左右排
-				if (std::fabs(A.y - B.y) > std::min(A.h, B.h) * 0.5f) return A.y < B.y;
-				return A.x < B.x;
-			});
-std::wstring text;
-		for (size_t i = 0; i < hits[k].size(); ++i) {
-			// 空格判据统一走 ocrNeedSpace（汉字之间不补、其余看图上有没有空白），
-			// 与 Ocr::recognize 拼整行文字时用的是同一条规则
-			if (i > 0 && !text.empty()) {
-				const auto& prev = words[hits[k][i - 1]];
-				const auto& cur = words[hits[k][i]];
-				if (!prev.text.empty() && !cur.text.empty()) {
-					const float rel = (cur.x - (prev.x + prev.w)) / std::max(prev.h, cur.h);
-					if (ocrNeedSpace(prev.text.back(), cur.text.front(), rel)) text += L' ';
-				}
-			}
-			text += words[hits[k][i]].text;
-		}
-		cells[k].text = text;
+                        cells[k].text = joinWords(words, std::move(hits[k]));
 		}
 	}
+
+        std::vector<std::vector<std::wstring>> recoverTrailingRows(const Decoded& decoded,
+                const std::vector<OcrWord>& words)
+        {
+                const int cols = [&]() {
+                        int n = 0;
+                        for (const auto& line : decoded.grid) n = std::max(n, (int)line.size());
+                        return n;
+                }();
+                if (cols < 2 || decoded.cells.empty()) return {};
+
+                float left{ std::numeric_limits<float>::max() };
+                float right{ -std::numeric_limits<float>::max() };
+                float bottom{ -std::numeric_limits<float>::max() };
+                float rowH{ 0.f };
+                std::vector<float> colLeft(cols, std::numeric_limits<float>::max());
+                std::vector<float> colRight(cols, -std::numeric_limits<float>::max());
+                std::vector<float> colCenter(cols, 0.f);
+                std::vector<int> colCount(cols, 0);
+                for (const auto& c : decoded.cells) {
+                        left = std::min(left, c.x0);
+                        right = std::max(right, c.x1);
+                        bottom = std::max(bottom, c.y1);
+                        rowH = std::max(rowH, c.y1 - c.y0);
+                        if (c.col >= 0 && c.col < cols && c.colSpan == 1) {
+                                colLeft[c.col] = std::min(colLeft[c.col], c.x0);
+                                colRight[c.col] = std::max(colRight[c.col], c.x1);
+                                colCenter[c.col] += (c.x0 + c.x1) / 2.f;
+                                ++colCount[c.col];
+                        }
+                }
+                if (rowH <= 0.f || left >= right || bottom <= 0.f) return {};
+                for (int c = 0; c < cols; ++c) {
+                        if (colCount[c] > 0) {
+                                colCenter[c] /= (float)colCount[c];
+                                continue;
+                        }
+                        const float width = (right - left) / cols;
+                        colLeft[c] = left + width * c;
+                        colRight[c] = left + width * (c + 1);
+                        colCenter[c] = (colLeft[c] + colRight[c]) / 2.f;
+                }
+
+                std::vector<int> extra;
+                for (int i = 0; i < (int)words.size(); ++i) {
+                        const auto& w = words[i];
+                        if (w.text.empty()) continue;
+                        bool hit = false;
+                        for (const auto& c : decoded.cells) {
+                                if (hitsCell(w, c)) { hit = true; break; }
+                        }
+                        if (hit) continue;
+                        const auto cx = w.x + w.w / 2.f;
+                        const auto cy = w.y + w.h / 2.f;
+                        if (cy <= bottom + std::max(w.h * 0.2f, 2.f)) continue;
+                        if (cx < left - std::max(w.w, 12.f) || cx > right + std::max(w.w, 12.f)) continue;
+                        extra.push_back(i);
+                }
+                if (extra.empty()) return {};
+
+                std::sort(extra.begin(), extra.end(), [&](const int a, const int b) {
+                        if (std::fabs(words[a].y - words[b].y) > std::min(words[a].h, words[b].h) * 0.5f)
+                                return words[a].y < words[b].y;
+                        return words[a].x < words[b].x;
+                });
+
+                std::vector<std::vector<int>> groups;
+                float curCy{ 0.f }, curH{ 0.f };
+                for (const auto id : extra) {
+                        const auto cy = words[id].y + words[id].h / 2.f;
+                        if (groups.empty()) {
+                                groups.push_back({ id });
+                                curCy = cy;
+                                curH = words[id].h;
+                                continue;
+                        }
+                        const auto th = std::max(4.f, std::min(curH, words[id].h) * 0.65f);
+                        if (std::fabs(cy - curCy) <= th) {
+                                groups.back().push_back(id);
+                                const auto n = (float)groups.back().size();
+                                curCy += (cy - curCy) / n;
+                                curH += (words[id].h - curH) / n;
+                                continue;
+                        }
+                        groups.push_back({ id });
+                        curCy = cy;
+                        curH = words[id].h;
+                }
+
+                std::vector<std::vector<std::wstring>> rows;
+                float prevCy = bottom;
+                for (const auto& group : groups) {
+                        float groupCy{ 0.f }, groupTop{ std::numeric_limits<float>::max() };
+                        for (const auto id : group) {
+                                groupCy += words[id].y + words[id].h / 2.f;
+                                groupTop = std::min(groupTop, words[id].y);
+                        }
+                        groupCy /= (float)group.size();
+                        if (groupTop - prevCy > rowH * 1.6f) break;
+
+                        std::vector<std::vector<int>> byCol(cols);
+                        for (const auto id : group) {
+                                const auto cx = words[id].x + words[id].w / 2.f;
+                                int best = -1;
+                                float bestDist = std::numeric_limits<float>::max();
+                                for (int c = 0; c < cols; ++c) {
+                                        const float margin = std::max(words[id].w * 0.4f, 8.f);
+                                        if (cx >= colLeft[c] - margin && cx <= colRight[c] + margin) {
+                                                best = c;
+                                                break;
+                                        }
+                                        const auto dist = std::fabs(cx - colCenter[c]);
+                                        if (dist < bestDist) { bestDist = dist; best = c; }
+                                }
+                                if (best >= 0) byCol[best].push_back(id);
+                        }
+
+                        std::vector<std::wstring> row(cols);
+                        int filled{ 0 };
+                        for (int c = 0; c < cols; ++c) {
+                                row[c] = joinWords(words, std::move(byCol[c]));
+                                if (!row[c].empty()) ++filled;
+                        }
+                        if (filled < 2) break;
+                        rows.push_back(std::move(row));
+                        prevCy = groupCy;
+                }
+                return rows;
+        }
 }
 
 std::wstring TableResult::toHtml() const
@@ -371,7 +510,9 @@ bool Table::recognize(const int w, const int h, BYTE* data,
 		err = Lang::get(L"ocr.tableEmpty");
 		return false;
 	}
-	fillText(decoded.cells, w, h, data, langTag);
+        auto words = Ocr::recognizeWords(w, h, data, langTag);
+        fillText(decoded.cells, words);
+        const auto extraRows = recoverTrailingRows(decoded, words);
 	// 摊平成规整矩阵：合并单元格只在它左上角那一格带字，跨过去的位置留空
 	out.cols = 0;
 	out.rows.clear();
@@ -390,5 +531,6 @@ bool Table::recognize(const int w, const int h, BYTE* data,
 		}
 		out.rows.push_back(std::move(row));
 	}
+        for (const auto& row : extraRows) out.rows.push_back(row);
 	return true;
 }

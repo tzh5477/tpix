@@ -10,6 +10,7 @@
 #include "../Shape/ShapeText.h"
 #include "../Shape/ShapeImage.h"
 #include "../Shape/ShapeNumber.h"
+#include "../Shape/ShapeMosaicRect.h"
 #include "../Shape/ShapeWatermark.h"
 #include "WinPin.h"
 #include "WinCap.h"
@@ -1042,7 +1043,7 @@ D2D1_RECT_F WinPin::batchRotateRect() const
 	if (b.right <= b.left) return D2D1::RectF(0.f, 0.f, 0.f, 0.f);
 	auto ds{ 6.f * dpi };
 	auto rad{ ds * 0.9f };
-	auto gap{ ds * 3.f };
+	auto gap{ ds * 2.f };
 	auto cx{ b.right + gap }, cy{ b.bottom + gap };
 	auto img = getImgSize();
 	if (img.width > 0 && cx + rad > (float)img.width) cx = b.right - gap;
@@ -2921,6 +2922,17 @@ void WinPin::onUp(POINT pos, BOOL isRight)
 		prevPressCreatedShape = (drawing->shapeHover == justCreated);
 		auto imgPos = toImgPos(pos);
 		drawing->shapeHover->mouseUp((float)imgPos.x, (float)imgPos.y);
+		// 有些元素要等抬手才知道自己画没画出东西（智能打码：选区里一段数字都没认出来）。
+		// 与上面"按下没拖"那条同样收尾 —— 撤掉按下时存的那份底，再把它删掉，
+		// 不给用户留一个看不见的元素。只认这一次按下新建出来的那一个，且必须是已经
+		// 定形的：正在续画的折线（只落了一两个节点）同样算空笔，但它还没收尾，
+		// 它的空笔判定归 finishBuildingShape
+		if (drawing->shapeHover == justCreated && !drawing->shapeHover->isBuilding()
+			&& drawing->shapeHover->isEmptyStroke()) {
+			drawing->history->dropMark();
+			drawing->history->removeShape(drawing->shapeHover);
+			return;
+		}
 		// 画完的这一笔保持选中，紧接着就能改它的样式。上面空笔那条路已经 return 了，
 		// 走到这里的都是留在图上的
 		drawing->selected = drawing->shapeHover;
@@ -3282,6 +3294,32 @@ void WinPin::startOcr()
 	// 不能等回填时再去读成员 —— 这中间用户可能正好剪了一刀，那个值已经不是当时那个了
 	const auto origin = drawing->imgOrigin;
 	auto lang = Setting::get()->getToolStr(L"ocr", L"lang", L"");
+	// 大模型路径：没有词框，合成一个覆盖全图的整段词，选文时整体选中即可
+	// （无法逐词定位是已知取舍 —— 用户选择"大模型"时已接受）。AI 服务自己异步，
+	// 直接在 UI 线程发起，收尾回调也在 UI 线程，可安全碰 UI
+	if (Ocr::useAi()) {
+		ocrRunning = true;
+		if (textSelect) refresh();
+		auto alive = ocrAlive;
+		Ocr::recognizeByAi(w, h, pixels.data(), false,
+			[this, alive, seq, origin, w, h](const std::wstring& text) {
+				// 窗口已关、或识别期间又起过一次（换底图 / 剪裁），老结果一概不认
+				if (!*alive || ocrSeq != seq) return;
+				ocrRunning = false;
+				if (text.empty()) {
+					if (textSelect) refresh();
+					return;
+				}
+				OcrWord word;
+				word.text = text;
+				word.x = 0; word.y = 0;
+				word.w = (float)w; word.h = (float)h;
+				std::vector<OcrWord> words{ word };
+				// 大模型没有字符级框 —— 空着交给"拿不到"那条路（智能打码据此直接提示不支持）
+				applyOcrWords(std::move(words), {}, origin);
+			});
+		return;
+	}
 	ocrRunning = true;
 	// 状态条上那句"正在识别文字…"是由本标志驱动的，得让它立刻显出来
 	if (textSelect) refresh();
@@ -3290,36 +3328,107 @@ void WinPin::startOcr()
 	std::thread([this, alive, pixels = std::move(pixels), w, h, seq, origin, lang = std::move(lang)]() mutable {
 		// 新线程里没有 WinRT 单元，不初始化就用不了 OcrEngine
 		winrt::init_apartment(winrt::apartment_type::multi_threaded);
-		auto words = Ocr::recognizeWords(w, h, pixels.data(), lang);
-		Ling::App::get()->dq.TryEnqueue([this, alive, seq, origin, words = std::move(words)]() mutable {
+		// 字符级框（每个字在行内占的那一段）只要内置模型那条路给得出。
+		// 智能打码靠它把一段里的非数字摘出去 —— 这里一并要过来
+		std::vector<OcrWord> chars;
+		auto words = Ocr::recognizeWords(w, h, pixels.data(), lang, &chars);
+		Ling::App::get()->dq.TryEnqueue([this, alive, seq, origin,
+			words = std::move(words), chars = std::move(chars)]() mutable {
 			// 窗口已经关了、或者又起过一次识别（换底图 / 剪裁），老结果一概不认
 			if (!*alive || ocrSeq != seq) return;
 			ocrRunning = false;
-			applyOcrWords(std::move(words), origin);
+			applyOcrWords(std::move(words), std::move(chars), origin);
 		});
 	}).detach();
+}
+
+void WinPin::mosaicAllDigits()
+{
+	// 识别还没跑完（刚截完图就点，或者正在为上一次改动重认）：把意图记下，
+	// 结果一回来就在 applyOcrWords 里补做。不这样处理的话这一下会静默什么都不发生
+	if (ocrRunning) {
+		smartMosaicPending = true;
+		return;
+	}
+	applySmartMosaic();
+}
+
+// 智能打码落地：整张底图跑一遍数字框，造一笔 ShapeMosaicRect 提交进图层。
+//
+// 为什么是一整笔而不是"每个数字一个对象"：作者要的是"单击一下，图里的数字全没了"，
+// 那在撤销栈里就该是**一步**。一个对象管住全部数字框，Ctrl+Z 一下全回来。
+// 也没有"框选"这一步 —— 几何直接取整张底图（见下面 area 的算法）
+void WinPin::applySmartMosaic()
+{
+	smartMosaicPending = false;
+	if (!drawing->screenImg || !drawing->history) return;
+	const auto sz = drawing->screenImg->GetPixelSize();
+	if (sz.width == 0 || sz.height == 0) return;
+	// 大模型那条路只给一个"覆盖整图"的假词框（见 startOcr 里 useAi 那段），既没有
+	// 词框也没有字符级框 —— 拿它当数字框等于把整张图打掉。这里直接按"没有位置信息"处理，
+	// 一句提示收场。硬打下去会毁掉用户的图，那比什么都不做糟得多
+	if (Ocr::useAi()) {
+		showToast(Lang::get(L"tool.mosaicSmartNone"));
+		return;
+	}
+	// 整张底图的**标注坐标**矩形。标注坐标系可以与底图错开（剪裁过一张之后
+	// Canvas::imgOrigin 不为 0），所以左上是 imgOrigin、宽高是底图的像素尺寸
+	const float x0 = (float)drawing->imgOrigin.x;
+	const float y0 = (float)drawing->imgOrigin.y;
+	const D2D1_RECT_F area{ x0, y0, x0 + (float)sz.width, y0 + (float)sz.height };
+	auto shape = std::make_unique<ShapeMosaicRect>(drawing.get());
+	// 先把几何设好、把数字框算出来（这一步要回读画面，而画面里还没有它自己 ——
+	// 与拖框那条路"先入栈再 mouseUp"的顺序不同，但结果一样：它总是图层里的最后一个，
+	// 回读到的都是它之前的画面）
+	shape->buildSmartArea(area);
+	// 整张图里一个数字都没有（或者识别没认出字）：不留对象，不然图上会多一个
+	// 看不见、拖不动、只能靠 Ctrl+Z 撤掉的空元素。给一句提示收场
+	if (!shape->hasMasks()) {
+		showToast(Lang::get(L"tool.mosaicSmartNone"));
+		return;
+	}
+	// toolId 得自己补：History::addShape 收下的路（复制 / 粘贴 / 画布块）都带它，
+	// 「应用到全部」与按工具取色都按这个字段找同工具的标注，空着就漏了这一笔
+	shape->toolId = L"mosaic";
+	drawing->history->addShape(std::move(shape));
 }
 
 void WinPin::clearOcr()
 {
 	ocrWords.clear();
+	ocrChars.clear();
 	ocrLines.clear();
 	selAnchor = selCur = 0;
 	selDragging = false;
 }
 
-void WinPin::applyOcrWords(std::vector<OcrWord> words, POINT origin)
+void WinPin::applyOcrWords(std::vector<OcrWord> words, std::vector<OcrWord> chars, POINT origin)
 {
 	clearOcr();
 	if (words.empty()) {
+		// 这一轮什么都没认出来：等着智能打码的那一下也没有数字可打，就此收场（给一句提示，
+		// 否则用户点了按钮却什么都没发生）。不清标记的话它会一直挂在后面某一次识别上
+		if (smartMosaicPending) {
+			smartMosaicPending = false;
+			showToast(Lang::get(L"tool.mosaicSmartNone"));
+		}
 		if (textSelect) refresh();
 		return;
 	}
 	ocrWords = std::move(words);
+	ocrChars = std::move(chars);
 	// 底图像素 → 标注坐标，往后一律按标注坐标用（与 shape 完全一致）
 	for (auto& word : ocrWords) {
 		word.x += (float)origin.x;
 		word.y += (float)origin.y;
+	}
+	// 字符级框是同一张图、同一套底图坐标，同样要换算过来。
+	// ⚠️ 两处都换算，只换一处会让智能打码把数字框整体偏出去一个 imgOrigin
+	// ⚠️ cx（峰值中心，智能打码拿它当"这一团墨"的种子）也在同一套坐标里，一起挪
+	for (auto& ch : ocrChars) {
+		ch.x += (float)origin.x;
+		ch.y += (float)origin.y;
+		ch.cx += (float)origin.x;
 	}
 	// 引擎给出来的本来就是"按行、行内从左到右"，这里只把连续的同高度词切成行、不改顺序 ——
 	// 顺序一乱，"选中从 A 到 B 这一段"就没有意义了
@@ -3341,6 +3450,9 @@ void WinPin::applyOcrWords(std::vector<OcrWord> words, POINT origin)
 		}
 	}
 	refresh();
+	// 用户之前点过「智能打码」、当时识别还没跑完（见 mosaicAllDigits）：词框刚到手，
+	// 把那一按补上。放在 refresh 之后 —— 打码那一步自己会再刷一次
+	if (smartMosaicPending) applySmartMosaic();
 }
 
 bool WinPin::readBasePixels(std::vector<BYTE>& pixels, int& w, int& h)
