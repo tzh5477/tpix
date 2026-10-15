@@ -121,13 +121,38 @@ namespace {
 	int countTextLines(const int w, const int h, const BYTE* data)
 	{
 		if (w <= 0 || h <= 0 || !data) return 1;
-		// 背景亮度取四边一圈的中位数：文档图大片是白底、文字是少数，边上一圈基本
-		// 落在背景上（比"取全图众数"便宜，也不怕标题占掉大半幅）
+		// 背景亮度取全图直方图的峰值。原来的"四边一圈取中位数"在**带窗口边框/阴影**
+		// 的截图上会掉进边框灰和白底之间（实测一张长截图 edge median = 180、白底 255），
+		// tol=45 时白底全成了"前景"→ 行间永远找不到空白 → 整图数成一行 → 整幅送 rec
+		// → 按竖排旋转 → 吐 "_"。截图里背景（UI 底色）总是占比最大的亮度，全图众数
+		// 就是它；一趟 O(w*h) 直方图，代价可忽略
 		auto lumOf = [](const BYTE* p) {
 			return 0.114f * p[0] + 0.587f * p[1] + 0.299f * p[2];	// BGRA
 		};
-		const float bg = edgeMedianLuma(w, h, data);
+		std::vector<int> hist(256, 0);
+		for (int y = 0; y < h; ++y) {
+			const BYTE* p = data + (size_t)y * w * 4;
+			for (int x = 0; x < w; ++x, p += 4) ++hist[(int)lumOf(p)];
+		}
+		int bgBin = 0;
+		for (int i = 1; i < 256; ++i) if (hist[i] > hist[bgBin]) bgBin = i;
+		const float bg{ (float)bgBin };
 		const float tol = std::max(40.f, bg * 0.25f);	// 与背景差多少算文字
+
+		// 先剔"贯穿列"：聊天记录 / 网页 / 表格常有从顶贯到底的竖分隔线 —— 不剔的话
+		// 每一行都有它那 20 来个像素，行间再宽也找不到空白行，整图被数成一行
+		//（实测 523×1627 的长截图被判成单行 → 整幅送 rec → 按竖排旋转 90° → 吐 "_"）。
+		// 一列在过半的行里都是前景就是贯穿列；文字笔画稀疏，同一列最多落在两三成行里，
+		// 碰不到这个线。扫两遍，不用存整幅前景位图
+		std::vector<int> colCnt((size_t)w, 0);
+		for (int y = 0; y < h; ++y) {
+			const BYTE* p = data + (size_t)y * w * 4;
+			for (int x = 0; x < w; ++x, p += 4)
+				if (std::abs(lumOf(p) - bg) > tol) ++colCnt[x];
+		}
+		std::vector<uint8_t> ruled((size_t)w, 0);
+		for (int x = 0; x < w; ++x)
+			ruled[x] = colCnt[x] > h / 2 ? 1 : 0;
 
 		const int minPix = std::max(2, w / 100);	// 一行至少得有这么多像素，挡噪点
 		int lines = 0;
@@ -137,7 +162,7 @@ namespace {
 			const BYTE* p = data + (size_t)y * w * 4;
 			int cnt = 0;
 			for (int x = 0; x < w; ++x, p += 4)
-				if (std::abs(lumOf(p) - bg) > tol) ++cnt;
+				if (!ruled[x] && std::abs(lumOf(p) - bg) > tol) ++cnt;
 			if (cnt >= minPix) {
 				if (!in) { ++lines; in = true; }
 				gap = 0;
@@ -652,7 +677,25 @@ namespace {
 	}
 
 	// ---- det ----
-	std::vector<Quad> detect(const int w, const int h, const BYTE* data)
+	// 阅读顺序：先按左上角 y、再按 x 排；挨得近的那几行（y 差不到 10 像素）按 x 微调。
+	// 单图与切片两条路共用 —— 切片合回全局坐标后要重排一次
+	std::vector<Quad> finishQuads(std::vector<Quad> quads)
+	{
+		std::sort(quads.begin(), quads.end(), [](const Quad& a, const Quad& b) {
+			if (std::fabs(a.y[0] - b.y[0]) > 10.f) return a.y[0] < b.y[0];
+			return a.x[0] < b.x[0];
+			});
+		for (int i = 0; i + 1 < (int)quads.size(); ++i) {
+			for (int j = i; j >= 0; --j) {
+				if (std::fabs(quads[j + 1].y[0] - quads[j].y[0]) < 10.f
+					&& quads[j + 1].x[0] < quads[j].x[0]) std::swap(quads[j], quads[j + 1]);
+				else break;
+			}
+		}
+		return mergeNeighborQuads(std::move(quads));
+	}
+
+	std::vector<Quad> detectOnce(const int w, const int h, const BYTE* data)
 	{
 		// det 的输入尺寸：默认只缩不放（见常量区的实测），缩完按官方规则取整到 32 的倍数。
 		// ⚠️ 唯一的例外是"太矮"的图要放大 —— 网络下采样 32 倍，高不到 kDetMinH 的话
@@ -720,19 +763,62 @@ namespace {
 			orderQuad(q);
 			quads.push_back(q);
 		}
-		// 阅读顺序：先按左上角 y、再按 x 排；挨得近的那几行（y 差不到 10 像素）按 x 微调
-		std::sort(quads.begin(), quads.end(), [](const Quad& a, const Quad& b) {
-			if (std::fabs(a.y[0] - b.y[0]) > 10.f) return a.y[0] < b.y[0];
-			return a.x[0] < b.x[0];
-			});
-		for (int i = 0; i + 1 < (int)quads.size(); ++i) {
-			for (int j = i; j >= 0; --j) {
-				if (std::fabs(quads[j + 1].y[0] - quads[j].y[0]) < 10.f
-					&& quads[j + 1].x[0] < quads[j].x[0]) std::swap(quads[j], quads[j + 1]);
-				else break;
+		return finishQuads(std::move(quads));
+	}
+
+	// 长截图（h 超过 kDetLimit）：整幅压到 960 会把 20px 的字压到 12px，det 全灭
+	//（实测 523×1627 的长截图 tiny 报"没有识别到文字"、small 吐 "_"）。
+	// 改成竖切瓦片逐片 det：每片高 kDetLimit、相邻片重叠 kTileOverlap（要盖住一行字，
+	// 跨缝被切成两半的行靠相邻片里的完整框兜底），框坐标加片顶偏移回全局坐标；
+	// 重叠区重复检出的行、被完整框包含的半行，用包围盒包含度去重丢小留大。
+	// 宽图（w > 960）不切 —— 横向压一半是普通整屏截图的既有行为，实测可用
+	std::vector<Quad> detect(const int w, const int h, const BYTE* data)
+	{
+		if (h <= kDetLimit) return detectOnce(w, h, data);
+		constexpr int kTileOverlap{ 128 };
+		std::vector<Quad> all;
+		int top = 0;
+		while (top < h) {
+			const int th = std::min(kDetLimit, h - top);
+			for (auto& q : detectOnce(w, th, data + (size_t)top * w * 4)) {
+				for (int i = 0; i < 4; ++i)
+					q.y[i] = std::min((float)h - 1.f, q.y[i] + (float)top);
+				all.push_back(q);
+			}
+			if (top + th >= h) break;
+			top += th - kTileOverlap;
+		}
+		// 去重：两框包围盒的交 / 较小框的面积 > 0.8 视为同一行，丢小留大。
+		// 半行框必然整个落在完整框里（交 = 自身面积），相邻两行正文互不相交，都不会误伤
+		auto aabb = [](const Quad& q, float& l, float& t, float& r, float& b) {
+			l = t = FLT_MAX; r = b = -FLT_MAX;
+			for (int i = 0; i < 4; ++i) {
+				l = std::min(l, q.x[i]); r = std::max(r, q.x[i]);
+				t = std::min(t, q.y[i]); b = std::max(b, q.y[i]);
+			}
+		};
+		std::vector<bool> dup(all.size(), false);
+		for (int i = 0; i < (int)all.size(); ++i) {
+			if (dup[i]) continue;
+			float l1, t1, r1, b1; aabb(all[i], l1, t1, r1, b1);
+			const auto a1 = (r1 - l1) * (b1 - t1);
+			for (int j = i + 1; j < (int)all.size(); ++j) {
+				if (dup[j]) continue;
+				float l2, t2, r2, b2; aabb(all[j], l2, t2, r2, b2);
+				const auto a2 = (r2 - l2) * (b2 - t2);
+				const auto ix = std::max(0.f, std::min(r1, r2) - std::max(l1, l2));
+				const auto iy = std::max(0.f, std::min(b1, b2) - std::max(t1, t2));
+				if (ix * iy > 0.8f * std::min(a1, a2)) {
+					if (a1 >= a2) dup[j] = true;
+					else { dup[i] = true; break; }
+				}
 			}
 		}
-		return mergeNeighborQuads(std::move(quads));
+		std::vector<Quad> quads;
+		quads.reserve(all.size());
+		for (int i = 0; i < (int)all.size(); ++i)
+			if (!dup[i]) quads.push_back(all[i]);
+		return finishQuads(std::move(quads));
 	}
 
 	// ---- rec ----
