@@ -420,6 +420,21 @@ void ShapeLine::mouseDrag(const float x, const float y)
 		makePath();
 		return;
 	}
+	if (!creating && (hoverDraggerIndex == 0 || hoverDraggerIndex == 1) && (isOrtho() || isPoly())) {
+		if (linePoints.empty()) return;
+		if (hoverDraggerIndex == 0) {
+			auto& p = linePoints.front();
+			p.x = x;
+			p.y = y;
+		}
+		else {
+			auto& p = linePoints.back();
+			p.x = x;
+			p.y = y;
+		}
+		makePath();
+		return;
+	}
 	ShapeLineBase::mouseDrag(x, y);
 }
 
