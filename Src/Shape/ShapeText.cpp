@@ -247,7 +247,7 @@ bool ShapeText::mouseWheel(const float x, const float y, const short delta)
 void ShapeText::setCursor()
 {
 	if (hoverDraggerIndex == 9) {
-		SetCursor(LoadCursor(nullptr, IDC_CROSS));
+		SetCursor(LoadCursor(nullptr, IDC_UPARROW));
 	}
 	else if (hoverDraggerIndex == 8) {
 		SetCursor(LoadCursor(nullptr, IDC_SIZEALL));

@@ -462,7 +462,7 @@ void ShapeRectBase::setCursor()
 	case 2: case 6: SetCursor(LoadCursor(nullptr, IDC_SIZENESW)); return;
 	case 3: case 7: SetCursor(LoadCursor(nullptr, IDC_SIZEWE)); return;
 	case HitBody: SetCursor(LoadCursor(nullptr, IDC_SIZEALL)); return;
-	case HitRotate: SetCursor(LoadCursor(nullptr, IDC_CROSS)); return;
+	case HitRotate: SetCursor(LoadCursor(nullptr, IDC_UPARROW)); return;
 	default:
 		if (hoverDraggerIndex >= HitRadiusTL && hoverDraggerIndex <= HitRadiusBL) {
 			SetCursor(LoadCursor(nullptr, IDC_SIZEALL));

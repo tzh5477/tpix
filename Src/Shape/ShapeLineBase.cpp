@@ -1,4 +1,5 @@
 #include "pch.h"
+#include <cmath>
 #include "Canvas.h"
 #include "Tool/ToolSub.h"
 #include "ShapeLineBase.h"
@@ -115,7 +116,24 @@ void ShapeLineBase::mouseMove(const float x, const float y)
 
 void ShapeLineBase::setCursor()
 {
-	if (hoverDraggerIndex == 8) {
+	if (hoverDraggerIndex == 0 || hoverDraggerIndex == 1) {
+		D2D1_POINT_2F a{}, b{};
+		if (linePoints.size() >= 2) {
+			a = linePoints.front();
+			b = linePoints.back();
+		}
+		else if (!linePoints.empty()) {
+			a = linePoints.front();
+			b = a;
+		}
+		auto dx = b.x - a.x;
+		auto dy = b.y - a.y;
+		auto adx = fabsf(dx), ady = fabsf(dy);
+		if (adx > ady * 2.f) SetCursor(LoadCursor(nullptr, IDC_SIZEWE));
+		else if (ady > adx * 2.f) SetCursor(LoadCursor(nullptr, IDC_SIZENS));
+		else SetCursor(LoadCursor(nullptr, dx * dy >= 0.f ? IDC_SIZENWSE : IDC_SIZENESW));
+	}
+	else if (hoverDraggerIndex == 8) {
 		SetCursor(LoadCursor(nullptr, IDC_SIZEALL));
 	}
 }
