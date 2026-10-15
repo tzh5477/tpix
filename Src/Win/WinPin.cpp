@@ -4461,7 +4461,7 @@ BOOL WinPin::setCursor()
 		// 旋转手柄给十字 —— 与单选那枚（ShapeRectBase::setCursor 的 HitRotate）同一套提示。
 		// 手柄与那两格都要先过 canHitBatchUI：压在别的元素身上时那一下归元素，光标也就不该变成手
 		if (batchRotating || (canHitBatchUI(ip) && batchRotateHit(ip))) {
-			SetCursor(LoadCursor(nullptr, IDC_UPARROW));
+			SetCursor(LoadCursor(nullptr, IDC_CROSS));
 			return TRUE;
 		}
 		if (canHitBatchUI(ip) && batchBtnAt(ip) >= 0) {

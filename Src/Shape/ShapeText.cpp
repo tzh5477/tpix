@@ -247,7 +247,8 @@ bool ShapeText::mouseWheel(const float x, const float y, const short delta)
 void ShapeText::setCursor()
 {
 	if (hoverDraggerIndex == 9) {
-		SetCursor(LoadCursor(nullptr, IDC_UPARROW));
+		// 旋转手柄回到十字光标：上箭头（↑）盖住了手柄上那枚原有的旋转小图标
+		SetCursor(LoadCursor(nullptr, IDC_CROSS));
 	}
 	else if (hoverDraggerIndex == 8) {
 		SetCursor(LoadCursor(nullptr, IDC_SIZEALL));
