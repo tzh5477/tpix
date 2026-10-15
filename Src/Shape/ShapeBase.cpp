@@ -4,11 +4,19 @@
 #include "History.h"
 #include "ShapeBase.h"
 #include "../Setting.h"
+#include <atomic>
 
 using Microsoft::WRL::ComPtr;
 
+unsigned long long ShapeBase::allocInstanceId()
+{
+	static std::atomic_ullong next{ 1 };
+	return next.fetch_add(1, std::memory_order_relaxed);
+}
+
 ShapeBase::ShapeBase(Canvas* win):win{win}, draggerSize{6*win->getDpi()}
 {
+	instanceId = ShapeBase::allocInstanceId();
 	auto d2d = Ling::D2D::get();
 	// 控制点：主题色描边（原来是写死的浅蓝 0x4A9EFF，作者要求跟着主题色走），
 	// 选中时填白把下层线挡住。迷你条上"复制"那枚图标与旋转手柄也用这支画刷

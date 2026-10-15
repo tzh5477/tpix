@@ -7,6 +7,8 @@ class ShapeBase
 public:
 	ShapeBase(Canvas* win);
 	virtual ~ShapeBase();
+	static unsigned long long allocInstanceId();
+	unsigned long long getInstanceId() const { return instanceId; }
 	virtual void paint(ID2D1DeviceContext* ctx) = 0;
 	virtual void paintDragger(ID2D1DeviceContext* ctx) {};
 	virtual void mouseMove(const float x, const float y) { };
@@ -165,6 +167,7 @@ protected:
 	static std::unique_ptr<ShapeBase> cloneSelf(const T& src, const float dx, const float dy, Canvas* target = nullptr)
 	{
 		auto c = std::make_unique<T>(src);
+		c->instanceId = ShapeBase::allocInstanceId();
 		// 经 ShapeBase& 去调那两个虚函数：命名类才是 ShapeBase，protected 才访问得到。
 		// 直接 c->fixupCopy() 的话名字查到的是派生类里那份重声明（命名类变成派生类），
 		// 而从基类的成员里访问派生类的 protected 成员是不许的
@@ -186,6 +189,7 @@ protected:
 	static std::unique_ptr<ShapeBase> snapshotSelf(const T& src)
 	{
 		auto c = std::make_unique<T>(src);
+		c->instanceId = ShapeBase::allocInstanceId();
 		ShapeBase& base = *c;
 		base.hoverDraggerIndex = -1;
 		base.fixupCopy();
@@ -207,6 +211,8 @@ public:
 	// 「应用到全部」拿它筛同类 —— ToolSub 的颜色是每个工具各存一份的，
 	// 跨类型套样式会让文字、序号被矩形的那个颜色污染
 	std::wstring toolId;
+private:
+	unsigned long long instanceId{ 0 };
 protected:
 	// 旋转手柄的方框（底图坐标）。摆在 getShapeBounds() 给的外接框右下角外侧，
 	// 与右上角的 × 同一段距离。手柄跟着外接框走、不跟着图形转 —— 三个角各一枚按钮才对称。
