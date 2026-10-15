@@ -2743,7 +2743,11 @@ void WinPin::onMove(POINT pos)
 			auto dx = newX - x, dy = newY - y;
 			// 光标一步没挪也会来 WM_MOUSEMOVE。抬手时要靠它区分"拖过"和"只是点了一下"：
 			// 只有真拖过才轮得到"拖到屏幕边线上就藏起来"那一条
-			if (pos.x != pressPos.x || pos.y != pressPos.y) hasDragged = true;
+			if (!hasDragged) {
+				auto mx = pos.x - pressPos.x;
+				auto my = pos.y - pressPos.y;
+				if (mx * mx + my * my >= 9) hasDragged = true;
+			}
 			// 位置没变就别再挪了。窗口自己挪完之后系统会补一条"光标没动"的 WM_MOUSEMOVE
 			// （客户端坐标是相对窗口算的，窗口一动它就变），按上面那条公式算出来的正好是原位。
 			// 实测每挪一步会多出三分之一次这种空挪，一次空挪照样要走一遍 WM_MOVE -> onMoved，
@@ -2757,14 +2761,22 @@ void WinPin::onMove(POINT pos)
 		// 正拉着框选：选框跟着光标走。hasDragged 的判法与别的拖拽同一条规矩 ——
 		// 抬手时 collectMarquee 要用它区分"拉了个框"和"只是点了一下空白"
 		if (marqueeOn) {
-			if (pos.x != pressPos.x || pos.y != pressPos.y) hasDragged = true;
+			if (!hasDragged) {
+				auto mx = pos.x - pressPos.x;
+				auto my = pos.y - pressPos.y;
+				if (mx * mx + my * my >= 9) hasDragged = true;
+			}
 			marqueeCur = imgPos;
 			refreshNow();
 			return;
 		}
 		else if(drawing->shapeHover) {
 			// 光标一步没挪也会来 WM_MOUSEMOVE，所以跟按下点比一下再算拖动
-			if (pos.x != pressPos.x || pos.y != pressPos.y) hasDragged = true;
+			if (!hasDragged) {
+				auto mx = pos.x - pressPos.x;
+				auto my = pos.y - pressPos.y;
+				if (mx * mx + my * my >= 9) hasDragged = true;
+			}
 			drawing->shapeHover->mouseDrag((float)imgPos.x, (float)imgPos.y);
 			refreshNow();
 		}
@@ -2905,9 +2917,11 @@ void WinPin::onUp(POINT pos, BOOL isRight)
 		// 两种情况都把 ToolMain 显示出来：拖动期间它是藏着的，右键之后它也是藏着的，
 		// 左键点一下就是"我还要用工具条"。ToolSub 由 curId 驱动，这会儿仍然不该出来，
 		// layoutTools 里已经管了
-		layoutTools();
-		toolMain->show();
-		setSideBarVisible(true);
+		if (toolsWereVisible) {
+			layoutTools();
+			toolMain->show();
+			setSideBarVisible(true);
+		}
 	}
 	else if (drawing->shapeHover) {
 		// 新建的这一笔按下马上弹起，什么也没画出来：直接丢掉，
