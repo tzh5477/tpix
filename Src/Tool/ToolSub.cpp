@@ -1164,7 +1164,19 @@ void ToolSub::applyColor(UINT32 rgba)
 void ToolSub::toggleColorPicker(Ling::Node* anchor)
 {
 	if (WinColorPicker::isOpen()) { WinColorPicker::close(); return; }
-	WinColorPicker::show(this, anchor);
+	// 颜色的读与写都在本工具条上（落盘键 toolPin.<tool>.colorIndex），打包成 Source 交给面板
+	WinColorPicker::Source src;
+	src.presets.assign(colors.begin(), colors.begin() + presetCount_);
+	src.customs.assign(colors.begin() + presetCount_, colors.end());
+	src.current = [this]() { return getSelectedColorValue(); };
+	// 点格子 = 用表里那一项，等价于换下标（syncColorBtns / onToolStyleChanged 都在里头）
+	src.onUse = [this](UINT32 c) {
+		const auto it = std::find(colors.begin(), colors.end(), c);
+		if (it != colors.end()) setColorIndex((size_t)(it - colors.begin()));
+	};
+	// 「确定」走 applyColor：表里已有就复用那一格，否则插进自定义区队首
+	src.onConfirm = [this](UINT32 c) { applyColor(c); };
+	WinColorPicker::show(src, anchor, this);
 }
 
 void ToolSub::applyToggleStyle(Ling::Button* btn, bool selected)
