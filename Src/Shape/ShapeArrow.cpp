@@ -1,13 +1,24 @@
 ﻿#include "pch.h"
 #include <cmath>
+#include <algorithm>
 #include "Canvas.h"
+#include "History.h"
 #include "Tool/ToolMain.h"
 #include "Tool/ToolSub.h"
 #include "ShapeArrow.h"
+#include "ShapeText.h"
 
 using Microsoft::WRL::ComPtr;
 
 namespace {
+	HCURSOR stretchCursorForDir(const float dx, const float dy)
+	{
+		auto adx = fabsf(dx), ady = fabsf(dy);
+		if (adx > ady * 2.f) return LoadCursor(nullptr, IDC_SIZEWE);
+		if (ady > adx * 2.f) return LoadCursor(nullptr, IDC_SIZENS);
+		return LoadCursor(nullptr, dx * dy >= 0.f ? IDC_SIZENWSE : IDC_SIZENESW);
+	}
+
 	// 细箭头（arrowStyle 2）那一档的箭杆是一条直画到箭尖的线，头部是开口 V。
 	// 开口 V 的顶点必须尖：拿两笔 DrawLine 拼的话，各自的平头端帽会在箭尖处糊出一个平口，
 	// 看着是钝的 —— 改成一条折线 + 斜接连接（miter），由 D2D 把顶点接成尖角
@@ -442,7 +453,37 @@ bool ShapeArrow::mouseWheel(const float x, const float y, const short delta)
 
 void ShapeArrow::setCursor()
 {
-	SetCursor(LoadCursor(nullptr, IDC_SIZEALL));
+	if (hoverDraggerIndex == 0 || hoverDraggerIndex == 1) {
+		SetCursor(stretchCursorForDir(endX - startX, endY - startY));
+	}
+	else if (hoverDraggerIndex == 8) {
+		SetCursor(LoadCursor(nullptr, IDC_SIZEALL));
+	}
+}
+
+void ShapeArrow::paintActionIcon(ID2D1DeviceContext* ctx, const int i, const D2D1_POINT_2F& c,
+	const float rad, ID2D1Brush* brush, const float strokeW)
+{
+	if (i != 0 || !ctx || !brush) return;
+	auto k = rad * 0.55f;
+	ctx->DrawLine({ c.x - k, c.y - k }, { c.x + k, c.y - k }, brush, strokeW);
+	ctx->DrawLine({ c.x, c.y - k }, { c.x, c.y + k }, brush, strokeW);
+}
+
+void ShapeArrow::onAction(const int i)
+{
+	if (i != 0) return;
+	auto x = startX;
+	auto y = startY;
+	auto img = win->getImgSize();
+	x = std::clamp(x, 0.f, (float)img.width);
+	y = std::clamp(y, 0.f, (float)img.height);
+	auto t = std::make_unique<ShapeText>(win);
+	t->toolId = L"text";
+	t->setTextAt(L"", x, y);
+	if (auto* added = win->history->addShape(std::move(t))) {
+		static_cast<ShapeText*>(added)->startEdit();
+	}
 }
 
 std::unique_ptr<ShapeBase> ShapeArrow::clone(const float dx, const float dy, Canvas* target) const

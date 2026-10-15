@@ -1,7 +1,10 @@
 #include "pch.h"
+#include <algorithm>
 #include "Canvas.h"
+#include "History.h"
 #include "Tool/ToolSub.h"
 #include "ShapeBrush.h"
+#include "ShapeText.h"
 
 ShapeBrush::ShapeBrush(Canvas* win) :ShapeLineBase(win)
 {
@@ -12,6 +15,33 @@ ShapeBrush::ShapeBrush(Canvas* win) :ShapeLineBase(win)
 	// 外观（颜色 / 线宽 / 荧光笔那层半透明）全走 applyStyle —— 与 ShapeLine 同一条路，
 	// 滚轮调粗细也回这里，两处各写一遍迟早对不上
 	applyStyle();
+}
+
+void ShapeBrush::paintActionIcon(ID2D1DeviceContext* ctx, const int i, const D2D1_POINT_2F& c,
+	const float rad, ID2D1Brush* brush, const float strokeW)
+{
+	if (i != 0 || !ctx || !brush) return;
+	auto k = rad * 0.55f;
+	ctx->DrawLine({ c.x - k, c.y - k }, { c.x + k, c.y - k }, brush, strokeW);
+	ctx->DrawLine({ c.x, c.y - k }, { c.x, c.y + k }, brush, strokeW);
+}
+
+void ShapeBrush::onAction(const int i)
+{
+	if (i != 0) return;
+	if (linePoints.empty()) return;
+	auto end = linePoints.back();
+	auto x = end.x;
+	auto y = end.y;
+	auto img = win->getImgSize();
+	x = std::clamp(x, 0.f, (float)img.width);
+	y = std::clamp(y, 0.f, (float)img.height);
+	auto t = std::make_unique<ShapeText>(win);
+	t->toolId = L"text";
+	t->setTextAt(L"", x, y);
+	if (auto* added = win->history->addShape(std::move(t))) {
+		static_cast<ShapeText*>(added)->startEdit();
+	}
 }
 
 // 外观：颜色、线宽，以及荧光笔的半透明。滚轮调粗细走的也是这里，所以它不能顺手换画法

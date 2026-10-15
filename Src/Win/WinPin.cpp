@@ -4447,7 +4447,7 @@ BOOL WinPin::setCursor()
 		// 旋转手柄给十字 —— 与单选那枚（ShapeRectBase::setCursor 的 HitRotate）同一套提示。
 		// 手柄与那两格都要先过 canHitBatchUI：压在别的元素身上时那一下归元素，光标也就不该变成手
 		if (batchRotating || (canHitBatchUI(ip) && batchRotateHit(ip))) {
-			SetCursor(LoadCursor(nullptr, IDC_CROSS));
+			SetCursor(LoadCursor(nullptr, IDC_UPARROW));
 			return TRUE;
 		}
 		if (canHitBatchUI(ip) && batchBtnAt(ip) >= 0) {
@@ -4486,6 +4486,17 @@ BOOL WinPin::setCursor()
 		bool handled{ false };
 		onCursor(&handled);
 		if (handled) return TRUE;
+	}
+	{
+		POINT pos{};
+		GetCursorPos(&pos);
+		ScreenToClient(hwnd, &pos);
+		auto ip = toImgPos(pos);
+		if (drawing->selected && canHitActionBtn(ip)
+			&& drawing->selected->hitActionBtn((float)ip.x, (float)ip.y) >= 0) {
+			SetCursor(LoadCursor(nullptr, IDC_HAND));
+			return TRUE;
+		}
 	}
 	// 选文态：整张图都是"文字区"，光标给 I 形。放在 hasDrawTool 之前 —— 那种状态下
 	// curId 是空的，不先拦一句就会被下面的"画不了 → 拖窗口"判成四向箭头

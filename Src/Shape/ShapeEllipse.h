@@ -9,6 +9,10 @@ class ShapeEllipse : public ShapeRectBase
 public:
 	ShapeEllipse(Canvas* win);
 	~ShapeEllipse();
+	int actionCount() const override { return 1; }
+	void paintActionIcon(ID2D1DeviceContext* ctx, const int i, const D2D1_POINT_2F& c,
+		const float rad, ID2D1Brush* brush, const float strokeW) override;
+	void onAction(const int i) override;
 	// 复制（见 ShapeBase::clone）：与矩形同一套几何，只是 kind 不同
 	bool copyable() const override { return true; }
 	std::unique_ptr<ShapeBase> clone(const float dx, const float dy, Canvas* target = nullptr) const override;

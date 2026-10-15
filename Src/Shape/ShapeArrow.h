@@ -14,6 +14,10 @@ public:
 	void mouseMove(const float x, const float y) override;
 	bool mouseWheel(const float x, const float y, const short delta) override;
 	void setCursor() override;
+	int actionCount() const override { return 1; }
+	void paintActionIcon(ID2D1DeviceContext* ctx, const int i, const D2D1_POINT_2F& c,
+		const float rad, ID2D1Brush* brush, const float strokeW) override;
+	void onAction(const int i) override;
 	void applyStyle() override;
 	void applyToolStyle() override;
 	// 「选择对象」框选要用：整支箭（杆 + 头）的外接框。path 就是 buildOutline 建的轮廓，
