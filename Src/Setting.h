@@ -170,6 +170,10 @@ public:
 	// 改一处全界面跟着变，不必逐处找色值。setThemeColor 立即落盘
 	static unsigned int getThemeColor();
 	static void setThemeColor(unsigned int rgb);
+	// 用户从取色器存下的自定义主题色（ui.themeCustoms，"RRGGBB,RRGGBB" 逗号分隔，
+	// 新用的在前）。addThemeCustom 去重置顶、封 8 个后落盘；与预设重复的由调用方挡掉
+	static std::vector<unsigned int> getThemeCustoms();
+	static void addThemeCustom(unsigned int rgb);
 	// 主题色的浅底：往白里掺 10%（按钮选中那一档的底色）。跟着主题色走，不单独存配置
 	static unsigned int getThemeSoft();
 	// AI（翻译 / 对话，S1–S3）。存在 config.json 的 ai 组。

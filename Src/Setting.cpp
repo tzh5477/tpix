@@ -1044,6 +1044,43 @@ void Setting::setThemeColor(unsigned int rgb)
 	s->save();
 }
 
+std::vector<unsigned int> Setting::getThemeCustoms()
+{
+	// "RRGGBB,RRGGBB" 十六进制逗号串 → 数组。串坏了的那段跳过，不让一个脏值毁掉整排
+	std::vector<unsigned int> out;
+	// GetNamedString 给的是 winrt::hstring，落进 std::wstring 再做串处理
+	const std::wstring str{ Setting::get()->getUiObj().GetNamedString(L"themeCustoms", L"") };
+	size_t pos = 0;
+	while (pos < str.size()) {
+		auto comma = str.find(L',', pos);
+		if (comma == std::wstring::npos) comma = str.size();
+		if (comma > pos)
+			out.push_back(wcstoul(str.substr(pos, comma - pos).c_str(), nullptr, 16) & 0xFFFFFF);
+		pos = comma + 1;
+	}
+	return out;
+}
+
+void Setting::addThemeCustom(unsigned int rgb)
+{
+	rgb &= 0xFFFFFF;
+	auto s = Setting::get();
+	auto list = getThemeCustoms();
+	// 已存过的挪到队首（"最近用过"排前面），封 8 个 —— 再多第一屏就摆不下了
+	list.erase(std::remove(list.begin(), list.end(), rgb), list.end());
+	list.insert(list.begin(), rgb);
+	if (list.size() > 8) list.resize(8);
+	std::wstring str;
+	wchar_t buf[8]{};
+	for (auto c : list) {
+		if (!str.empty()) str += L',';
+		swprintf(buf, 8, L"%06X", c);
+		str += buf;
+	}
+	s->getUiObj().SetNamedValue(L"themeCustoms", JsonValue::CreateStringValue(str));
+	s->save();
+}
+
 unsigned int Setting::getThemeSoft()
 {
 	// 浅底 = 白底上叠一层 10% 的主题色。按钮"选中"那一档的底色（原 0xE6F4FF
