@@ -370,6 +370,12 @@ void WinPin::saveAll()
 			obj.SetNamedValue(L"lock", JsonValue::CreateBooleanValue(pin->isLocked));
 			obj.SetNamedValue(L"title", JsonValue::CreateStringValue(pin->pinTitle));
 			obj.SetNamedValue(L"group", JsonValue::CreateNumberValue((double)pin->groupId));
+			// 藏在侧边书签条里的那几张也要记下"藏在哪条边"：作者要的是"藏着的图留在
+			// 书签条里"—— 不记这一项的话，明明是特意收起来的图，下次启动会自己回到桌面上
+			if (pin->getHidden()) {
+				obj.SetNamedValue(L"hidden", JsonValue::CreateBooleanValue(true));
+				obj.SetNamedValue(L"edge", JsonValue::CreateNumberValue((double)pin->getBarEdge()));
+			}
 			arr.Append(obj);
 		}
 		// 上一次留下的文件与这次的编号对不上，留着只会越积越多，所以本轮没写到的都删掉。
@@ -396,6 +402,16 @@ void WinPin::finishRestore(JsonObject obj)
 	restoreProps(pin, obj);
 	pin->groupId = (int)obj.GetNamedNumber(L"group", 0.0);
 	if (pin->groupId >= nextGroupId) nextGroupId = pin->groupId + 1;
+	// 恢复出来的贴图**不进编辑状态**：ToolMain / ToolPinSide 的构造函数里都 show() 过一次，
+	// 不收的话启动后每张贴图旁边都挂着一排按钮（作者：原位展示，按空格才进编辑）。
+	// 收法走 quietTools 而不是 setToolsVisible —— 后者要抢前台，启动时不该动用户的焦点
+	pin->quietTools();
+	// 上次退出前藏在侧边书签条里的，这次还藏在书签条里（作者：藏着的图留在书签条）。
+	// setHidden 内部会调 PinHiddenBar::sync，角上那条书签跟着建出来
+	if (obj.GetNamedBoolean(L"hidden", false)) {
+		const auto edge = (int)obj.GetNamedNumber(L"edge", 0.0);
+		pin->setHidden(true, edge == 1 ? BarEdge::Top : BarEdge::Left);
+	}
 }
 
 void WinPin::restoreAll()
@@ -476,6 +492,16 @@ void WinPin::armDefaultTool()
 	toolMain->selectTool(L"geom");
 	// selectTool 重建过 ToolSub，工具条可能被重新排在整套窗口里 ≠ 一定在最前，补一次
 	raiseTools();
+}
+
+void WinPin::quietTools()
+{
+	// 三条工具条都是独立顶层窗口，它们的构造函数里就 show() 过一次（ToolMain / ToolPinSide
+	// 的 ctor 都调了 show），所以"恢复出来的贴图"必须显式收一遍，否则启动后屏幕上
+	// 每张贴图旁边都挂着一排按钮 —— 作者要的是"原位展示、不进编辑状态"
+	if (toolMain) toolMain->hide();
+	if (toolSub) toolSub->hideTools();
+	setSideBarVisible(false);
 }
 
 void WinPin::applyWinSize()

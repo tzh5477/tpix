@@ -284,6 +284,9 @@ private:
 	// 而"收放工具条"在窗口拖拽、右键、空格、缩略图、贴边细条、藏进书签条这些路上有十来处 ——
 	// 散着写必漏一处，统一收在这一个口子上
 	void setSideBarVisible(bool on);
+	// 把三条工具条直接收起来，不抢前台、也不退画笔 —— 只给"启动恢复出来的贴图"用
+	//（setToolsVisible(false) 是给用户按空格用的那一套，它要先把前台收回自己）
+	void quietTools();
 	// 自己认双击（窗口类没带 CS_DBLCLKS）。比的是屏幕坐标，见实现里的说明。
 	// 认一次就把 lastDownTime / lastDownPos 更新掉，所以同一次点击只能问一次
 	bool takeDoubleClick();
