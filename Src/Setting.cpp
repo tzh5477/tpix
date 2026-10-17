@@ -806,6 +806,22 @@ void Setting::setRestorePins(bool val)
 	save();
 }
 
+int Setting::getDoubleClickAction()
+{
+	// 只有 0 / 1 / 2 三档。配置文件被手改坏了就按默认的"复制并关闭"来，
+	// 别让一个非法的数把双击变成什么都不做
+	auto val = (int)getPinObj().GetNamedNumber(L"doubleClick", 1.0);
+	if (val < 0 || val > 2) return 1;
+	return val;
+}
+
+void Setting::setDoubleClickAction(int val)
+{
+	if (val < 0 || val > 2) val = 1;
+	getPinObj().SetNamedValue(L"doubleClick", JsonValue::CreateNumberValue((double)val));
+	save();
+}
+
 JsonObject Setting::getCapObj()
 {
 	auto obj = configObj.GetNamedObject(L"cap", nullptr);

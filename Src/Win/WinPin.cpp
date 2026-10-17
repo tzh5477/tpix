@@ -2504,7 +2504,19 @@ void WinPin::onDown(POINT pos, BOOL isRight)
 		// 前半段那一下点击是这个手势的一部分，它顺手放下的元素（只有序号是按一下就成形的，
 		// 别的都在抬手时按"没画出东西"清掉了）不该被带进剪切板
 		if (prevPressCreatedShape) drawing->history->undo();
-		copyToClipboard();
+		// 双击做什么由设置 - 贴图「双击操作」定：0 缩略图 / 1 复制并关闭（默认，也是
+		// 原来写死的那一条）/ 2 藏到侧边书签条
+		switch (Setting::get()->getDoubleClickAction()) {
+		case 0:
+			setThumbMode(true);
+			break;
+		case 2:
+			setHidden(true);
+			break;
+		default:
+			copyToClipboard();
+			break;
+		}
 		return;
 	}
 	// 选中元素外侧那几枚按钮：右上角的 × 是删掉，左上角是元素自己的动作图标（矩形/圆用它互转）。

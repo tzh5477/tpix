@@ -757,6 +757,14 @@ void WinSettingCommon::initHistoryCtrls()
 
 void WinSettingCommon::initPinCtrls()
 {
+    // 双击贴图做什么。三档有各自明确的用途，所以用下拉而不是开关：
+    // 缩略图（腾地方）/ 复制并关闭（截完就走，老行为）/ 藏到书签条（既不丢也不挡道）
+    auto dblRow = makeRow(L"setting.doubleClick");
+    makeSelectBtn(dblRow, 180.f,
+        { Lang::get(L"setting.dblThumb"), Lang::get(L"setting.dblCopyClose"), Lang::get(L"setting.dblHide") },
+        Setting::get()->getDoubleClickAction(),
+        [](int idx) { Setting::get()->setDoubleClickAction(idx); });
+
     makeSwitchBtn(makeRow(L"setting.restorePins"),
         [] { return Setting::get()->getRestorePins(); },
         [](bool on) { Setting::get()->setRestorePins(on); });

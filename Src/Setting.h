@@ -230,6 +230,10 @@ public:
 	void setPins(const JsonArray& arr);
 	bool getRestorePins();
 	void setRestorePins(bool val);
+	// 双击贴图做什么：0 = 缩略图，1 = 复制截图并关闭（默认，也是原来的硬编码行为），
+	// 2 = 隐藏到侧边书签条
+	int getDoubleClickAction();
+	void setDoubleClickAction(int val);
 	// 配置导入导出（H1 后半）。导出的是整份 config.json，但**不带 pin 那一组** ——
 	// 贴图是运行时状态，图片文件躺在数据目录的 pin/ 下，跟着配置一起搬到别的机器上只会指空。
 	// 导入则是整份替换：解析不出来就返回 false，configObj 一个字都不动
