@@ -40,21 +40,24 @@ namespace {
 
     // 「自定义」块在"还没挑过自定义色"时铺的七彩渐变画刷。八档取的就是 kThemePresets
     // 八个预设色。起止点用 0~1：Composition 的线性渐变画刷默认按**包围盒相对**映射，
-    // 与方块尺寸无关 —— 建一次一直用，不必等布局拿到尺寸
+    // 与方块尺寸无关 —— 不必等布局拿到尺寸就能建
+    //
+    // ⚠️ 不能像原先那样缓存成函数内 static：Ling 的**每个窗口各自 new 一个 Compositor**
+    // （见 WinBase 的构造），而 Composition 画刷是绑在造它的那个 Compositor 上的。
+    // 设置页关掉再打开就是另一扇窗、另一个 Compositor，拿旧画刷去 visual.Brush()
+    // 会抛 E_ACCESSDENIED（0x80070005）；这个异常从 WinSetting 的构造一路逃到
+    // dq 的回调里没人接，最终就是整个进程 fail-fast 消失 ——
+    // 作者报的"改过设置之后，再点设置程序直接退出"正是这一条（0xC000027B）
     winrt::Windows::UI::Composition::CompositionLinearGradientBrush themeRainbowBrush(Ling::Node* n)
     {
-        // WinRT 投影类型没有默认构造，用 {nullptr} 起步当"还没建"的判据
-        static winrt::Windows::UI::Composition::CompositionLinearGradientBrush brush{ nullptr };
-        if (!brush) {
-            auto comp = n->visual.Compositor();
-            brush = comp.CreateLinearGradientBrush();
-            brush.StartPoint({ 0.f, 0.f });
-            brush.EndPoint({ 1.f, 1.f });
-            auto stops = brush.ColorStops();
-            for (int i = 0; i < 8; i++)
-                stops.Append(comp.CreateColorGradientStop(
-                    i / 7.f, Ling::Color((kThemePresets[i] << 8) | 0xFF).getUIColor()));
-        }
+        auto comp = n->visual.Compositor();
+        auto brush = comp.CreateLinearGradientBrush();
+        brush.StartPoint({ 0.f, 0.f });
+        brush.EndPoint({ 1.f, 1.f });
+        auto stops = brush.ColorStops();
+        for (int i = 0; i < 8; i++)
+            stops.Append(comp.CreateColorGradientStop(
+                i / 7.f, Ling::Color((kThemePresets[i] << 8) | 0xFF).getUIColor()));
         return brush;
     }
 
