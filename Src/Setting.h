@@ -125,6 +125,10 @@ public:
 	void setAutoShot(bool val);
 	int getAutoShotMin();
 	void setAutoShotMin(int val);
+	// 启动程序后立即进入截图。默认 **false**：只挂托盘图标静默待命，
+	// 用户按快捷键 / 点托盘才截。开机自启的用户不该一开机器就被一张全屏遮罩糊住
+	bool getStartCapture();
+	void setStartCapture(bool val);
 	bool getIncludeCursor();
 	void setIncludeCursor(bool val);
 	// 框选形状：0 = 矩形，1 = 手绘自由多边形（多边形以外的像素导出成透明）

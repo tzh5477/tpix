@@ -449,6 +449,12 @@ void WinSettingCommon::applyTheme()
 
 void WinSettingCommon::initCapCtrls()
 {
+    // 启动程序后开始截图。默认关：程序起来只挂托盘图标静默待命，用户按快捷键 / 点托盘才截。
+    // 排在最前面 —— 它是这一页里唯一"决定程序起来长什么样"的一项
+    makeSwitchBtn(makeRow(L"setting.startCapture"),
+        [] { return Setting::get()->getStartCapture(); },
+        [](bool on) { Setting::get()->setStartCapture(on); });
+
     // 延时：0 就是关。给固定几档而不是自由输入 —— 这几秒是用来摆菜单、等悬停态的，
     // 真要精确到 7 秒的场景不存在
     constexpr int delayOpts[]{ 0, 2, 3, 5, 10 };

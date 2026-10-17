@@ -856,6 +856,19 @@ void Setting::setAutoShotMin(int val)
 	save();
 }
 
+bool Setting::getStartCapture()
+{
+	// 默认 false：静默驻留托盘。老配置里没有这个键，于是升上来之后"开机跟着起来就弹截图"
+	// 这件事自然停掉 —— 那正是作者要的默认值
+	return getCapObj().GetNamedBoolean(L"startCapture", false);
+}
+
+void Setting::setStartCapture(bool val)
+{
+	getCapObj().SetNamedValue(L"startCapture", JsonValue::CreateBooleanValue(val));
+	save();
+}
+
 int Setting::getCapShape()
 {
 	// 0 = 矩形，1 = 手绘（自由多边形）
