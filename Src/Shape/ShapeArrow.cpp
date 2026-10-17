@@ -473,17 +473,9 @@ void ShapeArrow::paintActionIcon(ID2D1DeviceContext* ctx, const int i, const D2D
 void ShapeArrow::onAction(const int i)
 {
 	if (i != 0) return;
-	auto x = startX;
-	auto y = startY;
-	auto img = win->getImgSize();
-	x = std::clamp(x, 0.f, (float)img.width);
-	y = std::clamp(y, 0.f, (float)img.height);
-	auto t = std::make_unique<ShapeText>(win);
-	t->toolId = L"text";
-	t->setTextAt(L"", x, y);
-	if (auto* added = win->history->addShape(std::move(t))) {
-		static_cast<ShapeText*>(added)->startEdit();
-	}
+	// 文字落在箭头起点上。建文本 / 还选中 / 排编辑器见 ShapeBase::addTextAnnotation ——
+	// 原来这里直接 startEdit，等于每次都让 TextBox 的"点在外头就 blur"把空文本收掉
+	addTextAnnotation(startX, startY);
 }
 
 std::unique_ptr<ShapeBase> ShapeArrow::clone(const float dx, const float dy, Canvas* target) const

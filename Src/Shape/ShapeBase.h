@@ -83,6 +83,10 @@ public:
 		const float rad, ID2D1Brush* brush, const float strokeW) {}
 	// 第 i 枚动作图标被点了
 	virtual void onAction(const int i) {}
+	// 「+文字」那枚图标的公共实现：(x, y) 是要落笔的位置（底图坐标），各元素按自己的
+	// 几何算（矩形/椭圆给右上角、线/笔给末点）。五处 onAction 原来各抄一遍，抄漏一步
+	// 就出各自的毛病 —— 详情见实现
+	void addTextAnnotation(const float x, const float y);
 	// 这一样元素能不能复制（见 clone）。默认不行 —— 左上角那枚复制按钮只在覆写成真
 	// 的元素上出现。擦除与水印不参与："再盖一块一模一样的"对它们没有意义
 	virtual bool copyable() const { return false; }

@@ -37,17 +37,8 @@ void ShapeEllipse::onAction(const int i)
 	if (i != 0) return;
 	D2D1_RECT_F b{};
 	if (!getShapeBounds(b)) return;
-	auto x = b.right;
-	auto y = b.top;
-	auto img = win->getImgSize();
-	x = std::clamp(x, 0.f, (float)img.width);
-	y = std::clamp(y, 0.f, (float)img.height);
-	auto t = std::make_unique<ShapeText>(win);
-	t->toolId = L"text";
-	t->setTextAt(L"", x, y);
-	if (auto* added = win->history->addShape(std::move(t))) {
-		static_cast<ShapeText*>(added)->startEdit();
-	}
+	// 与矩形同一条：新文本落在右上角，建文本 / 还选中 / 排编辑器见 ShapeBase::addTextAnnotation
+	addTextAnnotation(b.right, b.top);
 }
 
 std::unique_ptr<ShapeBase> ShapeEllipse::clone(const float dx, const float dy, Canvas* target) const

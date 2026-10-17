@@ -2397,6 +2397,8 @@ void WinPin::onDown(POINT pos, BOOL isRight)
 	// 上一次按的是批量按钮、抬手又没落在窗口里（没 SetCapture），
 	// 标志就会留着 —— 在这里一并复位，免得吃掉下一次抬手
 	batchBtnClicked = false;
+	// 同上一句：单选那条迷你条上的按钮也不 SetCapture，抬手收不回来就留着了
+	actionBtnClicked = false;
 	// 同 ctrlToggling：Ctrl+挑"待编组"那一支也不 SetCapture，抬手收不回来就留着了 —— 一并复位
 	ctrlPicking = false;
 	// 点上一下就把本窗口激活了（WM_MOUSEACTIVATE -> SetForegroundWindow），而激活会把这个
@@ -2557,6 +2559,8 @@ void WinPin::onDown(POINT pos, BOOL isRight)
 		if (drawing->selected && canHitActionBtn(hitPos)) {
 			auto idx = drawing->selected->hitActionBtn((float)hitPos.x, (float)hitPos.y);
 			if (idx >= 0) {
+				// 抬手那一下不许再走"选中 / 切工具"，理由见 actionBtnClicked 的声明
+				actionBtnClicked = true;
 				drawing->selected->onActionBtn(idx);
 				return;
 			}
@@ -2569,8 +2573,16 @@ void WinPin::onDown(POINT pos, BOOL isRight)
 	//（表现就是"单击 A 没反应"，而且上一个序号的描述还会被清空）
 	if (editingShape) {
 		editingShape->finishEditing();
-		// 这一下只是"关掉编辑器"：落在空白处就到此为止，不该顺手再落一个新元素
-		if (!drawing->shapeHover) return;
+		// 这一下只是"关掉编辑器"，一律到此为止 —— 不要拿"编辑期间自己钉上来的"那份
+		// hover 往下派发。ShapeText 编辑时为了"下一次点它自己"会把 shapeHover 一直
+		// 钉在自己身上（见 ShapeText::mouseMove），可用户多半是点到别处去收尾：
+		// 照着这个 hover 建立单选，选中就被挪到那段文字上，元素那条迷你条（含「+文字」）
+		// 也跟着挪走，接着再点「+文字」自然点了个空（作者报的"第二次没反应"）。
+		// 顺带：这条路径一变短，onUp 末尾那句"点元素就切到它的工具"也不会被误触发，
+		// 工具不会莫名其妙变成 text
+		drawing->shapeHover = nullptr;
+		refresh();
+		return;
 	}
 	// 记的是按下点在窗口内的偏移（客户区坐标），拖动时用它把抓住的那一点保持在光标下
 	pressPos.x = pos.x;
@@ -2901,6 +2913,14 @@ void WinPin::onUp(POINT pos, BOOL isRight)
 	// 抬手不该再走下面任何一条 —— 照常走的话会按光标底下那个元素建立单选
 	if (batchBtnClicked) {
 		batchBtnClicked = false;
+		return;
+	}
+	// 同上：这一下按的是单选迷你条上的按钮（+文字 / 复制 / ×）。动作在按下那一下做完了，
+	// 抬手照着光标底下那个元素建立单选，会把选中挪到新出现的文本上 —— 迷你条跟着挪走，
+	// 接着再点「+文字」就点了个空；而且 onUp 末尾那句"点一下元素就切到它的工具"会
+	// 把工具切成 text，重建子面板时连带把刚打开的编辑框顶掉
+	if (actionBtnClicked) {
+		actionBtnClicked = false;
 		return;
 	}
 	// 「选择画布」：这一下只是把选区 / 搬移放稳，没有新建的元素要收尾

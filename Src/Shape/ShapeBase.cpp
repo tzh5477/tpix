@@ -3,6 +3,7 @@
 #include "Canvas.h"
 #include "History.h"
 #include "ShapeBase.h"
+#include "ShapeText.h"
 #include "../Setting.h"
 #include <atomic>
 
@@ -208,6 +209,59 @@ void ShapeBase::onActionBtn(const int i)
 		return;
 	}
 	onAction(i);
+}
+
+// 「+文字」：五处派生类（矩形 / 椭圆 / 线 / 笔 / 箭头）原来各抄一遍，
+// 抄的时候漏了哪一步就出哪个毛病，所以收成这一份：
+//   1) 选中态还给调用者（this）—— History::addShape 会顺手把选中与悬停都给新文本，
+//      于是那枚「+文字」连同整条迷你条一起挪到新文本身上，接着再点就点了个空
+//      （作者报的"第一次成功、第二次没反应"）；
+//   2) 编辑器排到 dq 里开 —— TextBox 自己也订阅窗口的 onMouseDown，看到点击落在
+//      控件外就 blur()，blur 走 onFocusChanged → finishEdit，刚生出来的空文本当场
+//      被收成"待删除"。排在本次按下派发完之后，它就不会再抢到这一下
+//      （线 / 笔 / 椭圆 / 箭头原来是直接 startEdit，等于每次都踩这一脚）
+void ShapeBase::addTextAnnotation(const float x, const float y)
+{
+	auto img = win->getImgSize();
+	auto px = std::clamp(x, 0.f, (float)img.width);
+	auto py = std::clamp(y, 0.f, (float)img.height);
+	// 同一个元素上连着点「+文字」，每次算出来的落点是同一个（矩形/椭圆都在右上角），
+	// 第二段文字于是正好糊在第一段上面，打出来的字叠成一团 —— 看着还是像"点了没反应"。
+	// 落点压在哪段已有文字身上就挪到它下一行的位置，还压着就继续挪（上限兜住死循环）
+	const float gap = 4.f * win->getDpi();
+	for (int guard = 0; guard < 32; guard++) {
+		bool blocked = false;
+		float nextY = 0.f;
+		for (auto& s : win->history->shapes) {
+			if (!s || !dynamic_cast<ShapeText*>(s.get())) continue;
+			D2D1_RECT_F b{};
+			if (!s->getShapeBounds(b)) continue;
+			if (px < b.left - 2.f || px > b.right + 2.f) continue;
+			if (py < b.top - 2.f || py > b.bottom + 2.f) continue;
+			blocked = true;
+			nextY = b.bottom + gap;
+			break;
+		}
+		if (!blocked) break;
+		auto next = std::min(nextY, (float)img.height);
+		if (next <= py) break;
+		py = next;
+	}
+	auto t = std::make_unique<ShapeText>(win);
+	t->toolId = L"text";
+	t->setTextAt(L"", px, py);
+	auto* added = win->history->addShape(std::move(t));
+	if (!added) return;
+	win->selected = this;
+	win->shapeHover = this;
+	auto id = added->getInstanceId();
+	Ling::App::get()->dq.TryEnqueue([w = win, id]() {
+		for (auto& s : w->history->shapes) {
+			if (!s || s->getInstanceId() != id) continue;
+			if (auto text = dynamic_cast<ShapeText*>(s.get())) text->startEdit();
+			return;
+		}
+	});
 }
 
 D2D1_POINT_2F ShapeBase::rotatePoint(const D2D1_POINT_2F& p, const D2D1_POINT_2F& c, const float deg)
