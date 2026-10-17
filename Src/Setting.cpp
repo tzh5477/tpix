@@ -822,6 +822,21 @@ void Setting::setDoubleClickAction(int val)
 	save();
 }
 
+int Setting::getOcrAfterRecog()
+{
+	// 与识别模型 / 语言 / 引擎同住 toolPin.ocr 组（见 WinSettingTextRec）
+	auto val = (int)getToolObj(L"ocr").GetNamedNumber(L"afterRecog", 0.0);
+	if (val < 0 || val > 1) return 0;
+	return val;
+}
+
+void Setting::setOcrAfterRecog(int val)
+{
+	if (val < 0 || val > 1) val = 0;
+	getToolObj(L"ocr").SetNamedValue(L"afterRecog", JsonValue::CreateNumberValue((double)val));
+	save();
+}
+
 JsonObject Setting::getCapObj()
 {
 	auto obj = configObj.GetNamedObject(L"cap", nullptr);

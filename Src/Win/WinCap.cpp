@@ -855,7 +855,11 @@ void WinCap::startOcr()
     // 先走内置的：默认是自带的 PP-OCRv6 模型（不挑语言包、缺文件会自己下），
     // 模型走不通且系统也没装识别包时 isAvailable() 才是 false，那时才退回外部插件
     if (Ocr::isAvailable()) {
-        WinOcr::init(std::move(pixels), cw, ch);
+        // 设置 - 文字识别「识别之后」：0 弹窗展示结果（默认）/ 1 直接复制文字并关掉这次截图。
+        // 后者走静默模式：窗口不显示，认出字就进剪贴板收工；一个字都没认出来时它仍会把
+        // 识别窗显出来，不至于"点了没反应"（见 WinOcr::initAndCopy）
+        if (Setting::get()->getOcrAfterRecog() == 1) WinOcr::initAndCopy(std::move(pixels), cw, ch);
+        else WinOcr::init(std::move(pixels), cw, ch);
         close();
         return;
     }

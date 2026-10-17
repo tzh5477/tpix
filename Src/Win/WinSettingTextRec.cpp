@@ -12,14 +12,26 @@
 
 WinSettingTextRec::WinSettingTextRec(Ling::WinBase* parent) :Ling::Node(parent)
 {
+	// 「识别之后」排最前：它决定点了"文字识别"之后走哪条路（弹窗看结果 / 直接复制），
+	// 是这一页里最先需要定下来的一项
+	initAfterCtrl();
 	initModelCtrls();
-	// 顺序即显示顺序：识别模型 -> 模型目录 -> 识别语言
+	// 顺序即显示顺序：识别之后 -> 识别模型 -> 模型目录 -> 识别语言
 	initModelDirCtrl();
 	initLangCtrls();
 	// 窗口关掉时把还开着的列表一起收掉。列表是独立窗口，不会跟着本节点走
 	win->onDestroy.add([]() {
 		SelectPopup::close();
 	});
+}
+
+void WinSettingTextRec::initAfterCtrl()
+{
+	auto row = makeRow(L"setting.ocrAfter");
+	makeSelectBtn(row, 180.f,
+		{ Lang::get(L"setting.ocrAfterWin"), Lang::get(L"setting.ocrAfterCopy") },
+		Setting::get()->getOcrAfterRecog(),
+		[](int idx) { Setting::get()->setOcrAfterRecog(idx); });
 }
 
 WinSettingTextRec::~WinSettingTextRec()

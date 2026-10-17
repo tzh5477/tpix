@@ -80,8 +80,8 @@ namespace {
 	}
 }
 
-WinOcr::WinOcr(std::vector<BYTE>&& data, const int w, const int h, WinPin* owner)
-	: Ling::WinBase(), pixels(std::move(data)), imgW(w), imgH(h), pinOwner(owner)
+WinOcr::WinOcr(std::vector<BYTE>&& data, const int w, const int h, WinPin* owner, const bool silent)
+	: Ling::WinBase(), pixels(std::move(data)), imgW(w), imgH(h), pinOwner(owner), silentCopy(silent)
 {
 	// 关窗按钮的点击栈上不能同步 reset（use-after-free），推迟到下一轮消息循环。
 	// 捕获 this 而不是裸用：回调跑的时候这个对象可能已经不是当前那一个了（见 init 的存在性判断）
@@ -130,6 +130,36 @@ void WinOcr::init(std::vector<BYTE>&& data, const int w, const int h, WinPin* ow
 		winOcr->show();
 		SetForegroundWindow(winOcr->hwnd);
 	}
+}
+
+void WinOcr::initAndCopy(std::vector<BYTE>&& data, const int w, const int h)
+{
+	// 上一扇识别窗还开着（用户上一张截图留下的）：直接丢掉它，重新造一扇。
+	// 静默模式不能走 init() 那条"复用旧窗口再 show()"的路 —— 那会平白闪一下窗口
+	winOcr.reset();
+	winOcr.reset(new WinOcr(std::move(data), w, h, nullptr, true));
+}
+
+void WinOcr::finishSilent(const std::wstring& text)
+{
+	// 一个字都没认出来：静默就没意义了（用户只会觉得"点了没反应"）。退回正常显示，
+	// 让"未识别到文字"这类提示照常摆在框里
+	if (text.find_first_not_of(L" \t\r\n") == std::wstring::npos) {
+		revealSilent();
+		return;
+	}
+	Ling::Util::setTextToClipboard(text);
+	// 自己刚写进去的那次剪贴板变更不该再进剪贴板历史（与 WinPin 的复制同一个道理）
+	ShotHistory::get()->skipNextClipboard();
+	close();
+}
+
+void WinOcr::revealSilent()
+{
+	if (!silentCopy) return;
+	silentCopy = false;
+	show();
+	SetForegroundWindow(hwnd);
 }
 
 void WinOcr::dispose()
@@ -347,10 +377,11 @@ void WinOcr::onCreated()
 		ShotHistory::get()->skipNextClipboard();
 	});
 
-	show();
+	// 静默模式（「识别之后 = 直接复制文字」）不显示窗口：认出字就直接进剪贴板并关窗，
+	// 认不出时 finishSilent 会自己把它显出来。窗口本身照建 —— 识别那套状态全挂在它身上
+	if (!silentCopy) show();
 	startRecognize();
 }
-
 // 标题行（顶 36 逻辑像素内）当拖拽区。WS_POPUP 没有系统标题栏，不给这一段
 // HTCAPTION 的话用户按不住窗口 —— 识别结果可能很长，窗口得能拖到别处看
 LRESULT WinOcr::onHitTest(const POINT pos)
@@ -435,6 +466,7 @@ void WinOcr::startRecognize()
 					result.clear();
 					html.clear();
 					box->setText(err.empty() ? Lang::get(L"ocr.empty") : err);
+					revealSilent();     // 认不出东西：静默模式收掉，让用户看见原因
 					return;
 				}
 				if (asTable) setTable(table);
@@ -443,6 +475,7 @@ void WinOcr::startRecognize()
 					result.clear();
 					html.clear();
 					box->setText(err);
+					revealSilent();
 				}
 				else setResult(text);
 			});
@@ -467,6 +500,7 @@ void WinOcr::startAiRecognize()
 		result.clear();
 		html.clear();
 		box->setText(Lang::get(L"ai.noKey"));
+		revealSilent();     // 没配密钥：静默模式收掉，这提示得让人看见
 		return;
 	}
 	box->setText(Lang::get(L"ocr.recognizing"));
@@ -499,6 +533,7 @@ void WinOcr::startAiRecognize()
 				result.clear();
 				html.clear();
 				box->setText(err);
+				revealSilent();     // 同上：出错时必须看得见
 				return;
 			}
 			// 模型给的东西首尾常带空白（粘了段说明、多打了几个换行），剥干净再用
@@ -571,6 +606,7 @@ void WinOcr::setResult(const std::wstring& text)
 {
 	html.clear();
 	result = text;
+	if (silentCopy) { finishSilent(text); return; }
 	box->setText(text.empty() ? Lang::get(L"ocr.empty") : text);
 }
 
@@ -583,6 +619,7 @@ void WinOcr::setTable(const TableResult& table)
 		html.clear();
 		result.clear();
 	}
+	if (silentCopy) { finishSilent(result); return; }
 	box->setText(result.empty() ? Lang::get(L"ocr.empty") : result);
 }
 
