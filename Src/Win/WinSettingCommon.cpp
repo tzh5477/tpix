@@ -12,6 +12,7 @@
 #include "../Util.h"
 #include "WinSetting.h"
 #include "WinSettingCommon.h"
+#include "WinColorPicker.h"
 #include "WinHistory.h"
 
 namespace {
@@ -23,6 +24,39 @@ namespace {
     // 开关「开」态的颜色 = 主题色（原来是写死的 0x597ef7）。makeSwitchBtn / setAutoStartBtn /
     // applyTheme 三处共用 —— 强调色改成跟主题色走之后，各写一份必然漏掉一处
     unsigned int kSwitchOnColor() { return (Setting::getThemeColor() << 8) | 0xFF; }
+
+    // 对勾的墨色 / 浅色描边判据，与 WinColorPicker.cpp 那份同一套算式。刻意不复用：
+    // 不想让设置页与取色器互相 include（同 ToolSub 与它之前的取舍）
+    unsigned int themeInkOn(unsigned int rgba)
+    {
+        const auto r = (rgba >> 24) & 0xFF, g = (rgba >> 16) & 0xFF, b = (rgba >> 8) & 0xFF;
+        return (0.299 * r + 0.587 * g + 0.114 * b) > 150 ? 0x000000FF : 0xFFFFFFFF;
+    }
+    bool themeLight(unsigned int rgba)
+    {
+        const auto r = (rgba >> 24) & 0xFF, g = (rgba >> 16) & 0xFF, b = (rgba >> 8) & 0xFF;
+        return (0.299 * r + 0.587 * g + 0.114 * b) > 200;
+    }
+
+    // 「自定义」块在"还没挑过自定义色"时铺的七彩渐变画刷。八档取的就是 kThemePresets
+    // 八个预设色。起止点用 0~1：Composition 的线性渐变画刷默认按**包围盒相对**映射，
+    // 与方块尺寸无关 —— 建一次一直用，不必等布局拿到尺寸
+    winrt::Windows::UI::Composition::CompositionLinearGradientBrush themeRainbowBrush(Ling::Node* n)
+    {
+        // WinRT 投影类型没有默认构造，用 {nullptr} 起步当"还没建"的判据
+        static winrt::Windows::UI::Composition::CompositionLinearGradientBrush brush{ nullptr };
+        if (!brush) {
+            auto comp = n->visual.Compositor();
+            brush = comp.CreateLinearGradientBrush();
+            brush.StartPoint({ 0.f, 0.f });
+            brush.EndPoint({ 1.f, 1.f });
+            auto stops = brush.ColorStops();
+            for (int i = 0; i < 8; i++)
+                stops.Append(comp.CreateColorGradientStop(
+                    i / 7.f, Ling::Color((kThemePresets[i] << 8) | 0xFF).getUIColor()));
+        }
+        return brush;
+    }
 
     // 换数据目录时把旧目录整棵树复制过去。**只在目标是空目录时做** —— 非空说明用户
     // 已经在那儿放了东西（或者搬过一次），硬塞会混。返回是否真的复制了
@@ -295,8 +329,8 @@ void WinSettingCommon::initThemeCtrls()
     auto box = row->makeChild<Ling::Node>();
     box->setFlexDirection(Ling::FlexDirection::Row);
     box->setAlignItems(Ling::Align::Center);
-    // 八个预设够选了：贴图边框、按钮选中底色、控制点、悬浮球那条细线都从这一个色派生，
-    // 自定义色的入口留给「取色器」（那边本来就是干这个的），这里不重复做一套
+    // 八个预设 + 末尾一块「自定义」入口（点开取色器）。贴图边框、按钮选中底色、控制点、
+    // 悬浮球那条细线都从这一个色派生
     // 主题色那排色块的清单是成员不是局部变量：onClick 回调要遍历它改描边，
     // 局部 vector 按引用抓进 lambda，函数一返回就是悬垂 —— 点击即崩（探针实测）
     themeSwatches.clear();
@@ -318,6 +352,23 @@ void WinSettingCommon::initThemeCtrls()
         });
         themeSwatches.push_back(btn);
     }
+    // 末尾那块「自定义」入口：点开取色器任意调。颜色画在子 Label 上而不是 Button 自己 ——
+    // 两态（七彩渐变 ↔ 回显）要换 visual 的画刷，挂 Button 上会被 hover 抹掉
+    //（与 ToolSub 末尾块同一套做法，见 TOPIC-color §2）
+    themeMoreBtn = box->makeChild<Ling::Button>();
+    themeMoreBtn->setWidth(26.f);
+    themeMoreBtn->setHeight(26.f);
+    themeMoreBtn->setMarginRight(8.f);
+    themeMoreBtn->setAlignItems(Ling::Align::Center);
+    themeMoreBtn->setJustifyContent(Ling::Justify::Center);
+    // 颜色画在子 Label 上、灰底只当框：⚠️ setBg 了就必须给 setHoverBg（Button 的规矩）
+    themeMoreBtn->setHoverBg(0xF2F2F2FF);
+    themeMoreLabel = themeMoreBtn->makeChild<Ling::Label>();
+    themeMoreLabel->setSize(18.f, 18.f);
+    themeMoreLabel->setAlignItems(Ling::Align::Center);
+    themeMoreLabel->setJustifyContent(Ling::Justify::Center);
+    themeMoreLabel->setBorderRadius(2.f);
+    themeMoreBtn->onClick.add([this](Ling::Button*) { toggleThemePicker(themeMoreBtn); });
     applyThemeSwatchStyle();
 }
 
@@ -325,10 +376,60 @@ void WinSettingCommon::initThemeCtrls()
 void WinSettingCommon::applyThemeSwatchStyle()
 {
     const unsigned int cur = Setting::getThemeColor();
+    bool onPreset{ false };
     for (size_t i = 0; i < themeSwatches.size(); ++i) {
         const bool on = (kThemePresets[i] == cur);
+        if (on) onPreset = true;
         themeSwatches[i]->setBorder(on ? 2.f : 1.f, on ? 0x333333FF : 0xE0E0E0FF);
     }
+    // 末尾「自定义」块的两种态，判据与 ToolSub 末尾块同一套（"当前色在不在预设里"）：
+    //   ① 预设色 → 七彩渐变、不打勾：选中由预设里那一格的描边表达，这里再回显就成了
+    //      两个地方说同一件事；"这块 = 挑任意颜色的入口"的含义只有一直铺七彩才立得住
+    //   ② 自定义色 → 回显 + 打勾：预设行里没有任何一格能反映它，这里是唯一的预览，
+    //      选中描边也亮在这块上
+    if (!themeMoreLabel) return;
+    const auto rgba = (cur << 8) | 0xFF;
+    if (onPreset) {
+        themeMoreLabel->visual.Brush(themeRainbowBrush(themeMoreLabel));
+        themeMoreLabel->setText(L"");
+        themeMoreLabel->setBorder(0.f, 0);
+        themeMoreBtn->setBorder(1.f, 0xE0E0E0FF);
+        return;
+    }
+    // 两态都直接换 visual 的画刷，不走 setBg —— 渐变没法用 setBg 表达
+    themeMoreLabel->visual.Brush(
+        themeMoreLabel->visual.Compositor().CreateColorBrush(Ling::Color(rgba).getUIColor()));
+    themeMoreLabel->setText(L"\ue6ad");
+    themeMoreLabel->setColor(themeInkOn(rgba));
+    themeMoreLabel->setBorder(themeLight(rgba) ? 1.f : 0.f, 0xA8A8A8FF);
+    themeMoreBtn->setBorder(2.f, 0x333333FF);
+}
+
+// 应用一个主题色：落盘 + 描边 + 广播。预设格的 onClick 与取色器的写回共用 ——
+// 各写一遍的话，改一处忘一处（同 applyThemeSwatchStyle 的理由）
+void WinSettingCommon::applyThemeColor(unsigned int rgba)
+{
+    Setting::setThemeColor(rgba >> 8);
+    applyThemeSwatchStyle();
+    App::applyTheme();
+}
+
+void WinSettingCommon::toggleThemePicker(Ling::Node* anchor)
+{
+    WinColorPicker::Source src;
+    src.presets.assign(std::begin(kThemePresets), std::end(kThemePresets));
+    for (auto c : Setting::getThemeCustoms())
+        src.customs.push_back((c << 8) | 0xFF);
+    src.current = []() { return (Setting::getThemeColor() << 8) | 0xFF; };
+    src.onUse = [this](UINT32 c) { applyThemeColor(c); };
+    src.onConfirm = [this](UINT32 c) {
+        applyThemeColor(c);
+        // 与预设重复的不进自定义栅格：预设格自己能回显，存一份纯属多余
+        const auto rgb = c >> 8;
+        if (std::find(std::begin(kThemePresets), std::end(kThemePresets), rgb) == std::end(kThemePresets))
+            Setting::addThemeCustom(rgb);
+    };
+    WinColorPicker::show(src, anchor, win);
 }
 
 // 主题色改了：这一页上的强调色都要重上一层。
@@ -348,6 +449,12 @@ void WinSettingCommon::applyTheme()
 
 void WinSettingCommon::initCapCtrls()
 {
+    // 启动程序后开始截图。默认关：程序起来只挂托盘图标静默待命，用户按快捷键 / 点托盘才截。
+    // 排在最前面 —— 它是这一页里唯一"决定程序起来长什么样"的一项
+    makeSwitchBtn(makeRow(L"setting.startCapture"),
+        [] { return Setting::get()->getStartCapture(); },
+        [](bool on) { Setting::get()->setStartCapture(on); });
+
     // 延时：0 就是关。给固定几档而不是自由输入 —— 这几秒是用来摆菜单、等悬停态的，
     // 真要精确到 7 秒的场景不存在
     constexpr int delayOpts[]{ 0, 2, 3, 5, 10 };
@@ -650,6 +757,14 @@ void WinSettingCommon::initHistoryCtrls()
 
 void WinSettingCommon::initPinCtrls()
 {
+    // 双击贴图做什么。三档有各自明确的用途，所以用下拉而不是开关：
+    // 缩略图（腾地方）/ 复制并关闭（截完就走，老行为）/ 藏到书签条（既不丢也不挡道）
+    auto dblRow = makeRow(L"setting.doubleClick");
+    makeSelectBtn(dblRow, 180.f,
+        { Lang::get(L"setting.dblThumb"), Lang::get(L"setting.dblCopyClose"), Lang::get(L"setting.dblHide") },
+        Setting::get()->getDoubleClickAction(),
+        [](int idx) { Setting::get()->setDoubleClickAction(idx); });
+
     makeSwitchBtn(makeRow(L"setting.restorePins"),
         [] { return Setting::get()->getRestorePins(); },
         [](bool on) { Setting::get()->setRestorePins(on); });

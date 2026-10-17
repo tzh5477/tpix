@@ -247,6 +247,7 @@ bool ShapeText::mouseWheel(const float x, const float y, const short delta)
 void ShapeText::setCursor()
 {
 	if (hoverDraggerIndex == 9) {
+		// 旋转手柄回到十字光标：上箭头（↑）盖住了手柄上那枚原有的旋转小图标
 		SetCursor(LoadCursor(nullptr, IDC_CROSS));
 	}
 	else if (hoverDraggerIndex == 8) {
@@ -345,10 +346,13 @@ void ShapeText::finishEdit()
 	const bool unchanged = (text == editText0 && fontSize == editFontSize0);
 	if (text.empty()) {
 		if (editText0.empty()) win->history->dropMark();
-		// 空文本不留痕：点一下没输入就走开，不该在 history 里攒一堆看不见的 shape。
-		// 不能在这儿直接删 —— 本函数是从 shape 自己的事件回调里调进来的，删了后面还要用 this。
-		Ling::App::get()->dq.TryEnqueue([w = win, self = this]() {
-			w->history->removeShape(self);
+		auto id = getInstanceId();
+		Ling::App::get()->dq.TryEnqueue([w = win, id]() {
+			ShapeBase* target{ nullptr };
+			for (auto& s : w->history->shapes) {
+				if (s && s->getInstanceId() == id) { target = s.get(); break; }
+			}
+			if (target) w->history->removeShape(target);
 		});
 	}
 	else if (unchanged) {

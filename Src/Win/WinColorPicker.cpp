@@ -6,7 +6,6 @@
 #include <string>
 #include "../App.h"
 #include "../Lang.h"
-#include "../Tool/ToolSub.h"
 #include "WinColorPicker.h"
 
 namespace {
@@ -164,7 +163,7 @@ namespace {
 	class Picker : public Ling::WinBase
 	{
 	public:
-		explicit Picker(ToolSub* sub) : sub{ sub }
+		explicit Picker(WinColorPicker::Source&& src) : src{ std::move(src) }
 		{
 			// 不激活：见头文件里那段说明。TOPMOST 保证它盖在工具条之上
 			createNativeWindow(WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE, WS_POPUP);
@@ -184,10 +183,10 @@ namespace {
 		}
 
 	private:
-		// 色板表里预设之外的那一段（用户存下来的自定义色）
+		// 「自定义」栅格的行数按它的个数走（见 winHeight）
 		int customCount() const
 		{
-			return std::max(0, (int)sub->colorTable().size() - sub->presetCount());
+			return (int)src.customs.size();
 		}
 
 		// 面板比 Ling 默认的最小跟踪尺寸（800×600）小得多。不放开的话 SetWindowPos
@@ -206,8 +205,8 @@ namespace {
 			onMouseMove.add([this](POINT pos) { onMove(pos); });
 			onMouseUp.add([this](POINT, bool) { onUp(); });
 
-			// 初值取自工具当前用的颜色 —— 面板一打开就停在那个颜色上，而不是每次都从头
-			rgbToHsv(sub->getSelectedColorValue(), hue, sat, val);
+			// 初值取自调用方当前用的颜色 —— 面板一打开就停在那个颜色上，而不是每次都从头
+			rgbToHsv(src.current(), hue, sat, val);
 
 			body->setBg(0xFFFFFFFF);
 			body->setBorder(1.f, 0xE0E0E0FF);
@@ -251,7 +250,7 @@ namespace {
 
 			// —— 常用色 ——
 			addTitle(Lang::get(L"color.common"));
-			presetGrid = addGrid(gridRows(sub->presetCount()));
+			presetGrid = addGrid(gridRows((int)src.presets.size()));
 			// —— 自定义色（用户按「确定」存下来的）——
 			addTitle(Lang::get(L"color.custom"));
 			customGrid = addGrid(gridRows(customCount()));
@@ -267,7 +266,7 @@ namespace {
 			makeBtn(btns, Lang::get(L"color.ok"), [this]() {
 				// 只在这一下才落盘：拖动 SV 的过程中随时都在变色，一路写盘既没必要
 				// 也会把色板塞满一层拖过去的中间色
-				sub->applyColor(currentColor());
+				src.onConfirm(currentColor());
 				WinColorPicker::close();
 				}, true, 8.f);
 
@@ -331,22 +330,19 @@ namespace {
 			b->onClick.add([onClick](Ling::Button*) { onClick(); });
 		}
 
-		// 按色板表铺格子：预设在前、自定义在后（表本身就是这个顺序）。
-		// 点中任意一格就是直接用它 —— 这些格子本来就对应表里的一项，走 setColorIndex
+		// 铺格子：常用色在前、自定义在后，各占各的栅格。
+		// 点中任意一格就是直接用它 —— 走 onUse，"生效"意味着什么由调用方决定
 		void buildSwatches()
 		{
-			const auto& table = sub->colorTable();
-			const auto pc = (size_t)sub->presetCount();
-			for (size_t i = 0; i < table.size(); i++) {
-				auto* grid = (i < pc) ? presetGrid : customGrid;
-				if (!grid) continue;
-				// 自定义那几排满了就不摆 —— 多出来的硬塞会把弹窗撑高，底下的按钮被推出可视区
-				if (i >= pc && (i - pc) >= (size_t)(cols * gridRows(customCount()))) break;
-				addSwatch(grid, table[i], i);
-			}
+			for (size_t i = 0; i < src.presets.size(); ++i)
+				addSwatch(presetGrid, src.presets[i]);
+			// 自定义那几排满了就不摆 —— 多出来的硬塞会把弹窗撑高，底下的按钮被推出可视区
+			const auto cap = (size_t)(cols * gridRows(customCount()));
+			for (size_t i = 0; i < src.customs.size() && i < cap; ++i)
+				addSwatch(customGrid, src.customs[i]);
 		}
 
-		void addSwatch(Ling::Node* grid, UINT32 color, size_t idx)
+		void addSwatch(Ling::Node* grid, UINT32 color)
 		{
 			// 色块就是按钮本身（底色 = 颜色，对勾用它自己的 Text）。
 			// 不另起一个 Label 装色块：Button 构造里已经 makeChild<Text> 了一个子节点，
@@ -372,10 +368,10 @@ namespace {
 			if (isLightColor(color)) btn->setBorder(1.f, 0xA8A8A8FF);
 			// 当前用的那个颜色打勾。只按建面板那一刻算 —— 拖 SV 的过程中不打勾更新，
 			// 那是每帧都要重铺一遍格子的事，而拖动时用户看的是预览块
-			if (color == sub->getSelectedColorValue()) btn->setText(L"\ue6ad");
-			btn->onClick.add([this, idx](Ling::Button*) {
-				// 点格子就是直接用它：这些格子本来就对应表里的一项，只需换下标
-				sub->setColorIndex(idx);
+			if (color == src.current()) btn->setText(L"\ue6ad");
+			btn->onClick.add([this, color](Ling::Button*) {
+				// 点格子就是直接用它
+				src.onUse(color);
 				WinColorPicker::close();
 				});
 		}
@@ -429,7 +425,7 @@ namespace {
 				val = 1.f - v;      // 上边是"最亮"，往下压暗
 			}
 			else if (drag == Drag::Hue) {
-				hue = u * 360.f;
+				hue = v * 360.f;
 			}
 			syncInfo();
 			// 两个画布的光标位置 / 底色都得跟着重画
@@ -541,7 +537,7 @@ namespace {
 
 	private:
 		enum class Drag { None, Sv, Hue };
-		ToolSub* sub{ nullptr };
+		WinColorPicker::Source src;
 		Ling::Canvas* svCanvas{ nullptr };
 		Ling::Canvas* hueCanvas{ nullptr };
 		Ling::Label* preview{ nullptr };
@@ -574,10 +570,9 @@ namespace {
 	}
 }
 
-void WinColorPicker::show(ToolSub* sub, Ling::Node* anchor)
+void WinColorPicker::show(const Source& src, Ling::Node* anchor, Ling::WinBase* owner)
 {
-	if (!sub || !anchor) return;
-	auto* owner = static_cast<Ling::WinBase*>(sub);
+	if (!anchor || !owner || !src.onUse || !src.onConfirm) return;
 	close();
 
 	auto ox = (float)owner->x;
@@ -585,8 +580,8 @@ void WinColorPicker::show(ToolSub* sub, Ling::Node* anchor)
 	auto dpi = owner->dpi > 0.f ? owner->dpi : 1.f;
 	const auto pw = (int)std::lround(winW * dpi);
 	// 高度随格子数走（预设 9 个只有 1 行），与 onCreated 里摆出来的行数用同一个算法
-	const auto customN = std::max(0, (int)sub->colorTable().size() - sub->presetCount());
-	const auto ph = (int)std::lround(winHeight(sub->presetCount(), customN) * dpi);
+	const auto customN = (int)src.customs.size();
+	const auto ph = (int)std::lround(winHeight((int)src.presets.size(), customN) * dpi);
 	// 默认弹在按钮上方：工具条一般贴着标注区下沿，往下弹会压住正在画的地方；
 	// 上方放不下才翻到下面。用按钮所在显示器的工作区判断，而不是整个虚拟桌面
 	POINT at{ (int)(ox + anchor->x + anchor->w / 2.f), (int)(oy + anchor->y) };
@@ -603,7 +598,7 @@ void WinColorPicker::show(ToolSub* sub, Ling::Node* anchor)
 
 	anchorRect = RECT{ (int)(ox + anchor->x), (int)(oy + anchor->y),
 		(int)(ox + anchor->x + anchor->w), (int)(oy + anchor->y + anchor->h) };
-	picker = std::make_unique<Picker>(sub);
+	picker = std::make_unique<Picker>(WinColorPicker::Source(src));
 	// 这里刻意不走 setSize / setPosition / show()：Ling 的那三个用的是不带 SWP_NOACTIVATE
 	// 的 SetWindowPos / ShowWindow，会把这个带 WS_EX_NOACTIVATE 的窗口真正激活 ——
 	// 编辑文字时点开取色器就会把焦点从 TextBox 上抢走，正在输入的那行字当场断掉。

@@ -70,11 +70,13 @@ public:
 	//（右键收起是另一套语义，那边只动窗口，见 onDown 里那段）
 	void setToolsVisible(bool on);
 	bool isToolsVisible() const;
-	// 从书签条「点一下放回」走的那一路：把工具条一并请回来，并**默认选中矩形工具**。
-	// 与空格那条路（setToolsVisible(true)）同一套手法，区别只在于这里不改"用户有没有主动收过
-	// 工具条"那件事 —— 从书签条把一张图请回来，本意就是要接着动它，工具条该跟着出来。
-	// 缩略图 / 贴边细条这两种收法本来就没给工具条留位置，照 setToolsVisible 的做法先还原
-	void armDefaultTool();
+	// 从书签条「点一下放回」走的那一路：把图放回桌面，**不进编辑态** ——
+	// 两条工具条与右侧竖排保持收着，看着就是一张普通贴图；要标注按空格
+	//（setToolsVisible(true) 会预选几何图形工具）。
+	// 原来这里做的是"放回 + 预选矩形工具"（armDefaultTool），作者要求单击书签上的
+	// 缩略图只原位展示截图、并且能直接拖着走，所以工具条那半截撤掉了 ——
+	// 顺带把画笔一起放掉，左键才是"拖图"而不是"落笔"
+	void restoreFromBar();
 	// 底图位图本身。给书签条的 hover 浮层预览用（那里要按它的原始像素算缩放比例）。
 	// 只借出去看一眼，所有权还在 drawing 上；没有底图时返回 nullptr
 	ID2D1Bitmap1* getScreenImg() const;
@@ -284,6 +286,9 @@ private:
 	// 而"收放工具条"在窗口拖拽、右键、空格、缩略图、贴边细条、藏进书签条这些路上有十来处 ——
 	// 散着写必漏一处，统一收在这一个口子上
 	void setSideBarVisible(bool on);
+	// 把三条工具条直接收起来，不抢前台、也不退画笔 —— 只给"启动恢复出来的贴图"用
+	//（setToolsVisible(false) 是给用户按空格用的那一套，它要先把前台收回自己）
+	void quietTools();
 	// 自己认双击（窗口类没带 CS_DBLCLKS）。比的是屏幕坐标，见实现里的说明。
 	// 认一次就把 lastDownTime / lastDownPos 更新掉，所以同一次点击只能问一次
 	bool takeDoubleClick();
@@ -435,6 +440,10 @@ private:
 	// 收成细条 / 缩略图前的位置与尺寸，还原时恢复。两个模式互斥，共用这一组字段
 	bool isMinimized{ false };
 	bool isThumb{ false };
+	// 这一扇窗是"刚截下来的那一张"（由 WinCap::startPin 建，唯一入口是 WinPin::init）。
+	// 只影响 ESC：截图流程里 ESC = 这张不要了，一按就退出整次截图；剪贴板 / 文件 / 历史 /
+	// 动图 / 上次退出前留下的贴图不是截图流程，保持"退一步、再按一次关窗"
+	bool fromCapture{ false };
 	// 上一次 layoutTools 算出来的是不是"工具条落在 WinPin 内部"（overlay）模式。
 	// 重叠状态一变就得把工具条重新提到最前面，见 raiseTools
 	bool toolsOverlay{ false };

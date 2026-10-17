@@ -14,6 +14,10 @@ public:
 private:
 	// 主题色块那圈"当前选中"的描边。onClick 与 applyTheme 共用 —— 各写一遍必然对不上
 	void applyThemeSwatchStyle();
+	// 应用一个主题色（预设格与取色器共用）：落盘 + 描边 + App::applyTheme 广播
+	void applyThemeColor(unsigned int rgba);
+	// 主题色那排末尾的「自定义」块：点开取色器（WinColorPicker）。颜色写回也收在这里
+	void toggleThemePicker(Ling::Node* anchor);
 	void initAutoStartCtrls();
 	void initLangCtrls();
 	// 主题色：一排预设色块，点哪个哪个就是全界面的强调色。存 Setting 的 ui.theme
@@ -49,6 +53,9 @@ private:
 	// 主题色那排色块。必须是成员：onClick 回调要逐个改描边，按引用抓局部 vector
 	// 等回调真正触发时栈帧早没了（悬垂引用，点了就崩）
 	std::vector<Ling::Button*> themeSwatches;
+	// 末尾那块「自定义」入口（七彩渐变 / 回显当前自定义色）与其色块标签
+	Ling::Button* themeMoreBtn{ nullptr };
+	Ling::Label* themeMoreLabel{ nullptr };
 	// 开关按钮的清单（按钮 + 它读的那个状态）。主题色改了要按"当前状态"重上一层色，
 	// 而那层色是在建按钮那一刻上的 —— 只记按钮、不记 read，重刷时就复原不回来
 	struct SwitchRef {

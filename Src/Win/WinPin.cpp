@@ -370,6 +370,12 @@ void WinPin::saveAll()
 			obj.SetNamedValue(L"lock", JsonValue::CreateBooleanValue(pin->isLocked));
 			obj.SetNamedValue(L"title", JsonValue::CreateStringValue(pin->pinTitle));
 			obj.SetNamedValue(L"group", JsonValue::CreateNumberValue((double)pin->groupId));
+			// 藏在侧边书签条里的那几张也要记下"藏在哪条边"：作者要的是"藏着的图留在
+			// 书签条里"—— 不记这一项的话，明明是特意收起来的图，下次启动会自己回到桌面上
+			if (pin->getHidden()) {
+				obj.SetNamedValue(L"hidden", JsonValue::CreateBooleanValue(true));
+				obj.SetNamedValue(L"edge", JsonValue::CreateNumberValue((double)pin->getBarEdge()));
+			}
 			arr.Append(obj);
 		}
 		// 上一次留下的文件与这次的编号对不上，留着只会越积越多，所以本轮没写到的都删掉。
@@ -396,6 +402,16 @@ void WinPin::finishRestore(JsonObject obj)
 	restoreProps(pin, obj);
 	pin->groupId = (int)obj.GetNamedNumber(L"group", 0.0);
 	if (pin->groupId >= nextGroupId) nextGroupId = pin->groupId + 1;
+	// 恢复出来的贴图**不进编辑状态**：ToolMain / ToolPinSide 的构造函数里都 show() 过一次，
+	// 不收的话启动后每张贴图旁边都挂着一排按钮（作者：原位展示，按空格才进编辑）。
+	// 收法走 quietTools 而不是 setToolsVisible —— 后者要抢前台，启动时不该动用户的焦点
+	pin->quietTools();
+	// 上次退出前藏在侧边书签条里的，这次还藏在书签条里（作者：藏着的图留在书签条）。
+	// setHidden 内部会调 PinHiddenBar::sync，角上那条书签跟着建出来
+	if (obj.GetNamedBoolean(L"hidden", false)) {
+		const auto edge = (int)obj.GetNamedNumber(L"edge", 0.0);
+		pin->setHidden(true, edge == 1 ? BarEdge::Top : BarEdge::Left);
+	}
 }
 
 void WinPin::restoreAll()
@@ -462,20 +478,27 @@ void WinPin::drawAnnotationComposite(ID2D1DeviceContext* ctx, float fitScale, fl
 	ctx->SetTransform(D2D1::Matrix3x2F::Identity());
 }
 
-void WinPin::armDefaultTool()
+void WinPin::quietTools()
 {
-	if (isClosed || !toolMain) return;
-	// 缩略图 / 贴边细条这两种收法本来就没给工具条留位置，先还原再谈显示
-	if (isThumb) setThumbMode(false);
-	if (isMinimized) setMinimized(false);
-	toolMain->show();
-	setSideBarVisible(true);
-	// 由它带着跑 layoutTools，位置一并摆好。预选矩形这一手照抄空格那条路 ——
-	// 从书签条把一张图点回来，本意就是接着动它，来回落在同一个起点上。
-	// 已经在用别的画笔时也会换成矩形：这是"请回来"的固定终点，不是"恢复上次状态"
-	toolMain->selectTool(L"geom");
-	// selectTool 重建过 ToolSub，工具条可能被重新排在整套窗口里 ≠ 一定在最前，补一次
-	raiseTools();
+	// 三条工具条都是独立顶层窗口，它们的构造函数里就 show() 过一次（ToolMain / ToolPinSide
+	// 的 ctor 都调了 show），所以"恢复出来的贴图"必须显式收一遍，否则启动后屏幕上
+	// 每张贴图旁边都挂着一排按钮 —— 作者要的是"原位展示、不进编辑状态"
+	if (toolMain) toolMain->hide();
+	if (toolSub) toolSub->hideTools();
+	setSideBarVisible(false);
+}
+
+void WinPin::restoreFromBar()
+{
+	if (isClosed) return;
+	// 放回时不请工具条：setHidden(false) 会按"藏起来之前工具条开着没有"决定要不要请回来，
+	// 而这一下要的就是"只把图放回原位"，所以先把那个记号清掉
+	toolsWereVisible = false;
+	// 这一步负责"隐身 → 可见"以及把窗口钳回工作区（藏的手势常常把它整幅留在屏幕外）
+	setHidden(false);
+	// 再落到"只是一张图"的状态：与空格收起工具条同一条路 —— 它会把画笔一起放掉，
+	// 于是左键是拖图而不是落笔（作者要的"支持拖拽位置"）
+	setToolsVisible(false);
 }
 
 void WinPin::applyWinSize()
@@ -2142,6 +2165,9 @@ WinPin::~WinPin()
 void WinPin::init(int x, int y, int w, int h, const std::wstring& toolId)
 {
 	auto ptr = new WinPin(x, y, w, h, nullptr, toolId);
+	// 这一条是**截图**那条路唯一的入口（其余入口是 initFromData / initFromAnim：
+	// 剪贴板、文件、历史翻页、长图、动图）。标上"刚截下来的"，ESC 才是"这张不要了"
+	ptr->fromCapture = true;
 	std::unique_ptr<WinPin> winPin{ ptr };
 	ptr->createNativeWindow(WS_EX_TOPMOST| WS_EX_TOOLWINDOW, WS_MAXIMIZEBOX | WS_MINIMIZEBOX | WS_POPUP);
 	winPins.push_back(std::move(winPin));
@@ -2501,7 +2527,19 @@ void WinPin::onDown(POINT pos, BOOL isRight)
 		// 前半段那一下点击是这个手势的一部分，它顺手放下的元素（只有序号是按一下就成形的，
 		// 别的都在抬手时按"没画出东西"清掉了）不该被带进剪切板
 		if (prevPressCreatedShape) drawing->history->undo();
-		copyToClipboard();
+		// 双击做什么由设置 - 贴图「双击操作」定：0 缩略图 / 1 复制并关闭（默认，也是
+		// 原来写死的那一条）/ 2 藏到侧边书签条
+		switch (Setting::get()->getDoubleClickAction()) {
+		case 0:
+			setThumbMode(true);
+			break;
+		case 2:
+			setHidden(true);
+			break;
+		default:
+			copyToClipboard();
+			break;
+		}
 		return;
 	}
 	// 选中元素外侧那几枚按钮：右上角的 × 是删掉，左上角是元素自己的动作图标（矩形/圆用它互转）。
@@ -2743,7 +2781,11 @@ void WinPin::onMove(POINT pos)
 			auto dx = newX - x, dy = newY - y;
 			// 光标一步没挪也会来 WM_MOUSEMOVE。抬手时要靠它区分"拖过"和"只是点了一下"：
 			// 只有真拖过才轮得到"拖到屏幕边线上就藏起来"那一条
-			if (pos.x != pressPos.x || pos.y != pressPos.y) hasDragged = true;
+			if (!hasDragged) {
+				auto mx = pos.x - pressPos.x;
+				auto my = pos.y - pressPos.y;
+				if (mx * mx + my * my >= 9) hasDragged = true;
+			}
 			// 位置没变就别再挪了。窗口自己挪完之后系统会补一条"光标没动"的 WM_MOUSEMOVE
 			// （客户端坐标是相对窗口算的，窗口一动它就变），按上面那条公式算出来的正好是原位。
 			// 实测每挪一步会多出三分之一次这种空挪，一次空挪照样要走一遍 WM_MOVE -> onMoved，
@@ -2757,14 +2799,22 @@ void WinPin::onMove(POINT pos)
 		// 正拉着框选：选框跟着光标走。hasDragged 的判法与别的拖拽同一条规矩 ——
 		// 抬手时 collectMarquee 要用它区分"拉了个框"和"只是点了一下空白"
 		if (marqueeOn) {
-			if (pos.x != pressPos.x || pos.y != pressPos.y) hasDragged = true;
+			if (!hasDragged) {
+				auto mx = pos.x - pressPos.x;
+				auto my = pos.y - pressPos.y;
+				if (mx * mx + my * my >= 9) hasDragged = true;
+			}
 			marqueeCur = imgPos;
 			refreshNow();
 			return;
 		}
 		else if(drawing->shapeHover) {
 			// 光标一步没挪也会来 WM_MOUSEMOVE，所以跟按下点比一下再算拖动
-			if (pos.x != pressPos.x || pos.y != pressPos.y) hasDragged = true;
+			if (!hasDragged) {
+				auto mx = pos.x - pressPos.x;
+				auto my = pos.y - pressPos.y;
+				if (mx * mx + my * my >= 9) hasDragged = true;
+			}
 			drawing->shapeHover->mouseDrag((float)imgPos.x, (float)imgPos.y);
 			refreshNow();
 		}
@@ -2905,9 +2955,11 @@ void WinPin::onUp(POINT pos, BOOL isRight)
 		// 两种情况都把 ToolMain 显示出来：拖动期间它是藏着的，右键之后它也是藏着的，
 		// 左键点一下就是"我还要用工具条"。ToolSub 由 curId 驱动，这会儿仍然不该出来，
 		// layoutTools 里已经管了
-		layoutTools();
-		toolMain->show();
-		setSideBarVisible(true);
+		if (toolsWereVisible) {
+			layoutTools();
+			toolMain->show();
+			setSideBarVisible(true);
+		}
 	}
 	else if (drawing->shapeHover) {
 		// 新建的这一笔按下马上弹起，什么也没画出来：直接丢掉，
@@ -3804,6 +3856,12 @@ void WinPin::onKey(UINT key)
 	// 已经画在图上的一概不动；再按一次才关窗。
 	// 剪裁 / 滚动那几种中途态在 WinCap::onKey 里已经各有各的"退一步"，这里只管贴图窗口这一层
 	else if (key == VK_ESCAPE) {
+		// 刚截下来的这一张：ESC 就是"这张不要了" —— 一按就退掉整次截图。
+		// 原先这里统一走"退一步"：截完预选了矩形工具，于是第一下 ESC 只是把工具放掉，
+		// 图还留在屏幕上，看着就是"按了 ESC 反而停在截图编辑界面"（作者要求任何阶段都退出）。
+		// 别的窗口（剪贴板 / 文件 / 历史 / 动图 / 上次退出前留下的贴图）不是截图流程，
+		// 保持原来的"退一步、再按一次关窗"
+		if (fromCapture) { close(); return; }
 		if (stepBack()) return;
 		close();
 	}
@@ -4486,6 +4544,17 @@ BOOL WinPin::setCursor()
 		bool handled{ false };
 		onCursor(&handled);
 		if (handled) return TRUE;
+	}
+	{
+		POINT pos{};
+		GetCursorPos(&pos);
+		ScreenToClient(hwnd, &pos);
+		auto ip = toImgPos(pos);
+		if (drawing->selected && canHitActionBtn(ip)
+			&& drawing->selected->hitActionBtn((float)ip.x, (float)ip.y) >= 0) {
+			SetCursor(LoadCursor(nullptr, IDC_HAND));
+			return TRUE;
+		}
 	}
 	// 选文态：整张图都是"文字区"，光标给 I 形。放在 hasDrawTool 之前 —— 那种状态下
 	// curId 是空的，不先拦一句就会被下面的"画不了 → 拖窗口"判成四向箭头

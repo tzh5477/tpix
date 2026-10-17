@@ -2,9 +2,11 @@
 #include <cmath>
 #include <algorithm>
 #include "Canvas.h"
+#include "History.h"
 #include "Tool/ToolMain.h"
 #include "Tool/ToolSub.h"
 #include "ShapeLine.h"
+#include "ShapeText.h"
 
 using Microsoft::WRL::ComPtr;
 
@@ -250,6 +252,33 @@ ShapeLine::~ShapeLine()
 
 }
 
+void ShapeLine::paintActionIcon(ID2D1DeviceContext* ctx, const int i, const D2D1_POINT_2F& c,
+	const float rad, ID2D1Brush* brush, const float strokeW)
+{
+	if (i != 0 || !ctx || !brush) return;
+	auto k = rad * 0.55f;
+	ctx->DrawLine({ c.x - k, c.y - k }, { c.x + k, c.y - k }, brush, strokeW);
+	ctx->DrawLine({ c.x, c.y - k }, { c.x, c.y + k }, brush, strokeW);
+}
+
+void ShapeLine::onAction(const int i)
+{
+	if (i != 0) return;
+	if (linePoints.empty()) return;
+	auto end = linePoints.back();
+	auto x = end.x;
+	auto y = end.y;
+	auto img = win->getImgSize();
+	x = std::clamp(x, 0.f, (float)img.width);
+	y = std::clamp(y, 0.f, (float)img.height);
+	auto t = std::make_unique<ShapeText>(win);
+	t->toolId = L"text";
+	t->setTextAt(L"", x, y);
+	if (auto* added = win->history->addShape(std::move(t))) {
+		static_cast<ShapeText*>(added)->startEdit();
+	}
+}
+
 std::unique_ptr<ShapeBase> ShapeLine::clone(const float dx, const float dy, Canvas* target) const
 {
 	return cloneSelf(*this, dx, dy, target);
@@ -388,6 +417,21 @@ void ShapeLine::mouseDrag(const float x, const float y)
 	if (creating && isOrtho()) {
 		trail.push_back({ x, y });
 		snapTrail();
+		makePath();
+		return;
+	}
+	if (!creating && (hoverDraggerIndex == 0 || hoverDraggerIndex == 1) && (isOrtho() || isPoly())) {
+		if (linePoints.empty()) return;
+		if (hoverDraggerIndex == 0) {
+			auto& p = linePoints.front();
+			p.x = x;
+			p.y = y;
+		}
+		else {
+			auto& p = linePoints.back();
+			p.x = x;
+			p.y = y;
+		}
 		makePath();
 		return;
 	}

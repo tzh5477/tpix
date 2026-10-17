@@ -242,9 +242,8 @@ void PinHiddenBar::restoreFromPreview(WinPin* pin)
 	if (peek == pin) conceal();
 	// setHidden(false) 会走 PinHiddenBar::sync() 重建本窗（藏着的都放回了可能就没这条了），
 	// 之后 this 可能失效 —— 所以它必须放最后，后面不再碰 this 的成员
-	pin->setHidden(false);
-	// 点回来 = 要接着动这张图：工具条一并请回来，并默认选中矩形工具
-	pin->armDefaultTool();
+	// restoreFromBar = "只放回原位，不进编辑态"（工具条不请回来，左键直接拖图）
+	pin->restoreFromBar();
 }
 
 // 光标是不是压在书签条本身上（判断浮层要不要留）
@@ -283,9 +282,8 @@ void PinHiddenBar::handleDown(POINT pos, bool isRight)
 		// 它正被 hover 露着的话，先让 conceal 把它挪回原位再放回 —— 于是"点一下就回到原来的地方"；
 		// 没露着就直接放回（它这会儿的 x/y 本来就是藏之前那一份）
 		if (peek == target) conceal();
-		target->setHidden(false);
-		// 点回来 = 要接着动这张图：工具条一并请回来，并默认选中矩形工具
-		target->armDefaultTool();
+		// 单击书签 = 只把图放回原位展示，**不进编辑态**（作者要求）；要标注按空格
+		target->restoreFromBar();
 		return;
 	}
 	killTimer(dwellId);
@@ -307,8 +305,8 @@ void PinHiddenBar::handleDown(POINT pos, bool isRight)
 	switch (cmd) {
 	case R_RESTORE:
 		if (peek == target) conceal();
-		target->setHidden(false);
-		target->armDefaultTool();
+		// 与左键同义：放回原位，不进编辑态
+		target->restoreFromBar();
 		break;
 	case R_COPY: target->copyImageToClipboard(); break;
 	case R_SAVE: target->saveToFile(); break;      // 成功即关窗

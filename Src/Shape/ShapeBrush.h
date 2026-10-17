@@ -12,6 +12,10 @@ class ShapeBrush : public ShapeLineBase
 {
 public:
 	ShapeBrush(Canvas* win);
+	int actionCount() const override { return 1; }
+	void paintActionIcon(ID2D1DeviceContext* ctx, const int i, const D2D1_POINT_2F& c,
+		const float rad, ID2D1Brush* brush, const float strokeW) override;
+	void onAction(const int i) override;
 	void paint(ID2D1DeviceContext* ctx) override;
 	void applyStyle() override;
 	void applyToolStyle() override;

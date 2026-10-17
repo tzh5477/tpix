@@ -217,6 +217,9 @@ App::App()
 		// 全局鼠标：按住 Win 拖动就出结果。钩子挂在 UI 线程上，得在这条线程起来之后装
 		GlobalMouse::setEnabled(Setting::get()->getGlobalMouse());
 		WinBall::init();        // 悬浮球：配置里开过就一直挂着，位置是上次拖到的地方
-		WinCap::init();//默认情况下，应用启动随即进入截图模式
+		// 启动即截图现在是配置项（设置 - 截图「启动程序后开始截图」），默认**关**：
+		// 开机自启的用户一开机器就被一张全屏遮罩糊住，那多半不是他要的。
+		// 关着的时候 tpix 只静默驻留托盘，等用户自己按快捷键 / 点托盘图标再截
+		if (Setting::get()->getStartCapture()) WinCap::init();
     }
 }

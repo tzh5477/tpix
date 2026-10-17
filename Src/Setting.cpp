@@ -806,6 +806,37 @@ void Setting::setRestorePins(bool val)
 	save();
 }
 
+int Setting::getDoubleClickAction()
+{
+	// 只有 0 / 1 / 2 三档。配置文件被手改坏了就按默认的"复制并关闭"来，
+	// 别让一个非法的数把双击变成什么都不做
+	auto val = (int)getPinObj().GetNamedNumber(L"doubleClick", 1.0);
+	if (val < 0 || val > 2) return 1;
+	return val;
+}
+
+void Setting::setDoubleClickAction(int val)
+{
+	if (val < 0 || val > 2) val = 1;
+	getPinObj().SetNamedValue(L"doubleClick", JsonValue::CreateNumberValue((double)val));
+	save();
+}
+
+int Setting::getOcrAfterRecog()
+{
+	// 与识别模型 / 语言 / 引擎同住 toolPin.ocr 组（见 WinSettingTextRec）
+	auto val = (int)getToolObj(L"ocr").GetNamedNumber(L"afterRecog", 0.0);
+	if (val < 0 || val > 1) return 0;
+	return val;
+}
+
+void Setting::setOcrAfterRecog(int val)
+{
+	if (val < 0 || val > 1) val = 0;
+	getToolObj(L"ocr").SetNamedValue(L"afterRecog", JsonValue::CreateNumberValue((double)val));
+	save();
+}
+
 JsonObject Setting::getCapObj()
 {
 	auto obj = configObj.GetNamedObject(L"cap", nullptr);
@@ -853,6 +884,19 @@ int Setting::getAutoShotMin()
 void Setting::setAutoShotMin(int val)
 {
 	getCapObj().SetNamedValue(L"autoShotMin", JsonValue::CreateNumberValue((double)val));
+	save();
+}
+
+bool Setting::getStartCapture()
+{
+	// 默认 false：静默驻留托盘。老配置里没有这个键，于是升上来之后"开机跟着起来就弹截图"
+	// 这件事自然停掉 —— 那正是作者要的默认值
+	return getCapObj().GetNamedBoolean(L"startCapture", false);
+}
+
+void Setting::setStartCapture(bool val)
+{
+	getCapObj().SetNamedValue(L"startCapture", JsonValue::CreateBooleanValue(val));
 	save();
 }
 
@@ -1041,6 +1085,43 @@ void Setting::setThemeColor(unsigned int rgb)
 {
 	auto s = Setting::get();
 	s->getUiObj().SetNamedValue(L"theme", JsonValue::CreateNumberValue(static_cast<double>(rgb & 0xFFFFFF)));
+	s->save();
+}
+
+std::vector<unsigned int> Setting::getThemeCustoms()
+{
+	// "RRGGBB,RRGGBB" 十六进制逗号串 → 数组。串坏了的那段跳过，不让一个脏值毁掉整排
+	std::vector<unsigned int> out;
+	// GetNamedString 给的是 winrt::hstring，落进 std::wstring 再做串处理
+	const std::wstring str{ Setting::get()->getUiObj().GetNamedString(L"themeCustoms", L"") };
+	size_t pos = 0;
+	while (pos < str.size()) {
+		auto comma = str.find(L',', pos);
+		if (comma == std::wstring::npos) comma = str.size();
+		if (comma > pos)
+			out.push_back(wcstoul(str.substr(pos, comma - pos).c_str(), nullptr, 16) & 0xFFFFFF);
+		pos = comma + 1;
+	}
+	return out;
+}
+
+void Setting::addThemeCustom(unsigned int rgb)
+{
+	rgb &= 0xFFFFFF;
+	auto s = Setting::get();
+	auto list = getThemeCustoms();
+	// 已存过的挪到队首（"最近用过"排前面），封 8 个 —— 再多第一屏就摆不下了
+	list.erase(std::remove(list.begin(), list.end(), rgb), list.end());
+	list.insert(list.begin(), rgb);
+	if (list.size() > 8) list.resize(8);
+	std::wstring str;
+	wchar_t buf[8]{};
+	for (auto c : list) {
+		if (!str.empty()) str += L',';
+		swprintf(buf, 8, L"%06X", c);
+		str += buf;
+	}
+	s->getUiObj().SetNamedValue(L"themeCustoms", JsonValue::CreateStringValue(str));
 	s->save();
 }
 

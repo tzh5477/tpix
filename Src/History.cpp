@@ -286,8 +286,14 @@ void History::removeShape(ShapeBase* target)
 	// 点空白处收掉空笔那一趟删掉的会是上一笔标注
 	for (auto it = shapes.begin(); it != shapes.end(); ++it) {
 		if (it->get() == target) {
-			canvas->shapeHover = nullptr;
-			canvas->selected = nullptr;
+			// 只清"真的指着被删元素"的那两个指针，不能无条件清空：
+			// 空文本标注的删除是异步的（ShapeText::finishEdit 入队 DispatcherQueue），
+			// 等它真跑的时候用户往往已经把下一个对象点选上了 —— 无条件清空会把刚建立的
+			// 选中/悬停一起冲掉，动作条（「+文字」/×）随之消失，表现就是
+			// "用'点下一个对象'收掉空文本框后，后续对象点「+文字」全没反应"。
+			// 删 A 不该牵连 B：指向别的元素的指针原样保留。
+			if (canvas->shapeHover == target) canvas->shapeHover = nullptr;
+			if (canvas->selected == target) canvas->selected = nullptr;
 			// 真删之前先从框选那一批里摘掉 —— 它是按指针存的，erase 之后就悬空了
 			canvas->dropFromMultiSelect(target);
 			shapes.erase(it);

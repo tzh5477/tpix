@@ -17,6 +17,8 @@ private:
 	Ling::Node* makeRow(const std::wstring& labelKey);
 	Ling::Button* makeSelectBtn(Ling::Node* row, float width,
 		const std::vector<std::wstring>& items, int cur, std::function<void(int)> onPick);
+	// 「识别之后」：弹窗展示结果（默认）/ 直接复制文字并关闭截图
+	void initAfterCtrl();
 	void initModelCtrls();
 	void initLangCtrls();
 	// 模型目录：显示 <数据目录>\ocr 并提供「打开目录」，用户把新的 det/rec onnx

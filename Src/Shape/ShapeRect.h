@@ -12,6 +12,10 @@ class ShapeRect : public ShapeRectBase
 public:
 	ShapeRect(Canvas* win);
 	~ShapeRect();
+	int actionCount() const override { return 1; }
+	void paintActionIcon(ID2D1DeviceContext* ctx, const int i, const D2D1_POINT_2F& c,
+		const float rad, ID2D1Brush* brush, const float strokeW) override;
+	void onAction(const int i) override;
 	// 复制（见 ShapeBase::clone）：矩形与圆共用同一套几何，各写一行 cloneSelf
 	// 定下"复制出来还是我自己这一类"
 	bool copyable() const override { return true; }

@@ -64,8 +64,6 @@ public:
 	void layoutLongTool();
 	// ToolLong 上那枚手动 / 自动滚动开关
 	void toggleLongMode();
-	// 长截图收工并贴图。ESC 走的就是这条：滚完即贴图，再按一次 ESC 由贴图窗口退出
-	void longFinishAndPin();
 	bool isLongManual() const;
 	// 用户在另存为对话框里取消时返回 false，此时图还在，不该收工
 	bool longSaveToFile();

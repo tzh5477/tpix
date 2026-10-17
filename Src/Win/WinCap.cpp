@@ -130,6 +130,13 @@ void WinCap::onCreated()
     getPixImg(pos);
     setPixPos(pos);
     show();
+    // 键盘消息只送到**有焦点**的那个窗口。ShowWindow(SW_SHOW) 只是"请求激活"，用户是在
+    // 别的程序里按的截图快捷键时，系统的前台锁会把它压住 —— 遮罩看得见、鼠标也框得动，
+    // 但 ESC / Ctrl+C 这类按键全落在原来那个程序身上。表现就是"框完按 ESC 没反应，
+    // 一松手反倒进了编辑界面"（与本文件 enterLiveStage 里那条注释同一个坑）。
+    // 遮罩一出来就把它明确拿到前台，按键才有地方去
+    SetForegroundWindow(hwnd);
+    SetFocus(hwnd);
     // 带着预设选区进来的（编辑界面右侧竖排的「截长图」）：先把选区摆好，再直接进目标阶段。
     // enterByArg 的前提正是"选区已经定下来了"，这里恰好满足它。
     // 之所以要绕这一道而不是在 initWithRect 里建窗后立刻做：cutMask 是 onCreated 之前
@@ -316,13 +323,18 @@ void WinCap::onKey(UINT key)
         return cr;
     };
     if (key == VK_ESCAPE) {
-        // 滚动中：ESC = 收工并贴图。图钉到桌面后这个窗口就没用了，
-        // 再按一次 ESC 关的是贴图窗口 —— 与"截图 -> 贴图 -> 退出"的手感一致
-        if (capLong && capLong->isRunning()) {
-            longFinishAndPin();
-            return;
-        }
+        // ESC = 整次截图作废，任何阶段都一样：还在拖框、选区已定、滚动长图、录屏中，
+        // 一律直接退出这次截图（软件本身照常驻留）。
+        // 原先滚动截图上这一下是"收工并贴图"、拖框中那一支更糟：只 close() 却不撤
+        // isPress / 鼠标捕获，紧接着来的那条 WM_LBUTTONUP 会把 onUp 走完，
+        // 于是"按 ESC 反而进了截图编辑界面"。
+        // 先把本窗口这边的中途态清干净，再关窗 —— onClosed 里会 dispose 掉
+        // capLong / capVideo（录屏的停止与临时文件清理都在 dispose 里）
+        isPress = false;
+        isPolyDrag = false;
+        releaseMouse();
         close();
+        return;
     }
     else if (key == 'H' && (GetKeyState(VK_CONTROL) & 0x8000)) {
 		auto cr = func();
@@ -778,13 +790,6 @@ void WinCap::toggleLongMode()
     if (capLong) capLong->toggleMode();
 }
 
-void WinCap::longFinishAndPin()
-{
-    if (!capLong) return;
-    capLong->finish(true);
-    close();
-}
-
 bool WinCap::isLongManual() const
 {
     return capLong && capLong->isManual();
@@ -850,7 +855,11 @@ void WinCap::startOcr()
     // 先走内置的：默认是自带的 PP-OCRv6 模型（不挑语言包、缺文件会自己下），
     // 模型走不通且系统也没装识别包时 isAvailable() 才是 false，那时才退回外部插件
     if (Ocr::isAvailable()) {
-        WinOcr::init(std::move(pixels), cw, ch);
+        // 设置 - 文字识别「识别之后」：0 弹窗展示结果（默认）/ 1 直接复制文字并关掉这次截图。
+        // 后者走静默模式：窗口不显示，认出字就进剪贴板收工；一个字都没认出来时它仍会把
+        // 识别窗显出来，不至于"点了没反应"（见 WinOcr::initAndCopy）
+        if (Setting::get()->getOcrAfterRecog() == 1) WinOcr::initAndCopy(std::move(pixels), cw, ch);
+        else WinOcr::init(std::move(pixels), cw, ch);
         close();
         return;
     }

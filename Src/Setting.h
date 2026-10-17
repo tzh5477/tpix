@@ -125,6 +125,10 @@ public:
 	void setAutoShot(bool val);
 	int getAutoShotMin();
 	void setAutoShotMin(int val);
+	// 启动程序后立即进入截图。默认 **false**：只挂托盘图标静默待命，
+	// 用户按快捷键 / 点托盘才截。开机自启的用户不该一开机器就被一张全屏遮罩糊住
+	bool getStartCapture();
+	void setStartCapture(bool val);
 	bool getIncludeCursor();
 	void setIncludeCursor(bool val);
 	// 框选形状：0 = 矩形，1 = 手绘自由多边形（多边形以外的像素导出成透明）
@@ -170,6 +174,10 @@ public:
 	// 改一处全界面跟着变，不必逐处找色值。setThemeColor 立即落盘
 	static unsigned int getThemeColor();
 	static void setThemeColor(unsigned int rgb);
+	// 用户从取色器存下的自定义主题色（ui.themeCustoms，"RRGGBB,RRGGBB" 逗号分隔，
+	// 新用的在前）。addThemeCustom 去重置顶、封 8 个后落盘；与预设重复的由调用方挡掉
+	static std::vector<unsigned int> getThemeCustoms();
+	static void addThemeCustom(unsigned int rgb);
 	// 主题色的浅底：往白里掺 10%（按钮选中那一档的底色）。跟着主题色走，不单独存配置
 	static unsigned int getThemeSoft();
 	// AI（翻译 / 对话，S1–S3）。存在 config.json 的 ai 组。
@@ -222,6 +230,14 @@ public:
 	void setPins(const JsonArray& arr);
 	bool getRestorePins();
 	void setRestorePins(bool val);
+	// 双击贴图做什么：0 = 缩略图，1 = 复制截图并关闭（默认，也是原来的硬编码行为），
+	// 2 = 隐藏到侧边书签条
+	int getDoubleClickAction();
+	void setDoubleClickAction(int val);
+	// 文字识别跑完之后：0 = 弹窗展示结果（默认），1 = 直接复制文字并关闭截图。
+	// 存在 toolPin.ocr 组里，与识别模型 / 语言 / 引擎同一处
+	int getOcrAfterRecog();
+	void setOcrAfterRecog(int val);
 	// 配置导入导出（H1 后半）。导出的是整份 config.json，但**不带 pin 那一组** ——
 	// 贴图是运行时状态，图片文件躺在数据目录的 pin/ 下，跟着配置一起搬到别的机器上只会指空。
 	// 导入则是整份替换：解析不出来就返回 false，configObj 一个字都不动
