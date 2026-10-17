@@ -4510,10 +4510,11 @@ BOOL WinPin::setCursor()
 		GetCursorPos(&pos);
 		ScreenToClient(hwnd, &pos);
 		auto ip = toImgPos(pos);
-		// 旋转手柄给十字 —— 与单选那枚（ShapeRectBase::setCursor 的 HitRotate）同一套提示。
+		// 旋转手柄给系统箭头 —— 与单选那枚（ShapeRectBase::setCursor 的 HitRotate）同一套：
+		// 任何方向光标的热点都压在图标上，会把那枚旋转小图标盖掉。
 		// 手柄与那两格都要先过 canHitBatchUI：压在别的元素身上时那一下归元素，光标也就不该变成手
 		if (batchRotating || (canHitBatchUI(ip) && batchRotateHit(ip))) {
-			SetCursor(LoadCursor(nullptr, IDC_CROSS));
+			SetCursor(LoadCursor(nullptr, IDC_ARROW));
 			return TRUE;
 		}
 		if (canHitBatchUI(ip) && batchBtnAt(ip) >= 0) {
