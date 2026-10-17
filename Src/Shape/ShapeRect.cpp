@@ -1,5 +1,6 @@
 ﻿#include "pch.h"
 #include <algorithm>
+#include "App.h"
 #include "Canvas.h"
 #include "Tool/ToolMain.h"
 #include "Tool/ToolSub.h"
@@ -46,9 +47,27 @@ void ShapeRect::onAction(const int i)
 	auto t = std::make_unique<ShapeText>(win);
 	t->toolId = L"text";
 	t->setTextAt(L"", x, y);
-	if (auto* added = win->history->addShape(std::move(t))) {
-		static_cast<ShapeText*>(added)->startEdit();
-	}
+	auto* added = win->history->addShape(std::move(t));
+	if (!added) return;
+	// 打开编辑器必须排到"这一次按下"派发完之后，不能在这儿直接 startEdit。
+	// 原因：TextBox 自己也订阅了窗口的 onMouseDown，而它看到"点在控件外"就 blur()，
+	// blur 会走 onFocusChanged → ShapeText::finishEdit，空文本于是当场被收成"待删除"。
+	// 现在这一下按的是元素下方那条迷你条（新文本落在元素的右上角，光标根本不在框里），
+	// 所以直接在 onDown 里开编辑器，等派发轮到 TextBox 时它就把这个刚出生的空文本抹掉了 ——
+	// 表现就是"点 +文字 什么也没有，输入框都不出来"。
+	// 为什么只有第一次点了有用：TextBox 是懒建的（WinPin::getTextBox），它第一次是在
+	// 派发过程中才订阅上的，而 Ling 的事件派发按开始时的订阅表走，那一次轮不到它；
+	// 从第二次起它已经在表里了，于是每一次都当场被抹掉。
+	// 排一条队列消息即可绕开：那时本次按下已经派发完，TextBox 只会在用户真的点到别处时收尾。
+	// 按实例 ID 找回而不是直接捕获指针：这一格之间可能被撤销 / 删掉
+	auto id = added->getInstanceId();
+	Ling::App::get()->dq.TryEnqueue([w = win, id]() {
+		for (auto& s : w->history->shapes) {
+			if (!s || s->getInstanceId() != id) continue;
+			if (auto text = dynamic_cast<ShapeText*>(s.get())) text->startEdit();
+			return;
+		}
+	});
 }
 
 std::unique_ptr<ShapeBase> ShapeRect::clone(const float dx, const float dy, Canvas* target) const
