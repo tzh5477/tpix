@@ -478,22 +478,6 @@ void WinPin::drawAnnotationComposite(ID2D1DeviceContext* ctx, float fitScale, fl
 	ctx->SetTransform(D2D1::Matrix3x2F::Identity());
 }
 
-void WinPin::armDefaultTool()
-{
-	if (isClosed || !toolMain) return;
-	// 缩略图 / 贴边细条这两种收法本来就没给工具条留位置，先还原再谈显示
-	if (isThumb) setThumbMode(false);
-	if (isMinimized) setMinimized(false);
-	toolMain->show();
-	setSideBarVisible(true);
-	// 由它带着跑 layoutTools，位置一并摆好。预选矩形这一手照抄空格那条路 ——
-	// 从书签条把一张图点回来，本意就是接着动它，来回落在同一个起点上。
-	// 已经在用别的画笔时也会换成矩形：这是"请回来"的固定终点，不是"恢复上次状态"
-	toolMain->selectTool(L"geom");
-	// selectTool 重建过 ToolSub，工具条可能被重新排在整套窗口里 ≠ 一定在最前，补一次
-	raiseTools();
-}
-
 void WinPin::quietTools()
 {
 	// 三条工具条都是独立顶层窗口，它们的构造函数里就 show() 过一次（ToolMain / ToolPinSide
@@ -502,6 +486,19 @@ void WinPin::quietTools()
 	if (toolMain) toolMain->hide();
 	if (toolSub) toolSub->hideTools();
 	setSideBarVisible(false);
+}
+
+void WinPin::restoreFromBar()
+{
+	if (isClosed) return;
+	// 放回时不请工具条：setHidden(false) 会按"藏起来之前工具条开着没有"决定要不要请回来，
+	// 而这一下要的就是"只把图放回原位"，所以先把那个记号清掉
+	toolsWereVisible = false;
+	// 这一步负责"隐身 → 可见"以及把窗口钳回工作区（藏的手势常常把它整幅留在屏幕外）
+	setHidden(false);
+	// 再落到"只是一张图"的状态：与空格收起工具条同一条路 —— 它会把画笔一起放掉，
+	// 于是左键是拖图而不是落笔（作者要的"支持拖拽位置"）
+	setToolsVisible(false);
 }
 
 void WinPin::applyWinSize()

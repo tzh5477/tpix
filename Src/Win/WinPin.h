@@ -70,11 +70,13 @@ public:
 	//（右键收起是另一套语义，那边只动窗口，见 onDown 里那段）
 	void setToolsVisible(bool on);
 	bool isToolsVisible() const;
-	// 从书签条「点一下放回」走的那一路：把工具条一并请回来，并**默认选中矩形工具**。
-	// 与空格那条路（setToolsVisible(true)）同一套手法，区别只在于这里不改"用户有没有主动收过
-	// 工具条"那件事 —— 从书签条把一张图请回来，本意就是要接着动它，工具条该跟着出来。
-	// 缩略图 / 贴边细条这两种收法本来就没给工具条留位置，照 setToolsVisible 的做法先还原
-	void armDefaultTool();
+	// 从书签条「点一下放回」走的那一路：把图放回桌面，**不进编辑态** ——
+	// 两条工具条与右侧竖排保持收着，看着就是一张普通贴图；要标注按空格
+	//（setToolsVisible(true) 会预选几何图形工具）。
+	// 原来这里做的是"放回 + 预选矩形工具"（armDefaultTool），作者要求单击书签上的
+	// 缩略图只原位展示截图、并且能直接拖着走，所以工具条那半截撤掉了 ——
+	// 顺带把画笔一起放掉，左键才是"拖图"而不是"落笔"
+	void restoreFromBar();
 	// 底图位图本身。给书签条的 hover 浮层预览用（那里要按它的原始像素算缩放比例）。
 	// 只借出去看一眼，所有权还在 drawing 上；没有底图时返回 nullptr
 	ID2D1Bitmap1* getScreenImg() const;
