@@ -435,6 +435,10 @@ private:
 	// 收成细条 / 缩略图前的位置与尺寸，还原时恢复。两个模式互斥，共用这一组字段
 	bool isMinimized{ false };
 	bool isThumb{ false };
+	// 这一扇窗是"刚截下来的那一张"（由 WinCap::startPin 建，唯一入口是 WinPin::init）。
+	// 只影响 ESC：截图流程里 ESC = 这张不要了，一按就退出整次截图；剪贴板 / 文件 / 历史 /
+	// 动图 / 上次退出前留下的贴图不是截图流程，保持"退一步、再按一次关窗"
+	bool fromCapture{ false };
 	// 上一次 layoutTools 算出来的是不是"工具条落在 WinPin 内部"（overlay）模式。
 	// 重叠状态一变就得把工具条重新提到最前面，见 raiseTools
 	bool toolsOverlay{ false };

@@ -2142,6 +2142,9 @@ WinPin::~WinPin()
 void WinPin::init(int x, int y, int w, int h, const std::wstring& toolId)
 {
 	auto ptr = new WinPin(x, y, w, h, nullptr, toolId);
+	// 这一条是**截图**那条路唯一的入口（其余入口是 initFromData / initFromAnim：
+	// 剪贴板、文件、历史翻页、长图、动图）。标上"刚截下来的"，ESC 才是"这张不要了"
+	ptr->fromCapture = true;
 	std::unique_ptr<WinPin> winPin{ ptr };
 	ptr->createNativeWindow(WS_EX_TOPMOST| WS_EX_TOOLWINDOW, WS_MAXIMIZEBOX | WS_MINIMIZEBOX | WS_POPUP);
 	winPins.push_back(std::move(winPin));
@@ -3818,6 +3821,12 @@ void WinPin::onKey(UINT key)
 	// 已经画在图上的一概不动；再按一次才关窗。
 	// 剪裁 / 滚动那几种中途态在 WinCap::onKey 里已经各有各的"退一步"，这里只管贴图窗口这一层
 	else if (key == VK_ESCAPE) {
+		// 刚截下来的这一张：ESC 就是"这张不要了" —— 一按就退掉整次截图。
+		// 原先这里统一走"退一步"：截完预选了矩形工具，于是第一下 ESC 只是把工具放掉，
+		// 图还留在屏幕上，看着就是"按了 ESC 反而停在截图编辑界面"（作者要求任何阶段都退出）。
+		// 别的窗口（剪贴板 / 文件 / 历史 / 动图 / 上次退出前留下的贴图）不是截图流程，
+		// 保持原来的"退一步、再按一次关窗"
+		if (fromCapture) { close(); return; }
 		if (stepBack()) return;
 		close();
 	}
