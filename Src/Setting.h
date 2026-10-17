@@ -73,6 +73,9 @@ public:
 	const JsonObject getConfigObj();
 	void setShortcutKey(const std::wstring& type, const std::vector<std::wstring>& keys);
 	std::wstring getShortcutKey(const std::wstring& type);
+	// 设置页显示用：配置里没写过这一项时回落到 shortcutDefs 里的默认组合。
+	// 与 applyShortcutKeys 的取值规则一致 —— 否则会出现"热键其实是通的、设置页那格却是空白"
+	std::wstring getShortcutKeyText(const std::wstring& type);
 	// 设置页"按一下键盘来录快捷键"期间必须把全局热键全摘掉：按下的组合若正好是已注册的
 	// 那一个，Windows 只把修饰键送进窗口、把那一下"主键"吞掉换成 WM_HOTKEY（实测见
 	// 2026-10-07 的 hkprobe 探针），设置页于是什么也录不到，还会顺带把那个动作触发一次。

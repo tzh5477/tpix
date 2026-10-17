@@ -28,12 +28,16 @@ namespace {
     constexpr int aiTransShortcutMsgId{ 108 };
     constexpr int aiChatShortcutMsgId{ 109 };
     constexpr int pinTextShortcutMsgId{ 110 };
+    constexpr int ocrShortcutMsgId{ 111 };
 
     struct ShortcutDef { std::wstring_view type; int msgId; std::wstring_view def; };
     // 一张表管住"配置键名 → 消息 id → 默认组合"，加一个可配快捷键的动作只改这里一行。
     // def 留空表示"默认不占用"：这类动作不是人人都用，占掉一个组合反而碍事，用户想要自己设
     const ShortcutDef shortcutDefs[]{
         { L"cap",       capShortcutMsgId,       L"Ctrl+Alt+A" },
+        // 文字提取：与截图同一套框选，但框完直接识别并把文字送进剪贴板。
+        // 给一个默认组合是因为它是个"一步到位"的动作，没有默认就只能先去设置页配一次
+        { L"ocr",       ocrShortcutMsgId,       L"Ctrl+Alt+O" },
         { L"pinLast",   pinLastMsgId,           L"Ctrl+Alt+Z" },
         { L"history",   historyShortcutMsgId,   L"Ctrl+Alt+H" },
         { L"ball",      ballShortcutMsgId,      L"" },
@@ -170,6 +174,16 @@ std::wstring Setting::getShortcutKey(const std::wstring& type)
     auto obj = configObj.GetNamedObject(L"shortcutKey", nullptr);
     if (!obj) return L"";
     return std::wstring{ obj.GetNamedString(type, L"") };
+}
+
+std::wstring Setting::getShortcutKeyText(const std::wstring& type)
+{
+    // 老配置里没写这一项，但 applyShortcutKeys 会拿 def 去注册 —— 两边取值规则得一样，
+    // 否则设置页显示空白、按下去却真触发了动作
+    auto str = getShortcutKey(type);
+    if (!str.empty()) return str;
+    if (auto def = findShortcutDef(type)) return std::wstring{ def->def };
+    return L"";
 }
 
 void Setting::setAutoStart(bool autoStart)
@@ -1194,6 +1208,12 @@ void Setting::initShortcutKeys()
         switch (msg) {
         case capShortcutMsgId:
             WinCap::init();
+            break;
+        case ocrShortcutMsgId:
+            // 文字提取：框完选区直接识别并复制，既不进编辑界面、也不用再点识别按钮。
+            // "ocrCopy" 是 WinCap 里专门为这条热键留的一条 enter —— 它强制走静默识别，
+            // 不受设置里「识别之后」那档影响（那一档说的是编辑界面上按识别按钮之后怎么显示）
+            WinCap::init(L"ocrCopy");
             break;
         case pinLastMsgId:
             // 依次贴历史截图：连按一次多贴一张更早的，见 PinSource::pinNextOlder

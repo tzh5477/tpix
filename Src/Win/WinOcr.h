@@ -23,8 +23,11 @@ public:
 	// 静默识别：窗口**不显示**，认出文字就直接进剪贴板并关窗。
 	// 用在设置 - 文字识别「识别之后 = 直接复制文字并关闭截图」那一档。
 	// 一个字都没认出来时照旧把窗口显出来 —— 那种情况必须让用户看见原因，
-	// 否则点了"文字识别"就跟没反应一样
-	static void initAndCopy(std::vector<BYTE>&& data, const int w, const int h);
+	// 否则点了"文字识别"就跟没反应一样。
+	// owner：从哪张贴图打开的。这一档的语义是"连截图一起关掉"，复制成功后会
+	// 让这张贴图自己 close()（截图界面走的正是它）；截图流程那条路不传
+	static void initAndCopy(std::vector<BYTE>&& data, const int w, const int h,
+		WinPin* owner = nullptr);
 	static void dispose();
 private:
 	void onCreated() override;

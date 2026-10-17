@@ -30,18 +30,8 @@ void ShapeBrush::onAction(const int i)
 {
 	if (i != 0) return;
 	if (linePoints.empty()) return;
-	auto end = linePoints.back();
-	auto x = end.x;
-	auto y = end.y;
-	auto img = win->getImgSize();
-	x = std::clamp(x, 0.f, (float)img.width);
-	y = std::clamp(y, 0.f, (float)img.height);
-	auto t = std::make_unique<ShapeText>(win);
-	t->toolId = L"text";
-	t->setTextAt(L"", x, y);
-	if (auto* added = win->history->addShape(std::move(t))) {
-		static_cast<ShapeText*>(added)->startEdit();
-	}
+	// 文字落在笔迹的末点。建文本 / 还选中 / 排编辑器见 ShapeBase::addTextAnnotation
+	addTextAnnotation(linePoints.back().x, linePoints.back().y);
 }
 
 // 外观：颜色、线宽，以及荧光笔的半透明。滚轮调粗细走的也是这里，所以它不能顺手换画法

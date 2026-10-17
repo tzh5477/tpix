@@ -247,8 +247,9 @@ bool ShapeText::mouseWheel(const float x, const float y, const short delta)
 void ShapeText::setCursor()
 {
 	if (hoverDraggerIndex == 9) {
-		// 旋转手柄回到十字光标：上箭头（↑）盖住了手柄上那枚原有的旋转小图标
-		SetCursor(LoadCursor(nullptr, IDC_CROSS));
+		// 旋转手柄不给方向光标，与 ShapeRectBase::setCursor 的 HitRotate 同一条：
+		// 光标热点压在图标上就把那枚旋转小图标糊掉了
+		SetCursor(LoadCursor(nullptr, IDC_ARROW));
 	}
 	else if (hoverDraggerIndex == 8) {
 		SetCursor(LoadCursor(nullptr, IDC_SIZEALL));

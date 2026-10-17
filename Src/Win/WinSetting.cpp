@@ -85,10 +85,26 @@ void WinSetting::init()
 		}
 		winSetting.reset();
 	}
-	winSetting.reset(new WinSetting());
+	// 建窗口这一路会跑一整页控件的构造函数，里面全是 WinRT / Composition 调用。
+	// 这些调用在本函数里抛出来是没有接盘人的：本函数的调用方是 dq 的回调
+	// （托盘菜单、悬浮球菜单都是 `dq.TryEnqueue([]{ WinSetting::init(); })`），
+	// 异常逃到 C++/WinRT 的回调边界就是 RoFailFastWithErrorContext —— 整个进程当场消失，
+	// 用户看到的就是"点了设置程序直接退出"（转储里是 0xC000027B + E_ACCESSDENIED）。
+	// 设置页打不开可以忍，程序不能因此陪葬：这里兜住，让用户还能再点一次
+	try {
+		winSetting.reset(new WinSetting());
+	}
+	catch (const winrt::hresult_error&) {
+		winSetting.reset();
+		return;
+	}
+	catch (...) {
+		winSetting.reset();
+		return;
+	}
 	// 从托盘 / 悬浮球的菜单里点进来时，前台还在菜单那一侧：新窗口 show 出来有可能
 	// 落到别的窗口后面，看着就是"没弹窗"。明确再拉一次到最前
-	if (winSetting->hwnd) SetForegroundWindow(winSetting->hwnd);
+	if (winSetting && winSetting->hwnd) SetForegroundWindow(winSetting->hwnd);
 }
 
 void WinSetting::dispose()

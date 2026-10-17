@@ -462,9 +462,10 @@ void ShapeRectBase::setCursor()
 	case 2: case 6: SetCursor(LoadCursor(nullptr, IDC_SIZENESW)); return;
 	case 3: case 7: SetCursor(LoadCursor(nullptr, IDC_SIZEWE)); return;
 	case HitBody: SetCursor(LoadCursor(nullptr, IDC_SIZEALL)); return;
-	// 旋转手柄的光标回到十字：那枚常驻的旋转小图标（半弧 + 箭头）本身就是"能转"的提示，
-	// 上箭头光标（↑）反把它盖住/顶掉了 —— 作者要求 hover 恢复原有小图标的样子
-	case HitRotate: SetCursor(LoadCursor(nullptr, IDC_CROSS)); return;
+	// 旋转手柄不给任何方向光标：那枚画在外接框角上的旋转小图标本身就是"能转"的提示，
+	// 而十字 / 上箭头 / 斜向双箭头的热点都正好压在它身上，一眼看过去图标就没了 ——
+	// 作者要的是"hover 时还是那枚旋转小图标"。给系统箭头，热点在左上角，图标露得出来
+	case HitRotate: SetCursor(LoadCursor(nullptr, IDC_ARROW)); return;
 	default:
 		if (hoverDraggerIndex >= HitRadiusTL && hoverDraggerIndex <= HitRadiusBL) {
 			SetCursor(LoadCursor(nullptr, IDC_SIZEALL));

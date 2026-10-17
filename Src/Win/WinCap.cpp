@@ -646,6 +646,8 @@ bool WinCap::enterByArg()
     if (val == L"long") startLong();
     else if (val == L"video") startVideo();
     else if (val == L"ocr") startOcr();
+    // 文字提取热键：识别完直接把文字送进剪贴板，不弹识别窗
+    else if (val == L"ocrCopy") startOcr(true);
     else if (val == L"qr" || val == L"qrcode") startQrcode();
     else if (val == L"pin") startPin();   //等于替用户按住了 Ctrl 框选
     // 值不认识（用户拼错了）：当没给这个参数，照常出工具条。上面那两句白做了，
@@ -847,7 +849,7 @@ void WinCap::setMouseTransparent(bool transparent)
 }
 
 // 文字识别由外部插件进程来做，这边只负责把选区里的像素递过去
-void WinCap::startOcr()
+void WinCap::startOcr(bool copyOnly)
 {
     std::vector<BYTE> pixels;
     int cw{ 0 }, ch{ 0 };
@@ -858,7 +860,9 @@ void WinCap::startOcr()
         // 设置 - 文字识别「识别之后」：0 弹窗展示结果（默认）/ 1 直接复制文字并关掉这次截图。
         // 后者走静默模式：窗口不显示，认出字就进剪贴板收工；一个字都没认出来时它仍会把
         // 识别窗显出来，不至于"点了没反应"（见 WinOcr::initAndCopy）
-        if (Setting::get()->getOcrAfterRecog() == 1) WinOcr::initAndCopy(std::move(pixels), cw, ch);
+        // copyOnly 是「文字提取」热键：那条路的定义就是"提取"，强制静默复制，
+        // 不受「识别之后」那档影响（那档管的是编辑界面上按识别按钮之后怎么显示）
+        if (copyOnly || Setting::get()->getOcrAfterRecog() == 1) WinOcr::initAndCopy(std::move(pixels), cw, ch);
         else WinOcr::init(std::move(pixels), cw, ch);
         close();
         return;
