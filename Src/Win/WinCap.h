@@ -13,8 +13,8 @@ class WinCap:public Ling::WinBase
 public:
 	~WinCap();
 	// 进截图。配了延时就先走倒计时，数完由 WinDelay 回调下面这个。
-	// enter 是"框完选区直接走哪条路"（long / video / ocr / qr / pin），空串表示照常出工具条 ——
-	// 悬浮球上那些一键图标点的就是它，命令行 --enter=xxx 走的是同一条路
+	// enter 是"框完选区直接走哪条路"（long / video / ocr / ocrCopy / qr / pin），空串表示照常出工具条 ——
+	// 悬浮球上那些一键图标点的就是它，命令行 --enter=xxx 与「文字提取」热键走的是同一条路
 	static void init(const std::wstring& enter = L"");
 	static void initNow(const std::wstring& enter = L"");
 	// 带着一个已经定好的选区进截图（**屏幕坐标**）。编辑界面右侧那条竖排上的
@@ -47,7 +47,9 @@ public:
 	void startPin(const std::wstring& toolId = L"");
 	void startLong();
 	void startVideo();
-	void startOcr();
+	// copyOnly：「文字提取」热键走的那条 —— 不弹识别窗，认出字直接进剪贴板；
+	// 认不出字 / 没配密钥时仍会把识别窗显出来，否则用户只会觉得"按了没反应"
+	void startOcr(bool copyOnly = false);
 	void startQrcode();
 	void saveToFile();
 	void copyToClipboard();
@@ -102,8 +104,8 @@ private:
 	void captureMouse();
 	void releaseMouse();
 	void onClosed();
-	// 命令行给了 --enter=xxx（long / video / ocr / qr / pin）时，框完选区不照常进编辑界面，
-	// 直接走对应的那条路 —— 悬浮球上那几个一键图标走的是同一条路。
+	// 命令行给了 --enter=xxx（long / video / ocr / ocrCopy / qr / pin）时，框完选区不照常进编辑界面，
+	// 直接走对应的那条路 —— 悬浮球上那几个一键图标、「文字提取」热键走的是同一条路。
 	// 返回是否已经接手；值不认识（拼错了）就返回 false，照常进编辑界面
 	bool enterByArg();
 	// DPI 变了之后重走一遍工具条的摆放规则（哪个阶段就重排哪个工具条）

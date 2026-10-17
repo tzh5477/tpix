@@ -98,7 +98,7 @@ namespace {
 WinSettingShortcut::WinSettingShortcut(Ling::WinBase* parent):Ling::Node(parent)
 {
     // 与 Setting.cpp 的 shortcutDefs 一一对应：那边管注册和分发，这边管显示
-    std::vector<std::wstring> keys = { L"cap", L"pinLast", L"history", L"ball",
+    std::vector<std::wstring> keys = { L"cap", L"ocr", L"pinLast", L"history", L"ball",
         L"pinClip", L"pinText", L"ruler", L"crosshair", L"focus", L"aiTrans", L"aiChat" };
     for (auto& key:keys)
     {
@@ -115,7 +115,7 @@ WinSettingShortcut::WinSettingShortcut(Ling::WinBase* parent):Ling::Node(parent)
 
         auto btn = box->makeChild<Ling::Button>();
         btn->setId(key);
-        btn->setText(Setting::get()->getShortcutKey(key));
+        btn->setText(Setting::get()->getShortcutKeyText(key));
         btn->setHeight(28.f);
         btn->setWidth(120.f);
         btn->setBg(0xFFFFFFFF);
@@ -194,7 +194,7 @@ void WinSettingShortcut::endCapture()
     for (auto& btn : btns)
     {
         if (btn->id == curKey) {
-            btn->setText(Setting::get()->getShortcutKey(curKey));
+            btn->setText(Setting::get()->getShortcutKeyText(curKey));
             break;
         }
     }
