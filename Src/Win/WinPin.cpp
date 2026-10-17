@@ -3298,6 +3298,14 @@ void WinPin::ocrToWindow()
 		Util::openWithImageReader(w, h, pixels.data());
 		return;
 	}
+	// 设置 - 文字识别「识别之后 = 直接复制文字并关闭截图」：不藏图、不弹窗，
+	// 认出字就进剪贴板，接着把这张图收掉。这一档原来只写在 WinCap::startOcr
+	// （悬浮球那个一键 OCR）里，编辑页这一枚没看它 —— 于是作者设了这一档，
+	// 截图后点「文字识别」照样弹窗、图也不关。两条路要同一个判据
+	if (Setting::get()->getOcrAfterRecog() == 1) {
+		WinOcr::initAndCopy(std::move(pixels), w, h, this);
+		return;
+	}
 	// 这张图先自己藏进侧边栏，把屏幕让给识别窗 —— 两个置顶窗叠着只会互相挡内容。
 	// 识别窗记住了 this，它关闭时会调 revealAfterOcr 把这张放回来（顺带钳回工作区）
 	setHidden(true);

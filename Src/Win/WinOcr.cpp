@@ -132,12 +132,12 @@ void WinOcr::init(std::vector<BYTE>&& data, const int w, const int h, WinPin* ow
 	}
 }
 
-void WinOcr::initAndCopy(std::vector<BYTE>&& data, const int w, const int h)
+void WinOcr::initAndCopy(std::vector<BYTE>&& data, const int w, const int h, WinPin* owner)
 {
 	// 上一扇识别窗还开着（用户上一张截图留下的）：直接丢掉它，重新造一扇。
 	// 静默模式不能走 init() 那条"复用旧窗口再 show()"的路 —— 那会平白闪一下窗口
 	winOcr.reset();
-	winOcr.reset(new WinOcr(std::move(data), w, h, nullptr, true));
+	winOcr.reset(new WinOcr(std::move(data), w, h, owner, true));
 }
 
 void WinOcr::finishSilent(const std::wstring& text)
@@ -151,6 +151,12 @@ void WinOcr::finishSilent(const std::wstring& text)
 	Ling::Util::setTextToClipboard(text);
 	// 自己刚写进去的那次剪贴板变更不该再进剪贴板历史（与 WinPin 的复制同一个道理）
 	ShotHistory::get()->skipNextClipboard();
+	// 这一档的语义是"直接复制文字并关闭截图"：先把那张截图收掉，再收自己。
+	// 指针先清空 —— 本类析构里会调 pinOwner->revealAfterOcr()，那张图已经关了，
+	// 再让它露出来就违背"关闭"这层意思（revealAfterOcr 自己也会判 isClosed）
+	auto* owner = pinOwner;
+	pinOwner = nullptr;
+	if (owner) owner->close();
 	close();
 }
 
@@ -158,6 +164,9 @@ void WinOcr::revealSilent()
 {
 	if (!silentCopy) return;
 	silentCopy = false;
+	// 静默没成、窗还是要显出来：那张截图先藏进侧边栏，别和识别窗叠在一起 ——
+	// 与走 init 的那条路表现一致。识别窗关掉时析构会调 revealAfterOcr 把它放回来
+	if (pinOwner) pinOwner->setHidden(true);
 	show();
 	SetForegroundWindow(hwnd);
 }
