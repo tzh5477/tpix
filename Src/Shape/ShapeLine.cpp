@@ -194,9 +194,10 @@ namespace {
 		return { rect.left + pad, std::max(rect.left + pad, rect.right - pad), (rect.top + rect.bottom) / 2.f };
 	}
 
-	// 一端的标记。图上那条线与下拉里的预览共用它。比例照 FSCapture 的端点预览逐像素量出来
-	// （拿它的放大图量，再除上当时的线宽 w）：沿走向长 9.7w；实心那档是平底三角、半宽 3.5w，
-	// 细的那档是燕尾、半宽 3w、后缘凹口深 1.7w。两档尺寸几乎一样，区别就在这条底边上
+	// 一端的标记。图上那条线与下拉里的预览共用它。原比例（沿走向 9.7w、实心头半宽 3.5w）
+	// 照 FSCapture 的端点预览逐像素量出来 —— 但作者看了实际效果嫌箭头太大，整体缩到
+	// 七成半：沿走向 7.5w；实心那档半宽 2.6w，细的那档半宽 2.3w、后缘凹口深 1.2w。
+	// （ShapeArrow 那支细箭头仍照 9.7w / 3w 画 —— 那是"箭头"工具自己的事，两处不再对齐）
 	void paintMark(ID2D1DeviceContext* ctx, const D2D1_POINT_2F& tip, const D2D1_POINT_2F& dir,
 		const ShapeLine::EndMark mark, const float w, ID2D1Brush* brush)
 	{
@@ -207,8 +208,8 @@ namespace {
 			ctx->FillEllipse(D2D1::Ellipse(tip, r, r), brush);
 			return;
 		}
-		const auto len{ 9.7f * w };
-		const auto half{ (mark == ShapeLine::EndMark::Arrow ? 3.5f : 3.f) * w };
+		const auto len{ 7.5f * w };
+		const auto half{ (mark == ShapeLine::EndMark::Arrow ? 2.6f : 2.3f) * w };
 		const D2D1_POINT_2F base{ tip.x - dir.x * len, tip.y - dir.y * len };
 		// 走向的法线（把走向转 90°）
 		const D2D1_POINT_2F a{ base.x - dir.y * half, base.y + dir.x * half };
@@ -221,7 +222,7 @@ namespace {
 		sink->AddLine(a);
 		if (mark == ShapeLine::EndMark::Thin) {
 			// 燕尾：后缘的中点朝尖端让出凹口深，收出一个缺口
-			const auto notch{ 1.7f * w };
+			const auto notch{ 1.2f * w };
 			sink->AddLine(D2D1_POINT_2F{ base.x + dir.x * notch, base.y + dir.y * notch });
 		}
 		sink->AddLine(b);
@@ -620,12 +621,12 @@ float ShapeLine::hitInnerLimit(const float outer) const
 	return 0.f;
 }
 
-// 端点那几档标记在端点两侧支出去多少：实心箭头半宽 3.5 倍线宽，圆点半径 1.85 倍
+// 端点那几档标记在端点两侧支出去多少：实心箭头半宽 2.6 倍线宽，圆点半径 1.85 倍
 // （比例见 paintMark 那一组常数）—— 取大的那个。标记都画在 linePoints 的端点上，
-// 不往两端外伸，所以往外让 3.5 倍就够把整支箭圈进外接框
+// 不往两端外伸，所以往外让 2.6 倍就够把整支箭圈进外接框
 float ShapeLine::boundsPad() const
 {
-	return 3.5f * std::max(strokeWidth, 1.f);
+	return 2.6f * std::max(strokeWidth, 1.f);
 }
 
 // 波浪线：D2D 的虚线样式里没有波浪，只能把折线重采样成正弦路径 ——
