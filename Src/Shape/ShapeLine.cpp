@@ -72,6 +72,23 @@ namespace {
 	// 带标记的那一头，线要沿走向往里让出这么多（倍线宽）。理由见 ShapeLine::shaftPoints
 	constexpr float kMarkInset{ 2.f };
 
+	// Catmull-Rom 样条的一段（p1 → p2，p0 / p3 是前后邻居）转成三次贝塞尔的那对控制点。
+	// 标准均匀参数化：控制臂 = 邻段向量的 1/6 —— 曲线过每个节点、相邻段在节点处
+	// 斜率连续，画出来就是一条平滑过所有点的弧。buildCurvePath 与 densifyCurve 共用
+	void curveControls(const D2D1_POINT_2F& p0, const D2D1_POINT_2F& p1,
+		const D2D1_POINT_2F& p2, const D2D1_POINT_2F& p3,
+		D2D1_POINT_2F& c1, D2D1_POINT_2F& c2)
+	{
+		c1 = { p1.x + (p2.x - p0.x) / 6.f, p1.y + (p2.y - p0.y) / 6.f };
+		c2 = { p2.x - (p3.x - p1.x) / 6.f, p2.y - (p3.y - p1.y) / 6.f };
+	}
+
+	// 曲线某一段的两端取控制点时首尾越界的那一侧重复自家端点（clamp 到 0 / n-1）
+	int curveNeighbor(int i, int n)
+	{
+		return i < 0 ? 0 : (i >= n ? n - 1 : i);
+	}
+
 	// 把折线的一头沿走向往里缩 len：按弧长量，不够的顶点整段丢掉，落点落在某一段中间就插一个点。
 	// atEnd 为 true 缩尾、false 缩首。整条线还没 len 长就原样留着 —— 那种线本来也没地方放标记
 	void trimTail(std::vector<D2D1_POINT_2F>& pts, const bool atEnd, const float len)
@@ -301,10 +318,10 @@ void ShapeLine::applyToolStyle()
 	auto toolSub = win->getToolSub();
 	auto wasOrtho{ isOrtho() };
 	kind = (Kind)toolSub->lineKind;
-	// 续画中把档位切走（折线 → 直角折线 / 普通线条）：这一笔还是半成品，再挂着 building 的话
-	// WinPin::buildingShape 会一直把它认成"正在续画的折线"，之后每一次按下都被它接管，
-	// 用户再也点不出新的一笔。就地收尾 —— 已经落下的那几个节点照旧留着
-	if (!isPoly()) {
+	// 续画中把档位切走（折线 / 曲线 → 直角折线 / 普通线条）：这一笔还是半成品，再挂着
+	// building 的话 WinPin::buildingShape 会一直把它认成"正在续画的折线"，之后每一次按下
+	// 都被它接管，用户再也点不出新的一笔。就地收尾 —— 已经落下的那几个节点照旧留着
+	if (!isClickDraw()) {
 		building = false;
 		hasPreview = false;
 	}
@@ -357,9 +374,10 @@ void ShapeLine::makeStrokeStyle()
 
 void ShapeLine::mouseDown(const float x, const float y)
 {
-	// 折线：每次左键落一个节点。第一下起头，之后每一下续一个；末节点到光标那段橡皮筋
-	// 由 movePreview 现画（它还不是真节点，不入 linePoints）。抬手不结束 —— 结束看双击 / 右键
-	if (isPoly()) {
+	// 折线 / 曲线：每次左键落一个节点。第一下起头，之后每一下续一个；末节点到光标那段
+	// 橡皮筋由 movePreview 现画（它还不是真节点，不入 linePoints）。抬手不结束 ——
+	// 结束看双击 / 右键
+	if (isClickDraw()) {
 		// ⚠️ 只有"刚落下的这一笔"才在这里落节点，判据与 ShapeLineBase::mouseDown 的
 		// "首次创建"那条一致（它用的就是 hoverDraggerIndex == -1），再加一条 linePoints
 		// 为空：压在**已经画好的**折线身上时（hoverDraggerIndex == 8，ShapeLineBase::hitTest
@@ -411,7 +429,7 @@ void ShapeLine::mouseDrag(const float x, const float y)
 		makePath();
 		return;
 	}
-	if (!creating && (hoverDraggerIndex == 0 || hoverDraggerIndex == 1) && (isOrtho() || isPoly())) {
+	if (!creating && (hoverDraggerIndex == 0 || hoverDraggerIndex == 1) && (isOrtho() || isClickDraw())) {
 		if (linePoints.empty()) return;
 		if (hoverDraggerIndex == 0) {
 			auto& p = linePoints.front();
@@ -431,8 +449,8 @@ void ShapeLine::mouseDrag(const float x, const float y)
 
 void ShapeLine::mouseUp(const float x, const float y)
 {
-	// 折线抬手不结束（还要接着点下一个节点 / 双击 / 右键收尾），只把两个夹点摆到末节点上
-	if (isPoly()) {
+	// 折线 / 曲线抬手不结束（还要接着点下一个节点 / 双击 / 右键收尾），只把两个夹点摆到末节点上
+	if (isClickDraw()) {
 		makeDraggers();
 		return;
 	}
@@ -446,15 +464,20 @@ bool ShapeLine::isPoly() const
 	return kind == Kind::Polyline;
 }
 
+bool ShapeLine::isClickDraw() const
+{
+	return kind == Kind::Polyline || kind == Kind::Curve;
+}
+
 bool ShapeLine::isBuilding() const
 {
-	return isPoly() && building;
+	return isClickDraw() && building;
 }
 
 // 续画期间鼠标划过：把"末节点 → 光标"那段橡皮筋重画一遍（只画，不进 linePoints）
 void ShapeLine::movePreview(const float x, const float y)
 {
-	if (!isPoly() || !building) return;
+	if (!isClickDraw() || !building) return;
 	preview = { x, y };
 	hasPreview = true;
 	makePath();
@@ -464,7 +487,7 @@ void ShapeLine::movePreview(const float x, const float y)
 // 收尾：把橡皮筋撤掉，这一笔就此定形（几何只到已经落下的那些节点为止）
 void ShapeLine::finishBuild()
 {
-	if (!isPoly()) return;
+	if (!isClickDraw()) return;
 	building = false;
 	hasPreview = false;
 	makePath();
@@ -587,29 +610,36 @@ std::vector<D2D1_POINT_2F> ShapeLine::shaftPoints() const
 
 void ShapeLine::makePath()
 {
-	// 续画中的折线：把"末节点 → 光标"那段橡皮筋并进来一起描。它还只是预览，
-	// 不参与端点缩进（shaftPoints 会照端点档位裁一截），所以直接 buildPath
-	if (isPoly() && building && hasPreview && !linePoints.empty()) {
+	// 续画中的折线 / 曲线：把"末节点 → 光标"那段橡皮筋并进来一起描。它还只是预览，
+	// 不参与端点缩进（shaftPoints 会照端点档位裁一截），所以直接建
+	if (isClickDraw() && building && hasPreview && !linePoints.empty()) {
 		auto pts = linePoints;
 		pts.push_back(preview);
-		buildPath(pts);
+		if (isCurveKind()) buildCurvePath(pts);
+		else buildPath(pts);
 		return;
 	}
-	buildPath(shaftPoints());
+	auto pts = shaftPoints();
+	// 曲线：节点之间不走直线段，走 Catmull-Rom 转出来的平滑贝塞尔
+	if (isCurveKind()) {
+		buildCurvePath(pts);
+		return;
+	}
+	buildPath(pts);
 }
 
 // 折线第一下点下去（还没拖、也没点第二个节点）时要能留在图上接着续画 ——
 // 按默认的"没拖就丢掉"会把它自己收掉，用户就永远点不出第二个节点
 bool ShapeLine::isValidWithoutDrag()
 {
-	return isPoly() && building;
+	return isClickDraw() && building;
 }
 
-// 只落了一个节点的折线等于什么都没画出来。WinPin 在收尾时把它直接丢掉，
+// 只落了一个节点的折线 / 曲线等于什么都没画出来。WinPin 在收尾时把它直接丢掉，
 // 不留在图上当一个看不见的空元素
 bool ShapeLine::isEmptyStroke() const
 {
-	return isPoly() && linePoints.size() < 2;
+	return isClickDraw() && linePoints.size() < 2;
 }
 
 // 折线族默认把笔画正中挖掉半个夹点宽（理由见 ShapeLineBase::hitTest：粗笔画整片能拖的话，
@@ -633,7 +663,87 @@ float ShapeLine::boundsPad() const
 // 几何在匿名 namespace 的 wavePath 里，下拉里那条波浪与它共用一份
 ComPtr<ID2D1PathGeometry> ShapeLine::makeWaveGeometry() const
 {
-	return wavePath(shaftPoints(), std::max(strokeWidth, 1.f));
+	auto pts = shaftPoints();
+	// 曲线 + 波浪：波浪沿"线走过的路"起伏，而曲线那条路是弧线不是控制多边形 ——
+	// 先把弧线密采样成折线再交给 wavePath，不然波浪顺着弦线走、拐出棱角
+	if (isCurveKind()) pts = densifyCurve(pts);
+	return wavePath(pts, std::max(strokeWidth, 1.f));
+}
+
+// 曲线：把点列当 Catmull-Rom 的控制点，逐段转成三次贝塞尔写进 path。
+// 只有一个节点（还没点第二下）时退回 buildPath —— 它对单点就是"一个空图形"，
+// 与折线那一档的初态一致
+void ShapeLine::buildCurvePath(const std::vector<D2D1_POINT_2F>& pts)
+{
+	if (pts.size() < 2) {
+		buildPath(pts);
+		return;
+	}
+	auto d2d = Ling::D2D::get();
+	// 同 buildPath：必须 ReleaseAndGetAddressOf，不然每点一个节点漏一个几何体
+	d2d->d2dFactory->CreatePathGeometry(path.ReleaseAndGetAddressOf());
+	if (!path) return;
+	ComPtr<ID2D1GeometrySink> sink;
+	path->Open(sink.GetAddressOf());
+	sink->BeginFigure(pts[0], D2D1_FIGURE_BEGIN_HOLLOW);
+	const int n{ (int)pts.size() };
+	for (int i = 0; i + 1 < n; ++i) {
+		D2D1_POINT_2F c1{}, c2{};
+		curveControls(pts[curveNeighbor(i - 1, n)], pts[i], pts[i + 1],
+			pts[curveNeighbor(i + 2, n)], c1, c2);
+		sink->AddBezier(D2D1::BezierSegment(c1, c2, pts[i + 1]));
+	}
+	sink->EndFigure(D2D1_FIGURE_END_OPEN);
+	sink->Close();
+}
+
+// 曲线密采样：每段按"三个控制臂的总长"估弧长，约每 3 底图像素落一个样点
+//（一段至少 8 个）。波浪重采样与命中判定共用 —— 两处都要"曲线上的等价折线"
+std::vector<D2D1_POINT_2F> ShapeLine::densifyCurve(const std::vector<D2D1_POINT_2F>& pts)
+{
+	if (pts.size() < 2) return pts;
+	std::vector<D2D1_POINT_2F> out;
+	out.reserve(pts.size() * 16);
+	out.push_back(pts.front());
+	const int n{ (int)pts.size() };
+	for (int i = 0; i + 1 < n; ++i) {
+		auto& p0 = pts[curveNeighbor(i - 1, n)];
+		auto& p1 = pts[i];
+		auto& p2 = pts[i + 1];
+		auto& p3 = pts[curveNeighbor(i + 2, n)];
+		D2D1_POINT_2F c1{}, c2{};
+		curveControls(p0, p1, p2, p3, c1, c2);
+		auto arm = distance(p0, p1) + distance(p1, p2) + distance(p2, p3);
+		const int steps{ std::clamp((int)(arm / 3.f), 8, 96) };
+		for (int k = 1; k <= steps; ++k) {
+			auto t{ (float)k / steps }, mt{ 1.f - t };
+			auto w0{ mt * mt * mt }, w1{ 3.f * mt * mt * t },
+				w2{ 3.f * mt * t * t }, w3{ t * t * t };
+			out.push_back({ w0 * p1.x + w1 * c1.x + w2 * c2.x + w3 * p2.x,
+				w0 * p1.y + w1 * c1.y + w2 * c2.y + w3 * p2.y });
+		}
+	}
+	return out;
+}
+
+// 曲线的命中判定按密采样后的弧线算：节点稀疏时弧线离弦线可以差出几十个像素，
+// 照 linePoints 两两连直线算，用户"明明点在弧线上"却点不中。其余档位照旧走基类
+void ShapeLine::hitTest(const D2D1_POINT_2F& mousePos)
+{
+	if (!isCurveKind() || linePoints.size() < 2) {
+		ShapeLineBase::hitTest(mousePos);
+		return;
+	}
+	auto pts = densifyCurve(linePoints);
+	float outer = strokeWidth * 0.5f + win->getDpi();
+	float inner = hitInnerLimit(outer);
+	float minDist{ FLT_MAX };
+	for (size_t i = 0; i + 1 < pts.size(); ++i) {
+		minDist = std::min(minDist, pointToSegmentDistance(mousePos, pts[i], pts[i + 1]));
+	}
+	if (minDist <= outer && minDist >= inner) {
+		hoverDraggerIndex = 8;
+	}
 }
 
 void ShapeLine::paintEnds(ID2D1DeviceContext* ctx)

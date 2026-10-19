@@ -71,12 +71,13 @@ namespace {
 		};
 		return items;
 	}
-	// 线条类型三档：直角折线（默认）/ 普通线条 / 折线。按钮上写汉字，所以走语言包。
-	// 三档会自动变下拉（makeSelectBtn 只对两项的单击即切换，见那里的说明）——
+	// 线条类型四档：直角折线（默认）/ 普通线条 / 折线 / 曲线。按钮上写汉字，所以走语言包。
+	// 多档会自动变下拉（makeSelectBtn 只对两项的单击即切换，见那里的说明）——
 	// 正合意：档位一多，单击循环要连点好几下才转到想要的那个
 	std::vector<std::wstring> lineKindItems()
 	{
-		return { Lang::get(L"tool.lineKind0"), Lang::get(L"tool.lineKind1"), Lang::get(L"tool.lineKind2") };
+		return { Lang::get(L"tool.lineKind0"), Lang::get(L"tool.lineKind1"),
+			Lang::get(L"tool.lineKind2"), Lang::get(L"tool.lineKind3") };
 	}
 	// 画笔类型只有两项（画笔 / 荧光笔），单选即切换
 	std::vector<std::wstring> brushKindItems()
