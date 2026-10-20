@@ -2276,14 +2276,15 @@ void WinPin::onCreated()
         Microsoft::WRL::ComPtr<ID2D1GradientStopCollection> stopsCol;
         d2d->deviceContext->CreateGradientStopCollection(stops, ARRAYSIZE(stops),
             stopsCol.GetAddressOf());
+        // ⚠️ transform 必须是单位矩阵：指定初始化只填 opacity 时，transform 会被值初始化成
+        // **零矩阵** —— 刷子把世界坐标全压到渐变起点（那是 alpha=0 的 stop），
+        // 光带整条透明、画了跟没画一样。用 helper 拿官方默认值，别再手工拼
         D2D1_LINEAR_GRADIENT_BRUSH_PROPERTIES props{
             .startPoint = { 0.f, 0.f },
             .endPoint = { 1.f, 0.f },
         };
-        D2D1_BRUSH_PROPERTIES brushProps{ .opacity = 1.f };
-        // 刷子会把集合 AddRef 一份，局部的 stopsCol 出了作用域也没关系
-        d2d->deviceContext->CreateLinearGradientBrush(props, brushProps, stopsCol.Get(),
-            brushScan.GetAddressOf());
+        d2d->deviceContext->CreateLinearGradientBrush(props, D2D1::BrushProperties(1.f),
+            stopsCol.Get(), brushScan.GetAddressOf());
     }
     // 「贴图之后默认识别文本」：不等用户点「选文」，窗口一建起来就在后台认 ——
     // 那张图通常刚截下来，用户点开选文时结果基本已经在了，选起来是即时的
