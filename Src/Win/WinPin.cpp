@@ -2484,8 +2484,15 @@ void WinPin::onDown(POINT pos, BOOL isRight)
 		auto imgPos = toImgPos(pos);
 		// 双击 = 选中光标底下这一个词。要先认，否则按下的第一下已经先把它缩成一个插入点了
 		if (takeDoubleClick()) {
-			auto idx = wordIndexAt(imgPos);
-			if (idx >= 0) { selAnchor = idx; selCur = idx + 1; }
+			auto u = unitAt(imgPos);
+			if (u >= 0) {
+				// 单元与词同序，向两侧扫到词边界就是这个词的单元区间
+				int first = u, last = u;
+				while (first > 0 && selUnits[first - 1].word == selUnits[u].word) --first;
+				while (last + 1 < (int)selUnits.size() && selUnits[last + 1].word == selUnits[u].word) ++last;
+				selAnchor = first;
+				selCur = last + 1;
+			}
 			else { selAnchor = selCur = caretIndexAt(imgPos); }
 			lastDownTime = 0;   // 第三下不该再凑成一次双击
 		}
@@ -2493,6 +2500,8 @@ void WinPin::onDown(POINT pos, BOOL isRight)
 			selAnchor = selCur = caretIndexAt(imgPos);
 		}
 		selDragging = true;     // 双击之后接着拖也能继续扩选
+		// hover 是"没按着时"的预览，按下就换成真的选区；松手回到没选区时它得指着当前这格
+		selHover = unitAt(imgPos);
 		isMouseDown = true;
 		hasDragged = false;
 		SetCapture(hwnd);
@@ -2748,10 +2757,15 @@ void WinPin::onMove(POINT pos)
 		dragCropTo(screen);
 		return;
 	}
-	// 选文态：按着就是在扩大 / 缩小选区（插入点跟着鼠标走）；没按着只是在图上划过，
-	// 什么都不做 —— 所以这里也不必给词做 hover 高亮
+	// 选文态：按着就是在扩大 / 缩小选区（插入点跟着鼠标走）；没按着把光标底下那格标出来
+	//（hover 预览）—— 拖之前先看得见"会选中什么"，这也是"选不准"的一部分答案
 	if (textSelect) {
-		if (!selDragging) return;
+		if (!selDragging) {
+			// 没变化就不重画：mousemove 很密，每次重画是白扔
+			auto u = unitAt(toImgPos(pos));
+			if (u != selHover) { selHover = u; refresh(); }
+			return;
+		}
 		selCur = caretIndexAt(toImgPos(pos));
 		refreshNow();
 		return;
@@ -3523,6 +3537,50 @@ void WinPin::clearOcr()
 	ocrLines.clear();
 	selAnchor = selCur = 0;
 	selDragging = false;
+	selUnits.clear();
+	selLineUnits.clear();
+	selHover = -1;
+}
+
+// 识别结果 → 选区单元表。有字符级框就一个字一格（选文于是能选到半个词 / 半行中文），
+// 没有就整个词一格（系统 OCR 与大模型那两条路，行为与改造前完全一致）。
+//
+// 字符框与词框同出 OcrModel::splitWords：词是一行 rec 文本按空格切开的段、字符框跳过
+// 空格，所以"词 k 吃掉 words[k].text.size() 个字符框"逐个消费必然严丝合缝 —— 总数对不上
+// 说明这份字符框与词表不是一批货，整表退回词级，宁可粗也不能错位
+void WinPin::buildSelUnits()
+{
+	selUnits.clear();
+	selLineUnits.clear();
+	size_t sum{ 0 };
+	for (auto const& word : ocrWords) sum += word.text.size();
+	const bool byChar = !ocrChars.empty() && ocrChars.size() == sum;
+	size_t ci{ 0 };   // 下一个要消费的字符框
+	for (int i = 0; i < (int)ocrWords.size(); ++i) {
+		auto const& word = ocrWords[i];
+		if (word.text.empty()) continue;   // 没内容的词不占选区（画出来只是个空高亮）
+		if (byChar) {
+			for (size_t k = 0; k < word.text.size(); ++k) {
+				auto const& ch = ocrChars[ci++];
+				selUnits.push_back({ i, (int)k, (int)k + 1, ch.x, ch.y, ch.w, ch.h });
+			}
+		}
+		else {
+			selUnits.push_back({ i, 0, (int)word.text.size(), word.x, word.y, word.w, word.h });
+		}
+	}
+	// 行 → 单元区间。单元与词同序，按每行的词数把单元切段即可
+	size_t u{ 0 };
+	for (auto const& line : ocrLines) {
+		size_t end = u;
+		for (int i = line.first; i < line.first + line.count; ++i) {
+			auto const& word = ocrWords[i];
+			// 空词没建单元，与上面那句 continue 对齐
+			end += word.text.empty() ? 0 : word.text.size();
+		}
+		selLineUnits.push_back({ (int)u, (int)(end - u) });
+		u = end;
+	}
 }
 
 void WinPin::applyOcrWords(std::vector<OcrWord> words, std::vector<OcrWord> chars, POINT origin)
@@ -3572,6 +3630,8 @@ void WinPin::applyOcrWords(std::vector<OcrWord> words, std::vector<OcrWord> char
 			lineCenter = ocrWords[i].y + ocrWords[i].h / 2.f;
 		}
 	}
+	// 单元表必须在行分组之后建：它要按 ocrLines 切行区间
+	buildSelUnits();
 	refresh();
 	// 用户之前点过「智能打码」、当时识别还没跑完（见 mosaicAllDigits）：词框刚到手，
 	// 把那一按补上。放在 refresh 之后 —— 打码那一步自己会再刷一次
@@ -3609,64 +3669,76 @@ bool WinPin::readBasePixels(std::vector<BYTE>& pixels, int& w, int& h)
 	return true;
 }
 
-// 标注坐标 → 选区的"插入点"下标（0..ocrWords.size()）。与文本编辑器同一套：按阅读顺序
-// 数下来，落在词与词的缝里、行尾空白上也能定出一个位置，不必非要命中某个词
+// 标注坐标 → 选区的"插入点"下标（0..selUnits.size()）。与文本编辑器同一套：按阅读顺序
+// 数下来，落在字与字的缝里、行尾空白上也能定出一个位置，不必非要命中某一格。
+// 行界取**整行包围盒**：拿行内第一个词的高度当行界时，字号混排的行里点在正文字上
+// 会被判到下一行去（作者报的"点这行选到别行"就是这么来的）
 int WinPin::caretIndexAt(const POINT& imgPos) const
 {
-	if (ocrLines.empty()) return 0;
-	for (auto& line : ocrLines) {
-		auto& first = ocrWords[line.first];
-		// 行高按这一行第一个词算：同一行基线一致，够用了
-		auto top = first.y, bottom = first.y + first.h;
-		if (imgPos.y < top) return line.first;      // 落在这一行上面 → 插入点在这一行行首
-		if (imgPos.y > bottom) continue;            // 还在更下面的行里，接着往下找
-		for (int i = line.first; i < line.first + line.count; ++i) {
-			auto& word = ocrWords[i];
-			// 以词的中点为界：过了一半就算走到下一个词，与拖选文字的手感一致
-			if (imgPos.x < word.x + word.w / 2.f) return i;
+	if (selLineUnits.empty()) return 0;
+	for (int n = 0; n < (int)ocrLines.size(); ++n) {
+		auto const& line = ocrLines[n];
+		auto const& first = ocrWords[line.first];
+		float top = first.y, bottom = first.y + first.h;
+		for (int i = line.first + 1; i < line.first + line.count; ++i) {
+			top = std::min(top, ocrWords[i].y);
+			bottom = std::max(bottom, ocrWords[i].y + ocrWords[i].h);
 		}
-		return line.first + line.count;             // 在行尾右边 → 这一行末尾
+		if (imgPos.y < top) return selLineUnits[n].first;   // 在这一行上面 → 行首
+		if (imgPos.y > bottom) continue;                    // 还在更下面的行里，接着找
+		auto const& seg = selLineUnits[n];
+		for (int u = seg.first; u < seg.first + seg.count; ++u) {
+			// 以字的中点为界：过了一半就算走到下一格，与拖选文字的手感一致
+			if (imgPos.x < selUnits[u].x + selUnits[u].w / 2.f) return u;
+		}
+		return seg.first + seg.count;   // 在行尾右边 → 这一行末尾
 	}
-	return (int)ocrWords.size();
+	return (int)selUnits.size();
 }
 
-int WinPin::wordIndexAt(const POINT& imgPos) const
+// 命中检验：光标底下是哪个**单元**。双击拿它定"选中这一个词"（见 onDown），hover 拿它
+// 定要高亮哪一格。矩形单元比整词框细得多 —— 双击落在词缝上时不再整个词都算命中
+int WinPin::unitAt(const POINT& imgPos) const
 {
-	for (int i = 0; i < (int)ocrWords.size(); ++i) {
-		auto& word = ocrWords[i];
-		if (imgPos.x >= word.x && imgPos.x <= word.x + word.w
-			&& imgPos.y >= word.y && imgPos.y <= word.y + word.h) return i;
+	for (int u = 0; u < (int)selUnits.size(); ++u) {
+		auto const& s = selUnits[u];
+		if (imgPos.x >= s.x && imgPos.x <= s.x + s.w
+			&& imgPos.y >= s.y && imgPos.y <= s.y + s.h) return u;
 	}
 	return -1;
 }
 
 std::wstring WinPin::selectedText() const
 {
-	if (!hasSelection() || ocrWords.empty()) return {};
+	if (!hasSelection() || selUnits.empty()) return {};
 	const int lo = std::min(selAnchor, selCur);
-	const int hi = std::min(std::max(selAnchor, selCur), (int)ocrWords.size());
+	const int hi = std::min(std::max(selAnchor, selCur), (int)selUnits.size());
 	std::wstring text;
-	int lastLine{ -1 };
-	for (int i = lo; i < hi; ++i) {
-		// 这个下标落在第几行。ocrLines 是按阅读顺序排的，找出 i 落在哪一段里
+	int lastWord{ -1 }, lastLine{ -1 };
+	for (int u = lo; u < hi; ++u) {
+		const auto& unit = selUnits[u];
+		const auto& word = ocrWords[unit.word];
+		// 这个单元落在第几行。ocrLines 是按阅读顺序排的，找出词落在哪一段里
 		int lineNo{ -1 };
 		for (int n = 0; n < (int)ocrLines.size(); ++n) {
 			auto& line = ocrLines[n];
-			if (i >= line.first && i < line.first + line.count) { lineNo = n; break; }
+			if (unit.word >= line.first && unit.word < line.first + line.count) { lineNo = n; break; }
 		}
-		if (!text.empty() && !ocrWords[i].text.empty()) {
+		if (lastWord >= 0) {
 			if (lineNo != lastLine) text += L'\n';
-			else {
-				// 空格判据统一走 ocrNeedSpace（汉字之间不补、其余看图上有没有空白），
-				// 与 Ocr::recognize 拼整行文字时用的是同一条规则
-				const auto& prev = ocrWords[i - 1];
-				const auto& cur = ocrWords[i];
-				const float rel = (cur.x - (prev.x + prev.w)) / std::max(prev.h, cur.h);
-				if (!prev.text.empty() && ocrNeedSpace(prev.text.back(), cur.text.front(), rel))
+			// 空格只在**跨词**处判：词内天然没有空格，逐字判反而会把宽字距排版拆出空格来。
+			// 判据仍是 ocrNeedSpace + 词间相对间隙（汉字之间不补、间隙够大才补），
+			// 与 Ocr::recognize 拼整行文字时用的是同一条规则
+			else if (unit.word != lastWord) {
+				const auto& prev = ocrWords[lastWord];
+				const float rel = (word.x - (prev.x + prev.w)) / std::max(prev.h, word.h);
+				if (!prev.text.empty() && ocrNeedSpace(prev.text.back(), word.text.front(), rel))
 					text += L' ';
 			}
 		}
-		text += ocrWords[i].text;
+		// 选区从词中间开始时，首个单元只拼它后面的那半截
+		text += word.text.substr(unit.from, unit.to - unit.from);
+		lastWord = unit.word;
 		lastLine = lineNo;
 	}
 	return text;
@@ -3691,16 +3763,25 @@ void WinPin::showToast(const std::wstring& text)
 	refresh();
 }
 
-// 选中的词铺一层半透明蓝底。调用方还在标注坐标系的变换里，所以它跟着缩放、剪裁一起走
+// 选中的单元铺一层半透明蓝底。调用方还在标注坐标系的变换里，所以它跟着缩放、剪裁一起走。
+// 没有选区时光标底下那格画个淡高亮：拖之前先看得见"会选中什么"；选区一旦存在就不画，
+// 免得两层高亮叠在一起反而看不清边界
 void WinPin::paintTextSelect(ID2D1DeviceContext* ctx)
 {
-	if (!hasSelection() || !selectBrush) return;
+	if (!selectBrush) return;
+	if (!hasSelection()) {
+		if (selDragging || selHover < 0 || selHover >= (int)selUnits.size()) return;
+		auto& s = selUnits[selHover];
+		if (s.w > 0 && s.h > 0)
+			ctx->FillRectangle(D2D1::RectF(s.x, s.y, s.x + s.w, s.y + s.h), selectBrush.Get());
+		return;
+	}
 	const int lo = std::min(selAnchor, selCur);
-	const int hi = std::min(std::max(selAnchor, selCur), (int)ocrWords.size());
-	for (int i = lo; i < hi; ++i) {
-		auto& word = ocrWords[i];
-		if (word.w <= 0 || word.h <= 0) continue;
-		ctx->FillRectangle(D2D1::RectF(word.x, word.y, word.x + word.w, word.y + word.h), selectBrush.Get());
+	const int hi = std::min(std::max(selAnchor, selCur), (int)selUnits.size());
+	for (int u = lo; u < hi; ++u) {
+		auto& s = selUnits[u];
+		if (s.w <= 0 || s.h <= 0) continue;
+		ctx->FillRectangle(D2D1::RectF(s.x, s.y, s.x + s.w, s.y + s.h), selectBrush.Get());
 	}
 }
 
@@ -3809,7 +3890,7 @@ void WinPin::onKey(UINT key)
 		}
 		else if (ctrl && key == 'A') {
 			selAnchor = 0;
-			selCur = (int)ocrWords.size();
+			selCur = (int)selUnits.size();
 			refresh();
 		}
 		else if (key == VK_SPACE) {

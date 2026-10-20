@@ -310,12 +310,16 @@ private:
 	// 底图像素换算到标注坐标系，剪裁正好在这中间发生时得用当时那个值。
 	// chars 是同一批字的字符级框（只有内置模型给得出，别的时候是空的）
 	void applyOcrWords(std::vector<OcrWord> words, std::vector<OcrWord> chars, POINT origin);
+	// 词表 + 字符框 → 选区单元表（有字框逐字、没有整词），顺带切出每行的单元区间。
+	// 必须在行分组之后调
+	void buildSelUnits();
 	// 把底图像素读一份到内存（BGRA、top-down、行紧凑），喂给识别引擎
 	bool readBasePixels(std::vector<BYTE>& pixels, int& w, int& h);
-	// 标注坐标 → 选区的"插入点"下标（0..ocrWords.size()）。与文本编辑器同一套：
-	// 按阅读顺序数下来，落在词缝里、行尾空白上也能定出一个位置，不必非要命中某个词
+	// 标注坐标 → 选区的"插入点"下标（0..selUnits.size()）。与文本编辑器同一套：
+	// 按阅读顺序数下来，落在字缝里、行尾空白上也能定出一个位置，不必非要命中某一格
 	int caretIndexAt(const POINT& imgPos) const;
-	int wordIndexAt(const POINT& imgPos) const;
+	// 命中检验：光标底下是哪个单元（双击定词、hover 高亮都用它），没命中给 -1
+	int unitAt(const POINT& imgPos) const;
 	bool hasSelection() const { return selAnchor != selCur; }
 	std::wstring selectedText() const;
 	void copySelectedText();
@@ -666,6 +670,20 @@ private:
 	// 复制时靠它决定词与词之间是补空格还是换行
 	struct OcrLine { int first{ 0 }, count{ 0 }; };
 	std::vector<OcrLine> ocrLines;
+	// 一个"选区单元"：选区的最小粒度。有字符级框时一个字一格（from/to 是它在所属词里
+	// 的字符区间）；没有时整个词一格（from=0, to=词长）—— 后者与改造前的词级行为一致。
+	// 单元严格按 ocrWords 的顺序排：按行、行内从左到右，所以下标有序才有"选中从 A 到 B"
+	struct SelUnit
+	{
+		int word{ 0 };            // 属于 ocrWords 的第几个词
+		int from{ 0 }, to{ 0 };   // 词内字符区间 [from, to)
+		float x{ 0 }, y{ 0 }, w{ 0 }, h{ 0 };   // 标注坐标系里的矩形
+	};
+	// 选区单元表 + 每行的单元区间（与 ocrLines 一一对应）。识别结果回填时建，清识别时清
+	std::vector<SelUnit> selUnits;
+	std::vector<OcrLine> selLineUnits;
+	// 光标底下那一格（没有选区时画淡高亮）；-1 = 没有
+	int selHover{ -1 };
 	bool ocrRunning{ false };
 	// 用户点了「智能打码」但识别还没回来时记在这儿；applyOcrWords 收尾时补做。
 	// 不留这个标记的话，"刚截完图马上点智能打码"会因为词框还没到而静默什么都不做
