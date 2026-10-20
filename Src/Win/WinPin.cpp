@@ -2151,6 +2151,11 @@ void WinPin::setToolsVisible(bool on)
 	// 与 refreshToolSub 是同一套派发（见那里的说明），先建一次是白建
 	toolMain->show();
 	setSideBarVisible(true);
+	// 选文态把工具条请回来时**不能**预选几何工具：selectTool 开头那句
+	// setTextSelect(false) 会顺手把选文关掉（要求是收放都不退选文态）。
+	// 选文态 curId 本来就是空的，ToolSub 也已收起，摆位由上面 setSideBarVisible
+	// 里的 layoutTools 负责，什么都不用补
+	if (textSelect) return;
 	// 由它带着跑 layoutTools，位置一并摆好
 	toolMain->selectTool(L"geom");
 }
@@ -3754,6 +3759,12 @@ void WinPin::onKey(UINT key)
 			selAnchor = 0;
 			selCur = (int)ocrWords.size();
 			refresh();
+		}
+		else if (key == VK_SPACE) {
+			// 选文态下空格照旧收放工具条（作者：选文模式里按空格工具条收不掉）。
+			// 收起方向天然不退选文态（cancelSelect 不碰 textSelect），**请回来**那方向
+			// 要靠 setToolsVisible 里跳过预选几何工具 —— selectTool 开头会把选文关掉
+			setToolsVisible(!isToolsVisible());
 		}
 		else if (key == VK_ESCAPE) {
 			// 与 ESC 一贯的"退一步"一致：先撤掉这一步正在做的事（选区），再退整个模式
