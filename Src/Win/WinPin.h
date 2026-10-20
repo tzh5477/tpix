@@ -679,6 +679,14 @@ private:
 	// 选区用两个"插入点"表示（同文本编辑器）：selAnchor 是按下那一下定的，selCur 跟着鼠标走
 	int selAnchor{ 0 }, selCur{ 0 };
 	bool selDragging{ false };
+	// ---- 选文的扫描光影 ----
+	// 点开选文那一刻起算的起点 tick（GetTickCount64），0 = 没在扫。
+	// 只扫一趟 1 秒：它回答的是"这一下点进选文了吗"，OCR 认得慢不慢与它无关
+	ULONGLONG scanStartAt{ 0 };
+	// 光带的渐变刷（建一次，内部自持 stop 集合），光带每帧只挪起止点（见 paintScanFx）
+	Microsoft::WRL::ComPtr<ID2D1LinearGradientBrush> brushScan;
+	// 画光带（选文开关打开后的 1 秒里）。调用方在窗口坐标层（变换已归位）
+	void paintScanFx(ID2D1DeviceContext* ctx);
 	// 选中那一层半透明蓝底
 	Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> selectBrush;
 	// 顶部的状态条与右上角的轻提示（"已复制"）。按需重建

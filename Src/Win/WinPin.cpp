@@ -2263,6 +2263,28 @@ void WinPin::onCreated()
     d2d->deviceContext->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::White), brushTipText.GetAddressOf());
     // 选中的词铺的那层蓝底。半透明：字还得看得清，不然选完不知道选的是哪几个字
     d2d->deviceContext->CreateSolidColorBrush(D2D1::ColorF(Setting::getThemeColor(), 0.34f), selectBrush.GetAddressOf());
+    // 选文扫描光带的渐变：主题色，中段最亮、两端透明。刷子只在建窗时建这一次，
+    // 之后每帧只挪起止点 —— 一趟 1 秒约 60 帧，每帧现建刷子是白扔
+    {
+        D2D1_GRADIENT_STOP stops[]{
+            { 0.f,    D2D1::ColorF(Setting::getThemeColor(), 0.f) },
+            { 0.42f,  D2D1::ColorF(Setting::getThemeColor(), 0.45f) },
+            { 1.f,    D2D1::ColorF(Setting::getThemeColor(), 0.f) },
+        };
+        // 直接给 stop 数组建集合，再按 COM 辅助重载（引用参数）建刷：
+        // 本工程的 d2d1.h 开着 D2D1_USE_COM_DEFINES，只有这一条签名可用
+        Microsoft::WRL::ComPtr<ID2D1GradientStopCollection> stopsCol;
+        d2d->deviceContext->CreateGradientStopCollection(stops, ARRAYSIZE(stops),
+            stopsCol.GetAddressOf());
+        D2D1_LINEAR_GRADIENT_BRUSH_PROPERTIES props{
+            .startPoint = { 0.f, 0.f },
+            .endPoint = { 1.f, 0.f },
+        };
+        D2D1_BRUSH_PROPERTIES brushProps{ .opacity = 1.f };
+        // 刷子会把集合 AddRef 一份，局部的 stopsCol 出了作用域也没关系
+        d2d->deviceContext->CreateLinearGradientBrush(props, brushProps, stopsCol.Get(),
+            brushScan.GetAddressOf());
+    }
     // 「贴图之后默认识别文本」：不等用户点「选文」，窗口一建起来就在后台认 ——
     // 那张图通常刚截下来，用户点开选文时结果基本已经在了，选起来是即时的
     startOcr();
@@ -2336,6 +2358,8 @@ void WinPin::layout()
 	}
 	// 剪裁采样点压在边框上，任何时候都能拖（缩略图 / 细条 / 藏起来时除外，见 paintCropHandles）
 	paintCropHandles(ctx);
+	// 选文的扫描光影：属于窗口装饰层（不跟标注缩放），压在边框之上、标题与提示之下
+	if (textSelect) paintScanFx(ctx);
 	// 多选那条批量条（复制 / 删除）与旋转手柄已经并进 paintSelection 了 ——
 	// 它们挂在"整组外接框"上，属于标注坐标系，不该在这层按窗口坐标画
 	paintTitle(ctx);
@@ -3050,6 +3074,14 @@ void WinPin::onTimerCB(UINT id)
 		refresh();
 		return;
 	}
+	if (id == 104) {   // 选文的扫描光影：1 秒一趟，到点收表；每帧重画一次
+		if (GetTickCount64() - scanStartAt >= 1000) {
+			scanStartAt = 0;
+			killTimer(104);
+		}
+		refreshNow();
+		return;
+	}
 	if (id != 100) return;
 	if (!drawing->shapeHover) {
 		refresh();
@@ -3249,11 +3281,17 @@ void WinPin::setTextSelect(bool on)
 		hideNumberPreview();
 		selAnchor = selCur = 0;
 		selDragging = false;
+		// 扫描光影：1 秒一趟，从左扫到右。它只回答"这一下点进选文了吗" ——
+		// 认字认没认完由顶部那句"正在识别文字…"说明，两条信息互不掺和
+		scanStartAt = GetTickCount64();
+		setTimer(16, 104);
 		// 刚建好窗口就点进来时识别还在跑（甚至还没起），催一次；已经在跑就不用管
 		if (!ocrRunning && ocrWords.empty()) startOcr();
 	}
 	else {
 		selDragging = false;
+		// 光带不能留着半条：退选文态（ESC / 换标注工具）是随手就来的动作
+		if (scanStartAt) { scanStartAt = 0; killTimer(104); }
 	}
 	// 开关状态住在这一层（ESC、拿起标注工具、关窗都要复位它），按钮的外观得回报过去
 	toolMain->setToggle(L"textSelect", on);
@@ -3664,6 +3702,20 @@ void WinPin::paintTextSelect(ID2D1DeviceContext* ctx)
 		if (word.w <= 0 || word.h <= 0) continue;
 		ctx->FillRectangle(D2D1::RectF(word.x, word.y, word.x + word.w, word.y + word.h), selectBrush.Get());
 	}
+}
+
+// 点开选文那一秒，一条主题色光带从左扫到右。窗口坐标画（客户区即图，不跟标注缩放），
+// 带宽取窗口宽的 28%，中段最亮两端透明 —— 进出场靠渐变自己柔掉，不用额外缓动。
+// 用主题色不用白光：白底截图上白色亮带一整条都是隐形的
+void WinPin::paintScanFx(ID2D1DeviceContext* ctx)
+{
+	if (!scanStartAt || !brushScan) return;
+	const float p = (float)(GetTickCount64() - scanStartAt) / 1000.f;
+	const float band = w * 0.28f;
+	const float left = -band + p * (w + band);
+	brushScan->SetStartPoint({ left, 0.f });
+	brushScan->SetEndPoint({ left + band, 0.f });
+	ctx->FillRectangle(D2D1::RectF(left, 0.f, left + band, (float)h), brushScan.Get());
 }
 
 // 顶部那条状态。"认完了而且认出了东西"就什么都不画；否则要说明是"还没认完"还是"确实没字" ——
