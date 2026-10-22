@@ -12,6 +12,7 @@
 #include "../Shape/ShapeArrow.h"
 #include "../Shape/ShapeLine.h"
 #include "../Shape/ShapeNumber.h"
+#include "../Shape/ShapeIcon.h"
 #include "../Shape/ShapeWatermark.h"
 #include "../Tip.h"
 #include "../Win/WinColorPicker.h"
@@ -37,6 +38,8 @@ namespace {
 		{ L"geom",    { L"width",     1.f, 26.f,  2.f } },
 		{ L"arrow",   { L"width",     1.f, 16.f,  3.f } },
 		{ L"number",  { L"radius",    6.f, 86.f, 16.f } },
+		// 图标工具的滑块调的是方框边长（ShapeIcon 拿它当 size），不是线宽
+		{ L"icon",    { L"size",     12.f, 160.f, 32.f } },
 		{ L"line",    { L"width",     1.f, 60.f, 12.f } },
 		// 画笔与荧光笔共用一条线宽：两者只差"画出来什么样"（见 ShapeBrush），
 		// 分成两条的话切一次类型滑块就得跟着换值域，而它俩的合理粗细本来也重叠
@@ -379,6 +382,8 @@ void ToolSub::beginTool(const std::wstring& id)
 	contentNode->removeAllChildren();
 	// 滑块与编号输入框一并作废：不是每个面板都建它们，留着就是悬垂指针
 	slider = nullptr;
+	// 图标面板上的第二枚滑块（透明度）同理
+	opacitySlider = nullptr;
 	sliders.clear();
 	sliderNames.clear();
 	// 同上：下拉按钮上那几格自绘的小图也随 contentNode 一起销毁了
@@ -485,6 +490,56 @@ void ToolSub::showNumberTools()
 	makeSelectBtn(L"tool.numberRing", L"ringStyle", &numberRing, ringItems);
 	initSlider();
 	initColorBtns();
+	makeApplyAllBtn();
+}
+
+void ToolSub::showIconTools()
+{
+	// 图标滑块调的是方框边长（ShapeIcon 直接拿 getShapeSliderVal(L"icon") 当 size）
+	beginTool(L"icon");
+	// 行里是三枚按钮（图标下拉 / 阴影 / 应用到全部）+ 两枚定宽滑块。
+	// 少算一枚的话宽度不够，flex 把三枚按钮压成细条 —— 图标下拉只剩缝那么宽，
+	// 选中的图标回显不出来（作者截图报的"下拉框太窄、看不到回显"就是它）。
+	// 图标下拉那格再宽一点（与线条「端点 / 样式」同宽 lineChoiceW），差额从 extraW 里补
+	initSize(3, false, false, lineChoiceW - btnSize, 2);
+	// 透明度 / 阴影不在 beginTool 的管辖里（那张表只管滑块），在这里自己读
+	iconOpacity = std::clamp((int)Setting::get()->getToolNum(L"icon", L"opacity", 100.f), 20, 100);
+	// 图标档位：19 项全是自绘（按钮与列表画的是真图标），名称放悬停提示里。
+	// items 传空串 —— 按钮上不写字，自绘的小图就是它本身
+	std::vector<std::wstring> items(ShapeIcon::kindCount());
+	std::vector<std::wstring> tips;
+	for (int i = 0; i < ShapeIcon::kindCount(); ++i) {
+		tips.push_back(Lang::get(std::format(L"tool.iconName{}", i)));
+	}
+	auto btn = makeSelectBtn(L"tool.iconKind", L"kind", &iconKind, items,
+		// 换档位走"这一笔画成什么样"那条路：图上正选着的那枚图标立刻跟着换
+		[this]() { win->onToolStyleChanged(true); }, false, false,
+		[](ID2D1DeviceContext* ctx, const D2D1_RECT_F& rect, int index) {
+			ShapeIcon::paintSample(ctx, rect, index);
+			// 列表宽度与线条「端点 / 样式」那两档一致（都是自绘档的 60）：
+			// 19 项一格一个图标，按文字档 120 开出来比它上面的按钮宽出一大截
+		}, tips, 60.f);
+	// 宽度写死，不让 flex 分：这一格画的是图标样例，内容宽度算出来是 0，
+	// 交给 flex 平分会比「阴影」「全」两格窄一大截（同线条那两枚样例按钮的做法）
+	btn->setFlexGrow(0.f);
+	btn->setFlexShrink(0.f);
+	btn->setWidth(lineChoiceW);
+	// 阴影开关。文字按钮 —— 图标字体里没有"阴影"符号，硬猜只会显示成方块。
+	// makeTextToggle 建按钮时会拿配置里的初始值跑一遍 apply：面板刚打开、用户什么
+	// 都没改，这一趟不该记撤销（onToolStyleChanged 会 mark），用 building 标志压掉
+	iconPanelBuilding = true;
+	makeTextToggle(Lang::get(L"tool.iconShadow"), L"tool.iconShadow", L"shadow", false,
+		[this](bool on) {
+			iconShadow = on;
+			if (!iconPanelBuilding) win->onToolStyleChanged();
+		});
+	iconPanelBuilding = false;
+	initSlider();
+	opacitySlider = makeSlider(20.f, 100.f, (float)iconOpacity, [this](float v) {
+		iconOpacity = (int)v;
+		Setting::get()->setToolNum(L"icon", L"opacity", v);
+		win->onSliderStyleChanged();
+		}, Lang::get(L"tool.iconOpacity"));
 	makeApplyAllBtn();
 }
 
@@ -1300,7 +1355,8 @@ void ToolSub::migrateGeomCfg()
 Ling::Button* ToolSub::makeSelectBtn(const std::wstring& tipKey, const std::wstring& cfgKey,
 	int* index, const std::vector<std::wstring>& items,
 	std::function<void()> onPicked, bool useIconFont, bool refreshNumbers,
-	SelectPopup::SamplePainter paintSample, const std::vector<std::wstring>& itemTips)
+	SelectPopup::SamplePainter paintSample, const std::vector<std::wstring>& itemTips,
+	float minW)
 {
 	// 与 makeToggleBtn 同理：上一次的选择在配置文件里，取回来盖掉内存里那份。
 	// 夹值域是因为配置文件可能被手工改坏，而这个值要用来取 items，越界就取到表外了
@@ -1345,7 +1401,7 @@ Ling::Button* ToolSub::makeSelectBtn(const std::wstring& tipKey, const std::wstr
 	}
 	// index 与 items 捕获到 lambda 里，按钮重建时会跟着 contentNode 一起销毁，
 	// 而 ToolSub 与 WinPin 同生命周期，index 指向的成员不会先没
-	btn->onClick.add([this, index, items, itemTips, cfgKey, btn, switchTo, onPicked, refreshNumbers, useIconFont, paintSample](Ling::Button*) {
+	btn->onClick.add([this, index, items, itemTips, cfgKey, btn, switchTo, onPicked, refreshNumbers, useIconFont, paintSample, minW](Ling::Button*) {
 		// 列表可能翻到按钮上方，那时它正好压在悬停提示的位置上，先把提示收掉
 		tip->hide();
 		SelectPopup::show(this, btn, items, *index,
@@ -1361,7 +1417,7 @@ Ling::Button* ToolSub::makeSelectBtn(const std::wstring& tipKey, const std::wstr
 				if (refreshNumbers) win->refreshNumberShapes();
 				if (onPicked) onPicked();
 			},
-			useIconFont ? std::wstring{ L"icon" } : std::wstring{}, 0.f, paintSample, itemTips);
+			useIconFont ? std::wstring{ L"icon" } : std::wstring{}, minW, paintSample, itemTips);
 	});
 	return btn;
 }

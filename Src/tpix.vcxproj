@@ -213,6 +213,7 @@
     <ClCompile Include="Shape\ShapeImage.cpp" />
     <ClCompile Include="Shape\ShapeLine.cpp" />
     <ClCompile Include="Shape\ShapeBrush.cpp" />
+    <ClCompile Include="Shape\ShapeIcon.cpp" />
     <ClCompile Include="Shape\ShapeLineBase.cpp" />
     <ClCompile Include="Shape\ShapeMosaicLine.cpp" />
     <ClCompile Include="Shape\ShapeMosaicPaint.cpp" />
@@ -330,6 +331,7 @@
     <ClInclude Include="Shape\ShapeImage.h" />
     <ClInclude Include="Shape\ShapeLine.h" />
     <ClInclude Include="Shape\ShapeBrush.h" />
+    <ClInclude Include="Shape\ShapeIcon.h" />
     <ClInclude Include="Shape\ShapeLineBase.h" />
     <ClInclude Include="Shape\ShapeMosaicLine.h" />
     <ClInclude Include="Shape\ShapeMosaicPaint.h" />

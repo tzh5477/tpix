@@ -429,6 +429,9 @@ void ToolMain::selectTool(const std::wstring& id)
 	else if (curId == L"number") {
 		win->toolSub->showNumberTools();
 	}
+	else if (curId == L"icon") {
+		win->toolSub->showIconTools();
+	}
 	else if (curId == L"line") {
 		win->toolSub->showLineTools();
 	}
