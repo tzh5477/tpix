@@ -140,7 +140,7 @@ WinPin::WinPin(int x, int y, int w, int h, const std::vector<BYTE>* data, const 
 	// 的 16ms 里有 8ms 花在这次白排上，鼠标消息根本来不及，窗口就落在光标后面一抖一抖地追。
 	// 抬手时 onUp 会照常重排一次，所以跳过的不亏
 	onMoved.add([this]() {
-		if (winDragging) return;
+		if (winDragging || cropApplying) return;
 		layoutTools();
 	});
 	// DPI 变了（用户改了缩放比例，或者窗口被拖到缩放比例不同的显示器上）：系统会按新旧缩放比
@@ -1963,6 +1963,62 @@ void WinPin::setPinTitle(const std::wstring& t)
 }
 
 
+void WinPin::beginMoveBatch()
+{
+	if (moveBatch) return;
+	// 四扇：底图 + ToolMain + ToolSub + 右边缘竖排。凑不够系统会自动扩
+	moveBatch = BeginDeferWindowPos(4);
+}
+
+void WinPin::endMoveBatch()
+{
+	if (!moveBatch) return;
+	auto dp = moveBatch;
+	moveBatch = nullptr;   // 先清：EndDeferWindowPos 里会送 WM_MOVE/WM_SIZE，别让它们再往里塞
+	EndDeferWindowPos(dp);
+}
+
+void WinPin::moveWindowTo(Ling::WinBase* target, int nx, int ny)
+{
+	if (!target) return;
+	// 位置没变就当没这回事。原来每帧无条件 setPosition，等于每个鼠标事件白等一整帧合成 ——
+	// 拖右下边时 ToolSub 与竖排条动都不动，那两次 SetWindowPos 纯属白花
+	if (target->x == nx && target->y == ny) return;
+	target->x = nx;
+	target->y = ny;
+	if (!target->hwnd) return;
+	if (moveBatch) {
+		auto dp = DeferWindowPos(moveBatch, target->hwnd, nullptr, nx, ny, 0, 0,
+			SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOREDRAW);
+		// 批句柄失效就退回单发，别把这扇窗留在原地
+		if (dp) { moveBatch = dp; return; }
+		moveBatch = nullptr;
+	}
+	SetWindowPos(target->hwnd, nullptr, nx, ny, 0, 0,
+		SWP_NOSIZE | SWP_NOZORDER | SWP_NOREDRAW);
+}
+
+void WinPin::resizeWindowTo(Ling::WinBase* target, int nx, int ny, int nw, int nh)
+{
+	if (!target) return;
+	const bool same = target->x == nx && target->y == ny
+		&& (int)target->w == nw && (int)target->h == nh;
+	if (same) return;
+	target->x = nx;
+	target->y = ny;
+	target->w = (float)nw;
+	target->h = (float)nh;
+	if (!target->hwnd) return;
+	if (moveBatch) {
+		auto dp = DeferWindowPos(moveBatch, target->hwnd, nullptr, nx, ny, nw, nh,
+			SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOREDRAW);
+		if (dp) { moveBatch = dp; return; }
+		moveBatch = nullptr;
+	}
+	SetWindowPos(target->hwnd, nullptr, nx, ny, nw, nh,
+		SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOREDRAW);
+}
+
 // 把 ToolMain / ToolSub 摆到 WinPin 周围，始终靠 WinPin 右对齐，并尽量留在屏幕可视区内。
 // 三种模式，按 ToolMain+ToolSub 的总高度决定（与 curId 是否为空无关，避免选中按钮时整组跳动）：
 //   bottom : WinPin 下方，自上而下 ToolMain -> ToolSub
@@ -2010,7 +2066,9 @@ void WinPin::layoutTools()
 	}
 	auto mainX = static_cast<float>(winRect.right) - toolMain->w;
 	// 垂直方向按整组当前高度裁剪，避免 WinPin 超出工作区时把 ToolSub 挤到屏幕外
-	toolMain->setPosition(clampPos(mainX, toolMain->w, wa.left, wa.right), clampPos(mainY, usedH, wa.top, wa.bottom));
+	moveWindowTo(toolMain.get(),
+		(int)clampPos(mainX, toolMain->w, wa.left, wa.right),
+		(int)clampPos(mainY, usedH, wa.top, wa.bottom));
 	if (showSub) {
 		toolSub->updatePosition(wa);
 	}
@@ -2028,7 +2086,7 @@ void WinPin::layoutTools()
 		}
 		const auto posX = clampPos(barX, barW, wa.left, wa.right);
 		const auto posY = clampPos((float)winRect.top, barH, wa.top, wa.bottom);
-		sideBar->setPosition(posX, posY);
+		moveWindowTo(sideBar.get(), (int)posX, (int)posY);
 		// 两边都摆不下时会被夹回窗口里面，那一段得压在最上面 —— 否则被底图整条盖住。
 		// 与下面 toolsOverlay 同一套：状态一变才提一次，本函数在拖窗口 / 调尺寸时
 		// 每个鼠标事件都要跑一遍，白调一次 SetWindowPos 就是白等一次
@@ -4253,15 +4311,20 @@ void WinPin::applyCropRect()
 	const auto newY = dragSrcPos.y + (int)std::lround((float)cropRect.top * vs);
 	const auto newW = std::max(1, (int)std::lround((float)nw * vs));
 	const auto newH = std::max(1, (int)std::lround((float)nh * vs));
-	x = newX;
-	y = newY;
-	w = (float)newW;
-	h = (float)newH;
 	// 位置和尺寸一次推过去：分两次调，中间那一帧的窗口矩形跟底图对不上，看着就是闪一下。
-	// SWP_NOREDRAW 配合末尾那次 refresh() —— 这一帧重画由我们自己负责
-	SetWindowPos(hwnd, nullptr, newX, newY, newW, newH, SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOREDRAW);
+	// SWP_NOREDRAW 配合末尾那次 refresh() —— 这一帧重画由我们自己负责。
+	// 攒成一批：底图与三条附属窗都由 EndDeferWindowPos 一次提交。分开各自 SetWindowPos 时
+	// 每次都要等合成器出一帧（本机实测 8~50ms/次），拖采样点一帧要挪四扇 ⇒ 100ms 以上，
+	// 鼠标消息全堵在后面，手感就是"拖不动、一格一格跳"。攒批后整组只提交一次（实测 ~20ms）。
+	// cropApplying 期间底图窗口自己收到的 WM_MOVE 由 onMoved 咽掉：本函数紧接着就自己排
+	// 一遍，让 onMoved 再排一遍等于把整组原样搬第二次（实测一帧 358ms 里有 170ms 是它）
+	beginMoveBatch();
+	cropApplying = true;
+	resizeWindowTo(this, newX, newY, newW, newH);
 	// 窗口矩形变了，工具条也得跟着重新定位（它摆在窗口外面，尺寸一变就错位）
 	layoutTools();
+	endMoveBatch();
+	cropApplying = false;
 	refresh();
 }
 

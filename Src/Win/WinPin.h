@@ -62,6 +62,19 @@ public:
 	// 启动时把上次退出前的贴图摆回原位，属性一并恢复
 	static void restoreAll();
 	void layoutTools();
+	// ---- 一帧只提交一次"窗口搬运" ----
+	// 底图窗口与三条附属窗（ToolMain / ToolSub / 右边缘竖排）都是独立顶层窗，摆位各自一次
+	// SetWindowPos。本机实测单次 SetWindowPos 要 8~50ms（每次都要等合成器出一帧），
+	// 拖剪裁采样点时一帧要挪四扇 ⇒ 100ms 以上，鼠标消息根本跟不上，看着就是"拖不动"。
+	// BeginDeferWindowPos 把这些搬运攒成一批，由 EndDeferWindowPos 一次提交 ——
+	// 实测同样四扇窗从 ~200ms 掉到 ~20ms。只能裹住"位置/尺寸"这一类改动，
+	// 里面别夹 show() / hide()（ShowWindow 不受这一批管，夹进去只会把批提前冲散）
+	void beginMoveBatch();
+	void endMoveBatch();
+	// 把一扇窗摆到 (nx, ny)：位置没变就**不碰窗口**（每帧白搬一次就是白等一整帧合成）
+	void moveWindowTo(Ling::WinBase* target, int nx, int ny);
+	// 同上，顺带改尺寸（只有贴图窗口自己用得上）
+	void resizeWindowTo(Ling::WinBase* target, int nx, int ny, int nw, int nh);
 	// 工具栏整组显示 / 隐藏（ToolMain + ToolSub）。空格键走它。
 	// 它不只是"开关窗口"，两边各带一步：收起来时连画笔一起放掉（cancelSelect），
 	// 请回来时预选几何图形工具（selectTool(L"geom")）—— 于是空格就是"编辑"与"拖着图走"
@@ -525,6 +538,12 @@ private:
 	POINT cropBase{ 0, 0 };
 	// 正拉着第几个采样点，-1 表示没在拉（见 cropHandleAt）
 	int cropHandle{ -1 };
+	// 正在按裁剪矩形重摆窗口（applyCropRect 里，从攒批到提交结束）。这段里底图窗口收到的
+	// WM_MOVE 会被 onMoved 咽掉：applyCropRect 紧接着就自己排一遍，让 onMoved 再排一遍
+	// 等于把整组工具条的搬运原样做第二次 —— 实测拖采样点时一帧 358ms 里有 170ms 是这一次重排
+	bool cropApplying{ false };
+	// 攒着的窗口搬运批（见 beginMoveBatch）。null 表示没在攒，moveWindowTo 当场发 SetWindowPos
+	HDWP moveBatch{ nullptr };
 	// 开始拖那一刻源图左上角在屏幕上的位置。窗口可以被拖走 / 被缩放，所以这个值不能长期存着，
 	// 只在一次拖拽期间有效 —— 拖左边 / 上边时窗口自己就在挪，靠它算光标落在源图的哪个像素
 	POINT dragSrcPos{ 0, 0 };

@@ -1837,7 +1837,9 @@ void ToolSub::updatePosition(const RECT& workArea)
 	// 有一半是这么来的。只有箭头真的换了位置才重画
 	const bool arrowMoved = newArrowX != arrowX;
 	arrowX = newArrowX;
-	setPosition(finalX, static_cast<int>(py));
+	// 走宿主的批处理入口：位置没变就不碰窗口，拖剪裁采样点那一帧还有机会与底图、
+	// ToolMain、右边缘竖排合成**一次**提交（见 WinPin::beginMoveBatch）
+	win->moveWindowTo(this, finalX, (int)py);
 	if (isVisible) {
 		if (arrowMoved) refresh();
 	}
