@@ -408,6 +408,22 @@ def icon_smart(pen):
     sparkle(770, 150, 140, 27)
 
 
+def icon_smile(pen):
+    """笑脸 = 插入图标工具（FSCapture 那套小图标）。工具条上 41 个旧码位全都有主，
+    这一格补一枚新字形：圆脸 + 两只眼睛 + 弧线嘴，17 像素下也认得出是"笑脸"。
+    第一版脸圈 370/笔宽 64，在工具条 13 号下整枚只有 10px、圈只有 0.8px，
+    看着比左右邻居小一圈（作者截图报的"入口图标太小"）。按 MDL2 原生字形的
+    占幅重画：外径 890（接近时钟那枚的 832～928 幅面）。
+    ⚠️ 轮廓一律不额外加粗，尺寸与其它小图标一致即可：第二 / 三版为了"看起来不小"
+    把脸圈加到笔宽 110、眼嘴也加粗，13 号下全糊成一坨（作者截图）。
+    笔宽回到基准的 68 / 眼 46 / 嘴 48，幅面取时钟那枚的 380 —— 与其它小图标同尺寸同粗细。"""
+    ring(pen, CX, CY, 380, 68)
+    disc(pen, CX - 155, CY + 150, 46)
+    disc(pen, CX + 155, CY + 150, 46)
+    # 嘴：圆心在眼下方的弧，从 200° 扫到 340°（经过 270° = 正下方，字体坐标系 y 向上）
+    arc_band(pen, CX, CY - 30, 200, 48, 200.0, 340.0)
+
+
 ICONS = [
     (0xE909, 'arrowPlain', icon_arrow_plain),
     (0xE90A, 'arrowTaper', icon_arrow_taper),
@@ -438,7 +454,15 @@ ICONS = [
     (0xE915, 'power', icon_power),
     # 马赛克那一档「智能」打码（ToolSub::showMosaicTools 的模式下拉）
     (0xE916, 'smart', icon_smart),
+    # 工具条上的「插入图标」（ToolMain 的 icon 那一格）
+    (0xE917, 'smile', icon_smile),
 ]
+
+
+# 观感调过、需要覆盖旧字形的码位。脚本平时对已有码位一律跳过（反复跑不写两遍），
+# 只有列在这里的才会原地替换 —— 调完字形观感后把码位写进来重跑一次即可，
+# 稳定之后建议清空，避免每次跑都无谓地重画
+FORCE = {0xE917}
 
 
 def main():
@@ -449,13 +473,15 @@ def main():
     added = 0
     for cp, name, fn in ICONS:
         # 已经补过的跳过：脚本反复跑不该把同一个码位写两遍，更不该把旧字形覆盖掉
-        if name in order or cp in cmap:
+        # （FORCE 里列出的除外 —— 那是"字形重画过，要覆盖旧版"）
+        if (name in order or cp in cmap) and cp not in FORCE:
             continue
         pen = TTGlyphPen(None)
         fn(pen)
         glyph = pen.glyph()
         glyph.recalcBounds(f['glyf'])
-        order.append(name)
+        if name not in order:
+            order.append(name)
         f['glyf'][name] = glyph
         f['hmtx'][name] = (EM, glyph.xMin)
         for sub in f['cmap'].tables:

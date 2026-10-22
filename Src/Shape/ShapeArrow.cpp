@@ -61,6 +61,32 @@ namespace {
 		return style;
 	}
 
+	// 空心箭头描轮廓用的样式：斜接上限压到 3（D2D 默认 10）。缓存规矩同 miterStyle。
+	// 为什么要压：尖尾那一档（样式 1）的尾部收成**一个尖点**，闭式轮廓在这个尖点上
+	// 也要接一次。尖角朝外的那一面就是箭杆方向 —— 描边沿它斜接出去，默认上限 10 意味着
+	// 最多能伸出 5 倍线宽：一条细箭头的可见尾部比起点夹点**朝前多出二十几个像素**
+	//（作者报的"箭头未填充且样式为第 2 种的时候，起点的标记点没有指向箭头最开始处"，
+	// 实测截图中标记在 x=327、可见杆尾在 x=303，≈10×半线宽，与默认上限吻合）。
+	// 填充态不描边，所以没事 —— 那句"未填充**且**第 2 种"正是这个组合。
+	// 上限 3 的取舍：四个档的**箭尖**内角都是钝角（半角 ≥28°，斜接比 ≤2.2），3 以下照样
+	// 斜接、尖头依旧锋利；只有尾部这种细长尖角（斜接比随箭长涨到几十）被压成平接，
+	// 尾端收回顶点自身 —— 起点夹点从此就指着箭头最开始处
+	ID2D1StrokeStyle* hollowStyle()
+	{
+		static ID2D1StrokeStyle* style{ nullptr };
+		static ID2D1Factory1* owner{ nullptr };
+		auto factory = Ling::D2D::get()->d2dFactory.Get();
+		if (style && owner == factory) return style;
+		owner = factory;
+		style = nullptr;
+		factory->CreateStrokeStyle(
+			D2D1::StrokeStyleProperties(D2D1_CAP_STYLE_FLAT, D2D1_CAP_STYLE_FLAT,
+				D2D1_CAP_STYLE_FLAT, D2D1_LINE_JOIN_MITER, 3.f,
+				D2D1_DASH_STYLE_SOLID, 0.f),
+			nullptr, 0, &style);
+		return style;
+	}
+
 	// 往 sink 里加一条"有厚度的线段"（一个矩形）。细箭头的命中几何拿它拼出来：
 	// 杆一段、两翼各一段。调用方把填充模式设成 WINDING，
 	// 几段叠着才不会按"重叠即挖掉"互相打洞（ALTERNATE 默认就是这么干的）
@@ -269,8 +295,10 @@ void ShapeArrow::paint(ID2D1DeviceContext* ctx)
 		// 原来这里传的是 win->getDpi()（一个逻辑像素）：一条 8 像素粗的箭头描出来成了一圈
 		// 发丝，整支箭看着变成另一种细箭头（作者报的"点填充 / 取消填充之后箭头样式就变了"）。
 		// arrowSize 是滑块值的 4 倍（见构造函数），所以这里算出来的正是滑块的线宽 ——
-		// 与 ShapeRectBase 的空心分支用 strokeWidth 是同一条规矩
-		ctx->DrawGeometry(path.Get(), brush.Get(), arrowSize * 0.25f);
+		// 与 ShapeRectBase 的空心分支用 strokeWidth 是同一条规矩。
+		// 描边样式用 hollowStyle：默认斜接上限 10 会让尖尾档的尾点朝外接出一截
+		// （理由见 hollowStyle），起点夹点就对不上箭头的可见起点了
+		ctx->DrawGeometry(path.Get(), brush.Get(), arrowSize * 0.25f, hollowStyle());
 	}
 }
 

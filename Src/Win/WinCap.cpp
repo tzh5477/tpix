@@ -323,11 +323,22 @@ void WinCap::onKey(UINT key)
         return cr;
     };
     if (key == VK_ESCAPE) {
+        // 自动长截图滚动中：ESC = 收工，把拼好的图开进编辑界面（与滚到底自动停汇合在
+        // CapLong::pin），不再整轮作废 —— 滚了好几屏的内容按一下就全扔，太冤了。
+        // 手动模式保留退出：滚动节奏在用户自己手里，那一刻多半是"不想要了"；而且手动
+        // 模式整窗让出了鼠标、焦点多半已落到底下的程序，ESC 本就未必进得来
+        if (stage == CapStage::Long && capLong && capLong->isRunning() && !capLong->isManual()) {
+            isPress = false;
+            isPolyDrag = false;
+            releaseMouse();
+            capLong->finish(true);
+            close();
+            return;
+        }
         // ESC = 整次截图作废，任何阶段都一样：还在拖框、选区已定、滚动长图、录屏中，
         // 一律直接退出这次截图（软件本身照常驻留）。
-        // 原先滚动截图上这一下是"收工并贴图"、拖框中那一支更糟：只 close() 却不撤
-        // isPress / 鼠标捕获，紧接着来的那条 WM_LBUTTONUP 会把 onUp 走完，
-        // 于是"按 ESC 反而进了截图编辑界面"。
+        // 原先拖框中那一支更糟：只 close() 却不撤 isPress / 鼠标捕获，紧接着来的那条
+        // WM_LBUTTONUP 会把 onUp 走完，于是"按 ESC 反而进了截图编辑界面"。
         // 先把本窗口这边的中途态清干净，再关窗 —— onClosed 里会 dispose 掉
         // capLong / capVideo（录屏的停止与临时文件清理都在 dispose 里）
         isPress = false;

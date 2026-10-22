@@ -12,6 +12,7 @@
 #include "../Shape/ShapeArrow.h"
 #include "../Shape/ShapeLine.h"
 #include "../Shape/ShapeNumber.h"
+#include "../Shape/ShapeIcon.h"
 #include "../Shape/ShapeWatermark.h"
 #include "../Tip.h"
 #include "../Win/WinColorPicker.h"
@@ -37,6 +38,8 @@ namespace {
 		{ L"geom",    { L"width",     1.f, 26.f,  2.f } },
 		{ L"arrow",   { L"width",     1.f, 16.f,  3.f } },
 		{ L"number",  { L"radius",    6.f, 86.f, 16.f } },
+		// 图标工具的滑块调的是方框边长（ShapeIcon 拿它当 size），不是线宽
+		{ L"icon",    { L"size",     12.f, 160.f, 32.f } },
 		{ L"line",    { L"width",     1.f, 60.f, 12.f } },
 		// 画笔与荧光笔共用一条线宽：两者只差"画出来什么样"（见 ShapeBrush），
 		// 分成两条的话切一次类型滑块就得跟着换值域，而它俩的合理粗细本来也重叠
@@ -71,12 +74,13 @@ namespace {
 		};
 		return items;
 	}
-	// 线条类型三档：直角折线（默认）/ 普通线条 / 折线。按钮上写汉字，所以走语言包。
-	// 三档会自动变下拉（makeSelectBtn 只对两项的单击即切换，见那里的说明）——
+	// 线条类型四档：直角折线（默认）/ 普通线条 / 折线 / 曲线。按钮上写汉字，所以走语言包。
+	// 多档会自动变下拉（makeSelectBtn 只对两项的单击即切换，见那里的说明）——
 	// 正合意：档位一多，单击循环要连点好几下才转到想要的那个
 	std::vector<std::wstring> lineKindItems()
 	{
-		return { Lang::get(L"tool.lineKind0"), Lang::get(L"tool.lineKind1"), Lang::get(L"tool.lineKind2") };
+		return { Lang::get(L"tool.lineKind0"), Lang::get(L"tool.lineKind1"),
+			Lang::get(L"tool.lineKind2"), Lang::get(L"tool.lineKind3") };
 	}
 	// 画笔类型只有两项（画笔 / 荧光笔），单选即切换
 	std::vector<std::wstring> brushKindItems()
@@ -378,6 +382,8 @@ void ToolSub::beginTool(const std::wstring& id)
 	contentNode->removeAllChildren();
 	// 滑块与编号输入框一并作废：不是每个面板都建它们，留着就是悬垂指针
 	slider = nullptr;
+	// 图标面板上的第二枚滑块（透明度）同理
+	opacitySlider = nullptr;
 	sliders.clear();
 	sliderNames.clear();
 	// 同上：下拉按钮上那几格自绘的小图也随 contentNode 一起销毁了
@@ -433,18 +439,23 @@ void ToolSub::showGeomTools()
 void ToolSub::showArrowTools()
 {
 	beginTool(L"arrow");
-	initSize(2, true);
+	// 箭头样式那格画的是样例（不写字），宽度写死成与线条「端点 / 样式」同宽 ——
+	// flex 会按内容尺寸给它分，样例按钮的内容尺寸是 0，压出来比邻居窄一截
+	initSize(2, true, false, lineChoiceW - btnSize);
 	makeToggleBtn(L"\ue604", &isArrowFill, L"tool.arrowFill", L"fill");
 	// 四种箭头样式：普通（首尾等粗、平口尾）、尖尾、细箭头（开口 V）、凹口实心。
 	// 默认普通那一个。按钮与列表里画的是真实的箭头 —— 几何与图上画的那个共用一份
 	// （见 ShapeArrow::paintSample），所以不是图标字体。
 	// 切完让当前选中的箭头立刻换形状 —— 下一个新建的本来就会用新档位。
 	// 传 true：换的是"档位"，与颜色 / 填充 / 粗细那些"外观"分流（见 WinPin::onToolStyleChanged）
-	makeSelectBtn(L"tool.arrowStyle", L"style", &arrowStyle, arrowStyleItems(),
+	auto styleBtn = makeSelectBtn(L"tool.arrowStyle", L"style", &arrowStyle, arrowStyleItems(),
 		[this]() { win->onToolStyleChanged(true); }, false, false,
 		[this](ID2D1DeviceContext* ctx, const D2D1_RECT_F& rect, int index) {
 			ShapeArrow::paintSample(ctx, rect, index, sampleLineW * dpi, brushSample.Get());
 		});
+	styleBtn->setFlexGrow(0.f);
+	styleBtn->setFlexShrink(0.f);
+	styleBtn->setWidth(lineChoiceW);
 	initSlider();
 	initColorBtns();
 	makeApplyAllBtn();
@@ -484,6 +495,56 @@ void ToolSub::showNumberTools()
 	makeSelectBtn(L"tool.numberRing", L"ringStyle", &numberRing, ringItems);
 	initSlider();
 	initColorBtns();
+	makeApplyAllBtn();
+}
+
+void ToolSub::showIconTools()
+{
+	// 图标滑块调的是方框边长（ShapeIcon 直接拿 getShapeSliderVal(L"icon") 当 size）
+	beginTool(L"icon");
+	// 行里是三枚按钮（图标下拉 / 阴影 / 应用到全部）+ 两枚定宽滑块。
+	// 少算一枚的话宽度不够，flex 把三枚按钮压成细条 —— 图标下拉只剩缝那么宽，
+	// 选中的图标回显不出来（作者截图报的"下拉框太窄、看不到回显"就是它）。
+	// 图标下拉那格再宽一点（与线条「端点 / 样式」同宽 lineChoiceW），差额从 extraW 里补
+	initSize(3, false, false, lineChoiceW - btnSize, 2);
+	// 透明度 / 阴影不在 beginTool 的管辖里（那张表只管滑块），在这里自己读
+	iconOpacity = std::clamp((int)Setting::get()->getToolNum(L"icon", L"opacity", 100.f), 20, 100);
+	// 图标档位：19 项全是自绘（按钮与列表画的是真图标），名称放悬停提示里。
+	// items 传空串 —— 按钮上不写字，自绘的小图就是它本身
+	std::vector<std::wstring> items(ShapeIcon::kindCount());
+	std::vector<std::wstring> tips;
+	for (int i = 0; i < ShapeIcon::kindCount(); ++i) {
+		tips.push_back(Lang::get(std::format(L"tool.iconName{}", i)));
+	}
+	auto btn = makeSelectBtn(L"tool.iconKind", L"kind", &iconKind, items,
+		// 换档位走"这一笔画成什么样"那条路：图上正选着的那枚图标立刻跟着换
+		[this]() { win->onToolStyleChanged(true); }, false, false,
+		[](ID2D1DeviceContext* ctx, const D2D1_RECT_F& rect, int index) {
+			ShapeIcon::paintSample(ctx, rect, index);
+			// 列表宽度与线条「端点 / 样式」那两档一致（都是自绘档的 60）：
+			// 19 项一格一个图标，按文字档 120 开出来比它上面的按钮宽出一大截
+		}, tips, 60.f);
+	// 宽度写死，不让 flex 分：这一格画的是图标样例，内容宽度算出来是 0，
+	// 交给 flex 平分会比「阴影」「全」两格窄一大截（同线条那两枚样例按钮的做法）
+	btn->setFlexGrow(0.f);
+	btn->setFlexShrink(0.f);
+	btn->setWidth(lineChoiceW);
+	// 阴影开关。文字按钮 —— 图标字体里没有"阴影"符号，硬猜只会显示成方块。
+	// makeTextToggle 建按钮时会拿配置里的初始值跑一遍 apply：面板刚打开、用户什么
+	// 都没改，这一趟不该记撤销（onToolStyleChanged 会 mark），用 building 标志压掉
+	iconPanelBuilding = true;
+	makeTextToggle(Lang::get(L"tool.iconShadow"), L"tool.iconShadow", L"shadow", false,
+		[this](bool on) {
+			iconShadow = on;
+			if (!iconPanelBuilding) win->onToolStyleChanged();
+		});
+	iconPanelBuilding = false;
+	initSlider();
+	opacitySlider = makeSlider(20.f, 100.f, (float)iconOpacity, [this](float v) {
+		iconOpacity = (int)v;
+		Setting::get()->setToolNum(L"icon", L"opacity", v);
+		win->onSliderStyleChanged();
+		}, Lang::get(L"tool.iconOpacity"));
 	makeApplyAllBtn();
 }
 
@@ -644,25 +705,41 @@ void ToolSub::initNumberBox()
 	box->setWidth(numberBoxW);
 	box->setVerticalCenter(true);
 	box->setFontSize(12.f);
+	// 定高单行框必须清零上下内边距：默认上下各 6 会把 28 高的内容区压到只剩 16，
+	// 装不下一行 12 号字 —— 滚动条常驻、基线以下还被裁掉（WinSettingAi 那六个框同理）
+	box->setPadding(6.f, 0.f, 6.f, 0.f);
+	// 底色 + 边框：这一格是唯一能改编号的地方。原来它没有框，跟右边那枚「填充」按钮
+	// 连成一片，看着就像"编号是写死的、改不了"（作者截图报的就是这个误会）
+	box->setBg(0xFFFFFFFF);
+	box->setBorder(1.f, 0xE0E0E0FF);
 	box->setMarginLeft(sliderMargin);
 	box->setMarginRight(sliderMargin);
 	box->setText(std::to_wstring(numberNext));
 	numberBox = box;
-	box->onTextChanged.add([this, box](Ling::TextBox*, const std::wstring& val) {
+	box->onTextChanged.add([this](Ling::TextBox*, const std::wstring& val) {
 		if (numberBoxSilent) return;
-		// 只认 1~9999 的整数：其余输入（空、字母、超长）一律回填上一个有效值
+		// ⚠️ 这个回调里**绝不能再回填输入框**：Ling 是在"编辑进行到一半"时发的 ——
+		// insertText 先删选区再插入，删选区那一步也会发一次。此刻 text / 光标 / 选区
+		// 都处于半改完的状态，setText 会把刚删掉的文本写回去、光标甩到末尾，于是
+		// "选中 1 再输入 10"出来的是 101（实测：删完那一步被回填成 1，插入又照原位置来）。
+		// 中间态（空 / 非数字 / 0）一律只记不动 —— 那本来就是用户正在往合法值走的路上，
+		// 每次都抢着回填，删到最后一个字符时会被立刻补回来，退格键就成了摆设
 		auto valid = !val.empty() && val.size() <= 4
 			&& std::all_of(val.begin(), val.end(), [](wchar_t c) { return c >= L'0' && c <= L'9'; });
-		auto parsed = valid ? std::stoi(val) : 0;
-		if (parsed < 1) {
-			numberBoxSilent = true;
-			box->setText(std::to_wstring(numberNext));
-			numberBoxSilent = false;
-			return;
-		}
+		if (!valid) return;
+		auto parsed = std::stoi(val);
+		if (parsed < 1) return;
 		// 这是用户手改的：从此锁住，不再跟着图上最大号回写（见 syncNumberVal）
 		numberManual = true;
-		setNumberVal(parsed);
+		numberNext = std::clamp(parsed, 1, 9999);
+	});
+	// 编辑结束（点了别处 / ESC / 窗口失焦）才把中间态兜回一个合法值：此刻输入已经收尾，
+	// 回填不会打断任何进行中的操作
+	box->onFocusChanged.add([this, box](Ling::TextBox*, bool focused) {
+		if (focused) return;
+		numberBoxSilent = true;
+		box->setText(std::to_wstring(numberNext));
+		numberBoxSilent = false;
 	});
 }
 
@@ -692,6 +769,8 @@ void ToolSub::setNumberVal(int val)
 	numberNext = std::clamp(val, 1, 9999);
 	// 输入框可能没建（当前不是序号工具），此时只更新成员
 	if (!numberBox) return;
+	// 正在编辑时也不写：与 initNumberBox 里那条同源 —— 编辑途中改 text 会打断输入
+	if (numberBox->isFocused()) return;
 	// setText 也会触发 onTextChanged，回填时要挡掉，否则会被当成用户改的再解析一遍
 	numberBoxSilent = true;
 	numberBox->setText(std::to_wstring(numberNext));
@@ -1299,7 +1378,8 @@ void ToolSub::migrateGeomCfg()
 Ling::Button* ToolSub::makeSelectBtn(const std::wstring& tipKey, const std::wstring& cfgKey,
 	int* index, const std::vector<std::wstring>& items,
 	std::function<void()> onPicked, bool useIconFont, bool refreshNumbers,
-	SelectPopup::SamplePainter paintSample, const std::vector<std::wstring>& itemTips)
+	SelectPopup::SamplePainter paintSample, const std::vector<std::wstring>& itemTips,
+	float minW)
 {
 	// 与 makeToggleBtn 同理：上一次的选择在配置文件里，取回来盖掉内存里那份。
 	// 夹值域是因为配置文件可能被手工改坏，而这个值要用来取 items，越界就取到表外了
@@ -1344,7 +1424,7 @@ Ling::Button* ToolSub::makeSelectBtn(const std::wstring& tipKey, const std::wstr
 	}
 	// index 与 items 捕获到 lambda 里，按钮重建时会跟着 contentNode 一起销毁，
 	// 而 ToolSub 与 WinPin 同生命周期，index 指向的成员不会先没
-	btn->onClick.add([this, index, items, itemTips, cfgKey, btn, switchTo, onPicked, refreshNumbers, useIconFont, paintSample](Ling::Button*) {
+	btn->onClick.add([this, index, items, itemTips, cfgKey, btn, switchTo, onPicked, refreshNumbers, useIconFont, paintSample, minW](Ling::Button*) {
 		// 列表可能翻到按钮上方，那时它正好压在悬停提示的位置上，先把提示收掉
 		tip->hide();
 		SelectPopup::show(this, btn, items, *index,
@@ -1360,7 +1440,7 @@ Ling::Button* ToolSub::makeSelectBtn(const std::wstring& tipKey, const std::wstr
 				if (refreshNumbers) win->refreshNumberShapes();
 				if (onPicked) onPicked();
 			},
-			useIconFont ? std::wstring{ L"icon" } : std::wstring{}, 0.f, paintSample, itemTips);
+			useIconFont ? std::wstring{ L"icon" } : std::wstring{}, minW, paintSample, itemTips);
 	});
 	return btn;
 }
@@ -1757,7 +1837,9 @@ void ToolSub::updatePosition(const RECT& workArea)
 	// 有一半是这么来的。只有箭头真的换了位置才重画
 	const bool arrowMoved = newArrowX != arrowX;
 	arrowX = newArrowX;
-	setPosition(finalX, static_cast<int>(py));
+	// 走宿主的批处理入口：位置没变就不碰窗口，拖剪裁采样点那一帧还有机会与底图、
+	// ToolMain、右边缘竖排合成**一次**提交（见 WinPin::beginMoveBatch）
+	win->moveWindowTo(this, finalX, (int)py);
 	if (isVisible) {
 		if (arrowMoved) refresh();
 	}

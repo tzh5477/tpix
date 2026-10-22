@@ -37,7 +37,8 @@ protected:
 	void hitDraggers(const float x, const float y);
 	void makeDraggers();
 	float pointToSegmentDistance(const D2D1_POINT_2F& p, const D2D1_POINT_2F& a, const D2D1_POINT_2F& b);
-	void hitTest(const D2D1_POINT_2F& mousePos);
+	// 曲线那一档覆写它：弧线离控制点连线很远，照点列算命中会漏（见 ShapeLine）
+	virtual void hitTest(const D2D1_POINT_2F& mousePos);
 	// 命中判定里"离折线多近才算贴在笔画上"的内圈：外圈由线宽定（见 hitTest），
 	// 内圈往外让出半个夹点，也就是**笔画正中那一块不算命中**。
 	// 马赛克 / 橡皮擦要这么挖（理由见 .cpp 的 hitTest），线条不要 —— 线条没有

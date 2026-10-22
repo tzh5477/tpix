@@ -4,8 +4,8 @@
 #include "ShapeLineBase.h"
 // 直线：折线族里"取工具条当前颜色描一条线"的那个。
 // 拖首端、拖末端、整体平移、线段命中判定都在 ShapeLineBase，这里管的是"这条线长什么样"：
-//   1) 线条类型 —— 直角折线（默认）还是普通线条。前者拖拽时按鼠标轨迹吸附成横平竖直，
-//      后者维持自由画（每个鼠标位置塞一个顶点）
+//   1) 线条类型 —— 直角折线（默认，拖拽时吸附横平竖直）/ 普通线条（自由画）/
+//      折线 / 曲线（点选式：点一下落一个节点、双击或右键结束；曲线节点之间走平滑弧线）
 //   2) 两端的形状 —— 无 / 实心箭头 / 细箭头 / 圆点 的十种组合
 //   3) 线条样式 —— 实线 / 虚线 / 波浪线 / 点状线 / 长短虚线 / 删除线
 // 三样都从 ToolSub 现取。改完立刻套到图上选中的那一笔上（没选中就只影响之后新画的）；
@@ -14,9 +14,11 @@ class ShapeLine : public ShapeLineBase
 {
 public:
 	// 线条类型。顺序 = ToolSub::lineKind 的落盘值，不能随手调。
-	// Polyline 是后加的第三档（落盘值 2，老配置只会是 0 / 1，不动前面两档就不会串味）：
-	// 点选式折线 —— 点一下落一个节点、双击或右键结束，交互走 ShapeBase::isBuilding 那一套
-	enum class Kind { Ortho = 0, Free, Polyline };
+	// Polyline 是后加的第三档（落盘值 2），Curve 是第四档（落盘值 3，同样只能往后加，
+	// 动前面的档位老配置就串味）：点选式曲线 —— 点一下落一个节点、双击或右键结束，
+	// 节点之间用平滑曲线连（Catmull-Rom 转三次贝塞尔，见 .cpp 的 buildCurvePath），
+	// 交互走 ShapeBase::isBuilding 那一套，与 Polyline 共用
+	enum class Kind { Ortho = 0, Free, Polyline, Curve };
 	// 线条样式。同上，顺序 = ToolSub::lineStyle 的落盘值
 	enum class Style { Solid = 0, Dash, Wave, Dot, DashDot, DashDotDot };
 	// 一端的形状。两种箭头都照 FSCapture 的端点预览定比例（见 .cpp 里的 paintEnd）：
@@ -51,7 +53,7 @@ public:
 	bool copyable() const override { return true; }
 	std::unique_ptr<ShapeBase> clone(const float dx, const float dy, Canvas* target = nullptr) const override;
 	std::unique_ptr<ShapeBase> snapshot() const override;
-	// ---- 折线（Kind::Polyline）的续画接口 ----
+	// ---- 折线 / 曲线（Kind::Polyline / Kind::Curve）的续画接口 ----
 	// WinPin 在光标划过时调 movePreview 画"末节点 → 光标"那段橡皮筋，
 	// 双击 / 右键时调 finishBuild 收尾；isBuilding 见 ShapeBase
 	bool isBuilding() const override;
@@ -59,9 +61,15 @@ public:
 	void finishBuild() override;
 	bool isValidWithoutDrag() override;
 	bool isEmptyStroke() const override;
+	// 曲线的弧线离控制点连线可以很远（节点稀疏时尤其明显），命中判定按
+	// 密采样后的曲线算，不然"明明点在弧线上"却点不中（见 .cpp 的 hitTest）
+	void hitTest(const D2D1_POINT_2F& mousePos) override;
 private:
 	bool isOrtho() const;
 	bool isPoly() const;
+	// 点选式（每击落一个节点）：折线与曲线都算
+	bool isClickDraw() const;
+	bool isCurveKind() const { return kind == Kind::Curve; }
 	// 把这次拖拽的鼠标轨迹压成一条横平竖直的折线
 	void snapTrail();
 	// 已经画好的这一笔改成直角折线：拿它现有的顶点重吸附一遍（见 .cpp）
@@ -82,13 +90,19 @@ private:
 	// 线宽上限是 60 逻辑像素，挖掉半个夹点宽之后只有紧贴边缘的一圈能点中，
 	// 粗线的杆"点哪儿都没反应"（作者报的"点箭头线条无法选中"）
 	float hitInnerLimit(const float outer) const override;
-	// 外接框多让出去一截：两端那几档标记（实心箭头半宽 3.5 倍线宽、圆点半径 1.85 倍）
+	// 外接框多让出去一截：两端那几档标记（实心箭头半宽 2.6 倍线宽、圆点半径 1.85 倍）
 	// 横着支在端点两侧，只让半个线宽的话，框选时只碰到箭翼尖上那一点会漏掉整支箭
 	float boundsPad() const override;
 	// 波浪线那条正弦路径。D2D 的虚线样式里没有波浪，只能把折线重采样
 	Microsoft::WRL::ComPtr<ID2D1PathGeometry> makeWaveGeometry() const;
 	// 按当前线条样式建描边样式（实线 / 虚线族）；波浪不走它
 	void makeStrokeStyle();
+	// 曲线几何：把点列当 Catmull-Rom 样条的控制点，逐段转成三次贝塞尔写进 sink ——
+	// 曲线过每个节点、相邻段在节点处斜率连续。buildCurvePath 建整条 path（与 buildPath
+	// 同一规矩：先 ReleaseAndGetAddressOf 放旧的），curveTo 往已打开的 sink 里写
+	void buildCurvePath(const std::vector<D2D1_POINT_2F>& pts);
+	// 曲线密采样：按每段贝塞尔近似弧长取点，供波浪重采样与命中判定用
+	static std::vector<D2D1_POINT_2F> densifyCurve(const std::vector<D2D1_POINT_2F>& pts);
 private:
 	// 一次拖拽期间的原始鼠标轨迹。只在"新建这一笔"时有值，抬手就清掉
 	std::vector<D2D1_POINT_2F> trail;

@@ -7,6 +7,7 @@
 #include "Shape/ShapeEllipse.h"
 #include "Shape/ShapeArrow.h"
 #include "Shape/ShapeNumber.h"
+#include "Shape/ShapeIcon.h"
 #include "Shape/ShapeWatermark.h"
 #include "Shape/ShapeLine.h"
 #include "Shape/ShapeBrush.h"
@@ -196,6 +197,9 @@ ShapeBase* History::createShape(const std::wstring& state, const int& x, const i
 	}
 	else if (curId == L"number") {
 		shape = std::make_unique<ShapeNumber>(canvas);
+	}
+	else if (curId == L"icon") {
+		shape = std::make_unique<ShapeIcon>(canvas);
 	}
 	else if (curId == L"line") {
 		shape = std::make_unique<ShapeLine>(canvas);

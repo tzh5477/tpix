@@ -27,13 +27,13 @@ public:
 	void pin();
 	// Ctrl+S / Ctrl+C 用：还没点"开始"的时候一张图都没有，此时快捷键不该生效
 	bool hasImage() const { return !imgData.empty(); }
-	// 正在滚动（还没收工）。ESC 靠它判断该不该改成"收工并贴图"（见 WinCap::onKey）
+	// 正在滚动（还没收工）。ESC 靠它判断该不该改成"收工并进编辑界面"（见 WinCap::onKey）
 	bool isRunning() const { return isScrolling && !isFinish; }
 	// 手动 / 自动切换：手动不发滚轮，只按固定间隔抓屏比对，滚动条由用户自己拖
 	bool isManual() const { return manual; }
 	void toggleMode();
 	// 收工。reachedEnd = 是滚到底自己停的（会显示"已触底"），false = 用户叫停的。
-	// toPin = 收工后把拼好的图钉到桌面上（ESC 走的就是这条）
+	// toPin = 收工后把成图开进编辑界面（自动长截图滚动中按 ESC 走的就是这条）
 	void finish(bool toPin);
 	// ToolLong 的摆放规则：摆在选区右侧（右边放不下就改到左侧），底边与选区底边齐，
 	// 最后一律夹进工作区 —— 全屏截图时前两条规则算出来的都在屏幕外。

@@ -140,7 +140,7 @@ WinPin::WinPin(int x, int y, int w, int h, const std::vector<BYTE>* data, const 
 	// 的 16ms 里有 8ms 花在这次白排上，鼠标消息根本来不及，窗口就落在光标后面一抖一抖地追。
 	// 抬手时 onUp 会照常重排一次，所以跳过的不亏
 	onMoved.add([this]() {
-		if (winDragging) return;
+		if (winDragging || cropApplying) return;
 		layoutTools();
 	});
 	// DPI 变了（用户改了缩放比例，或者窗口被拖到缩放比例不同的显示器上）：系统会按新旧缩放比
@@ -1963,6 +1963,62 @@ void WinPin::setPinTitle(const std::wstring& t)
 }
 
 
+void WinPin::beginMoveBatch()
+{
+	if (moveBatch) return;
+	// 四扇：底图 + ToolMain + ToolSub + 右边缘竖排。凑不够系统会自动扩
+	moveBatch = BeginDeferWindowPos(4);
+}
+
+void WinPin::endMoveBatch()
+{
+	if (!moveBatch) return;
+	auto dp = moveBatch;
+	moveBatch = nullptr;   // 先清：EndDeferWindowPos 里会送 WM_MOVE/WM_SIZE，别让它们再往里塞
+	EndDeferWindowPos(dp);
+}
+
+void WinPin::moveWindowTo(Ling::WinBase* target, int nx, int ny)
+{
+	if (!target) return;
+	// 位置没变就当没这回事。原来每帧无条件 setPosition，等于每个鼠标事件白等一整帧合成 ——
+	// 拖右下边时 ToolSub 与竖排条动都不动，那两次 SetWindowPos 纯属白花
+	if (target->x == nx && target->y == ny) return;
+	target->x = nx;
+	target->y = ny;
+	if (!target->hwnd) return;
+	if (moveBatch) {
+		auto dp = DeferWindowPos(moveBatch, target->hwnd, nullptr, nx, ny, 0, 0,
+			SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOREDRAW);
+		// 批句柄失效就退回单发，别把这扇窗留在原地
+		if (dp) { moveBatch = dp; return; }
+		moveBatch = nullptr;
+	}
+	SetWindowPos(target->hwnd, nullptr, nx, ny, 0, 0,
+		SWP_NOSIZE | SWP_NOZORDER | SWP_NOREDRAW);
+}
+
+void WinPin::resizeWindowTo(Ling::WinBase* target, int nx, int ny, int nw, int nh)
+{
+	if (!target) return;
+	const bool same = target->x == nx && target->y == ny
+		&& (int)target->w == nw && (int)target->h == nh;
+	if (same) return;
+	target->x = nx;
+	target->y = ny;
+	target->w = (float)nw;
+	target->h = (float)nh;
+	if (!target->hwnd) return;
+	if (moveBatch) {
+		auto dp = DeferWindowPos(moveBatch, target->hwnd, nullptr, nx, ny, nw, nh,
+			SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOREDRAW);
+		if (dp) { moveBatch = dp; return; }
+		moveBatch = nullptr;
+	}
+	SetWindowPos(target->hwnd, nullptr, nx, ny, nw, nh,
+		SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOREDRAW);
+}
+
 // 把 ToolMain / ToolSub 摆到 WinPin 周围，始终靠 WinPin 右对齐，并尽量留在屏幕可视区内。
 // 三种模式，按 ToolMain+ToolSub 的总高度决定（与 curId 是否为空无关，避免选中按钮时整组跳动）：
 //   bottom : WinPin 下方，自上而下 ToolMain -> ToolSub
@@ -2010,7 +2066,9 @@ void WinPin::layoutTools()
 	}
 	auto mainX = static_cast<float>(winRect.right) - toolMain->w;
 	// 垂直方向按整组当前高度裁剪，避免 WinPin 超出工作区时把 ToolSub 挤到屏幕外
-	toolMain->setPosition(clampPos(mainX, toolMain->w, wa.left, wa.right), clampPos(mainY, usedH, wa.top, wa.bottom));
+	moveWindowTo(toolMain.get(),
+		(int)clampPos(mainX, toolMain->w, wa.left, wa.right),
+		(int)clampPos(mainY, usedH, wa.top, wa.bottom));
 	if (showSub) {
 		toolSub->updatePosition(wa);
 	}
@@ -2028,7 +2086,7 @@ void WinPin::layoutTools()
 		}
 		const auto posX = clampPos(barX, barW, wa.left, wa.right);
 		const auto posY = clampPos((float)winRect.top, barH, wa.top, wa.bottom);
-		sideBar->setPosition(posX, posY);
+		moveWindowTo(sideBar.get(), (int)posX, (int)posY);
 		// 两边都摆不下时会被夹回窗口里面，那一段得压在最上面 —— 否则被底图整条盖住。
 		// 与下面 toolsOverlay 同一套：状态一变才提一次，本函数在拖窗口 / 调尺寸时
 		// 每个鼠标事件都要跑一遍，白调一次 SetWindowPos 就是白等一次
@@ -2151,6 +2209,11 @@ void WinPin::setToolsVisible(bool on)
 	// 与 refreshToolSub 是同一套派发（见那里的说明），先建一次是白建
 	toolMain->show();
 	setSideBarVisible(true);
+	// 选文态把工具条请回来时**不能**预选几何工具：selectTool 开头那句
+	// setTextSelect(false) 会顺手把选文关掉（要求是收放都不退选文态）。
+	// 选文态 curId 本来就是空的，ToolSub 也已收起，摆位由上面 setSideBarVisible
+	// 里的 layoutTools 负责，什么都不用补
+	if (textSelect) return;
 	// 由它带着跑 layoutTools，位置一并摆好
 	toolMain->selectTool(L"geom");
 }
@@ -2258,6 +2321,29 @@ void WinPin::onCreated()
     d2d->deviceContext->CreateSolidColorBrush(D2D1::ColorF(D2D1::ColorF::White), brushTipText.GetAddressOf());
     // 选中的词铺的那层蓝底。半透明：字还得看得清，不然选完不知道选的是哪几个字
     d2d->deviceContext->CreateSolidColorBrush(D2D1::ColorF(Setting::getThemeColor(), 0.34f), selectBrush.GetAddressOf());
+    // 选文扫描光带的渐变：主题色，中段最亮、两端透明。刷子只在建窗时建这一次，
+    // 之后每帧只挪起止点 —— 一趟 1 秒约 60 帧，每帧现建刷子是白扔
+    {
+        D2D1_GRADIENT_STOP stops[]{
+            { 0.f,    D2D1::ColorF(Setting::getThemeColor(), 0.f) },
+            { 0.42f,  D2D1::ColorF(Setting::getThemeColor(), 0.45f) },
+            { 1.f,    D2D1::ColorF(Setting::getThemeColor(), 0.f) },
+        };
+        // 直接给 stop 数组建集合，再按 COM 辅助重载（引用参数）建刷：
+        // 本工程的 d2d1.h 开着 D2D1_USE_COM_DEFINES，只有这一条签名可用
+        Microsoft::WRL::ComPtr<ID2D1GradientStopCollection> stopsCol;
+        d2d->deviceContext->CreateGradientStopCollection(stops, ARRAYSIZE(stops),
+            stopsCol.GetAddressOf());
+        // ⚠️ transform 必须是单位矩阵：指定初始化只填 opacity 时，transform 会被值初始化成
+        // **零矩阵** —— 刷子把世界坐标全压到渐变起点（那是 alpha=0 的 stop），
+        // 光带整条透明、画了跟没画一样。用 helper 拿官方默认值，别再手工拼
+        D2D1_LINEAR_GRADIENT_BRUSH_PROPERTIES props{
+            .startPoint = { 0.f, 0.f },
+            .endPoint = { 1.f, 0.f },
+        };
+        d2d->deviceContext->CreateLinearGradientBrush(props, D2D1::BrushProperties(1.f),
+            stopsCol.Get(), brushScan.GetAddressOf());
+    }
     // 「贴图之后默认识别文本」：不等用户点「选文」，窗口一建起来就在后台认 ——
     // 那张图通常刚截下来，用户点开选文时结果基本已经在了，选起来是即时的
     startOcr();
@@ -2331,6 +2417,8 @@ void WinPin::layout()
 	}
 	// 剪裁采样点压在边框上，任何时候都能拖（缩略图 / 细条 / 藏起来时除外，见 paintCropHandles）
 	paintCropHandles(ctx);
+	// 选文的扫描光影：属于窗口装饰层（不跟标注缩放），压在边框之上、标题与提示之下
+	if (textSelect) paintScanFx(ctx);
 	// 多选那条批量条（复制 / 删除）与旋转手柄已经并进 paintSelection 了 ——
 	// 它们挂在"整组外接框"上，属于标注坐标系，不该在这层按窗口坐标画
 	paintTitle(ctx);
@@ -2455,8 +2543,15 @@ void WinPin::onDown(POINT pos, BOOL isRight)
 		auto imgPos = toImgPos(pos);
 		// 双击 = 选中光标底下这一个词。要先认，否则按下的第一下已经先把它缩成一个插入点了
 		if (takeDoubleClick()) {
-			auto idx = wordIndexAt(imgPos);
-			if (idx >= 0) { selAnchor = idx; selCur = idx + 1; }
+			auto u = unitAt(imgPos);
+			if (u >= 0) {
+				// 单元与词同序，向两侧扫到词边界就是这个词的单元区间
+				int first = u, last = u;
+				while (first > 0 && selUnits[first - 1].word == selUnits[u].word) --first;
+				while (last + 1 < (int)selUnits.size() && selUnits[last + 1].word == selUnits[u].word) ++last;
+				selAnchor = first;
+				selCur = last + 1;
+			}
 			else { selAnchor = selCur = caretIndexAt(imgPos); }
 			lastDownTime = 0;   // 第三下不该再凑成一次双击
 		}
@@ -2464,6 +2559,8 @@ void WinPin::onDown(POINT pos, BOOL isRight)
 			selAnchor = selCur = caretIndexAt(imgPos);
 		}
 		selDragging = true;     // 双击之后接着拖也能继续扩选
+		// hover 是"没按着时"的预览，按下就换成真的选区；松手回到没选区时它得指着当前这格
+		selHover = unitAt(imgPos);
 		isMouseDown = true;
 		hasDragged = false;
 		SetCapture(hwnd);
@@ -2719,10 +2816,15 @@ void WinPin::onMove(POINT pos)
 		dragCropTo(screen);
 		return;
 	}
-	// 选文态：按着就是在扩大 / 缩小选区（插入点跟着鼠标走）；没按着只是在图上划过，
-	// 什么都不做 —— 所以这里也不必给词做 hover 高亮
+	// 选文态：按着就是在扩大 / 缩小选区（插入点跟着鼠标走）；没按着把光标底下那格标出来
+	//（hover 预览）—— 拖之前先看得见"会选中什么"，这也是"选不准"的一部分答案
 	if (textSelect) {
-		if (!selDragging) return;
+		if (!selDragging) {
+			// 没变化就不重画：mousemove 很密，每次重画是白扔
+			auto u = unitAt(toImgPos(pos));
+			if (u != selHover) { selHover = u; refresh(); }
+			return;
+		}
 		selCur = caretIndexAt(toImgPos(pos));
 		refreshNow();
 		return;
@@ -3045,6 +3147,14 @@ void WinPin::onTimerCB(UINT id)
 		refresh();
 		return;
 	}
+	if (id == 104) {   // 选文的扫描光影：1 秒一趟，到点收表；每帧重画一次
+		if (GetTickCount64() - scanStartAt >= 1000) {
+			scanStartAt = 0;
+			killTimer(104);
+		}
+		refreshNow();
+		return;
+	}
 	if (id != 100) return;
 	if (!drawing->shapeHover) {
 		refresh();
@@ -3244,11 +3354,17 @@ void WinPin::setTextSelect(bool on)
 		hideNumberPreview();
 		selAnchor = selCur = 0;
 		selDragging = false;
+		// 扫描光影：1 秒一趟，从左扫到右。它只回答"这一下点进选文了吗" ——
+		// 认字认没认完由顶部那句"正在识别文字…"说明，两条信息互不掺和
+		scanStartAt = GetTickCount64();
+		setTimer(16, 104);
 		// 刚建好窗口就点进来时识别还在跑（甚至还没起），催一次；已经在跑就不用管
 		if (!ocrRunning && ocrWords.empty()) startOcr();
 	}
 	else {
 		selDragging = false;
+		// 光带不能留着半条：退选文态（ESC / 换标注工具）是随手就来的动作
+		if (scanStartAt) { scanStartAt = 0; killTimer(104); }
 	}
 	// 开关状态住在这一层（ESC、拿起标注工具、关窗都要复位它），按钮的外观得回报过去
 	toolMain->setToggle(L"textSelect", on);
@@ -3480,6 +3596,50 @@ void WinPin::clearOcr()
 	ocrLines.clear();
 	selAnchor = selCur = 0;
 	selDragging = false;
+	selUnits.clear();
+	selLineUnits.clear();
+	selHover = -1;
+}
+
+// 识别结果 → 选区单元表。有字符级框就一个字一格（选文于是能选到半个词 / 半行中文），
+// 没有就整个词一格（系统 OCR 与大模型那两条路，行为与改造前完全一致）。
+//
+// 字符框与词框同出 OcrModel::splitWords：词是一行 rec 文本按空格切开的段、字符框跳过
+// 空格，所以"词 k 吃掉 words[k].text.size() 个字符框"逐个消费必然严丝合缝 —— 总数对不上
+// 说明这份字符框与词表不是一批货，整表退回词级，宁可粗也不能错位
+void WinPin::buildSelUnits()
+{
+	selUnits.clear();
+	selLineUnits.clear();
+	size_t sum{ 0 };
+	for (auto const& word : ocrWords) sum += word.text.size();
+	const bool byChar = !ocrChars.empty() && ocrChars.size() == sum;
+	size_t ci{ 0 };   // 下一个要消费的字符框
+	for (int i = 0; i < (int)ocrWords.size(); ++i) {
+		auto const& word = ocrWords[i];
+		if (word.text.empty()) continue;   // 没内容的词不占选区（画出来只是个空高亮）
+		if (byChar) {
+			for (size_t k = 0; k < word.text.size(); ++k) {
+				auto const& ch = ocrChars[ci++];
+				selUnits.push_back({ i, (int)k, (int)k + 1, ch.x, ch.y, ch.w, ch.h });
+			}
+		}
+		else {
+			selUnits.push_back({ i, 0, (int)word.text.size(), word.x, word.y, word.w, word.h });
+		}
+	}
+	// 行 → 单元区间。单元与词同序，按每行的词数把单元切段即可
+	size_t u{ 0 };
+	for (auto const& line : ocrLines) {
+		size_t end = u;
+		for (int i = line.first; i < line.first + line.count; ++i) {
+			auto const& word = ocrWords[i];
+			// 空词没建单元，与上面那句 continue 对齐
+			end += word.text.empty() ? 0 : word.text.size();
+		}
+		selLineUnits.push_back({ (int)u, (int)(end - u) });
+		u = end;
+	}
 }
 
 void WinPin::applyOcrWords(std::vector<OcrWord> words, std::vector<OcrWord> chars, POINT origin)
@@ -3529,6 +3689,8 @@ void WinPin::applyOcrWords(std::vector<OcrWord> words, std::vector<OcrWord> char
 			lineCenter = ocrWords[i].y + ocrWords[i].h / 2.f;
 		}
 	}
+	// 单元表必须在行分组之后建：它要按 ocrLines 切行区间
+	buildSelUnits();
 	refresh();
 	// 用户之前点过「智能打码」、当时识别还没跑完（见 mosaicAllDigits）：词框刚到手，
 	// 把那一按补上。放在 refresh 之后 —— 打码那一步自己会再刷一次
@@ -3566,64 +3728,76 @@ bool WinPin::readBasePixels(std::vector<BYTE>& pixels, int& w, int& h)
 	return true;
 }
 
-// 标注坐标 → 选区的"插入点"下标（0..ocrWords.size()）。与文本编辑器同一套：按阅读顺序
-// 数下来，落在词与词的缝里、行尾空白上也能定出一个位置，不必非要命中某个词
+// 标注坐标 → 选区的"插入点"下标（0..selUnits.size()）。与文本编辑器同一套：按阅读顺序
+// 数下来，落在字与字的缝里、行尾空白上也能定出一个位置，不必非要命中某一格。
+// 行界取**整行包围盒**：拿行内第一个词的高度当行界时，字号混排的行里点在正文字上
+// 会被判到下一行去（作者报的"点这行选到别行"就是这么来的）
 int WinPin::caretIndexAt(const POINT& imgPos) const
 {
-	if (ocrLines.empty()) return 0;
-	for (auto& line : ocrLines) {
-		auto& first = ocrWords[line.first];
-		// 行高按这一行第一个词算：同一行基线一致，够用了
-		auto top = first.y, bottom = first.y + first.h;
-		if (imgPos.y < top) return line.first;      // 落在这一行上面 → 插入点在这一行行首
-		if (imgPos.y > bottom) continue;            // 还在更下面的行里，接着往下找
-		for (int i = line.first; i < line.first + line.count; ++i) {
-			auto& word = ocrWords[i];
-			// 以词的中点为界：过了一半就算走到下一个词，与拖选文字的手感一致
-			if (imgPos.x < word.x + word.w / 2.f) return i;
+	if (selLineUnits.empty()) return 0;
+	for (int n = 0; n < (int)ocrLines.size(); ++n) {
+		auto const& line = ocrLines[n];
+		auto const& first = ocrWords[line.first];
+		float top = first.y, bottom = first.y + first.h;
+		for (int i = line.first + 1; i < line.first + line.count; ++i) {
+			top = std::min(top, ocrWords[i].y);
+			bottom = std::max(bottom, ocrWords[i].y + ocrWords[i].h);
 		}
-		return line.first + line.count;             // 在行尾右边 → 这一行末尾
+		if (imgPos.y < top) return selLineUnits[n].first;   // 在这一行上面 → 行首
+		if (imgPos.y > bottom) continue;                    // 还在更下面的行里，接着找
+		auto const& seg = selLineUnits[n];
+		for (int u = seg.first; u < seg.first + seg.count; ++u) {
+			// 以字的中点为界：过了一半就算走到下一格，与拖选文字的手感一致
+			if (imgPos.x < selUnits[u].x + selUnits[u].w / 2.f) return u;
+		}
+		return seg.first + seg.count;   // 在行尾右边 → 这一行末尾
 	}
-	return (int)ocrWords.size();
+	return (int)selUnits.size();
 }
 
-int WinPin::wordIndexAt(const POINT& imgPos) const
+// 命中检验：光标底下是哪个**单元**。双击拿它定"选中这一个词"（见 onDown），hover 拿它
+// 定要高亮哪一格。矩形单元比整词框细得多 —— 双击落在词缝上时不再整个词都算命中
+int WinPin::unitAt(const POINT& imgPos) const
 {
-	for (int i = 0; i < (int)ocrWords.size(); ++i) {
-		auto& word = ocrWords[i];
-		if (imgPos.x >= word.x && imgPos.x <= word.x + word.w
-			&& imgPos.y >= word.y && imgPos.y <= word.y + word.h) return i;
+	for (int u = 0; u < (int)selUnits.size(); ++u) {
+		auto const& s = selUnits[u];
+		if (imgPos.x >= s.x && imgPos.x <= s.x + s.w
+			&& imgPos.y >= s.y && imgPos.y <= s.y + s.h) return u;
 	}
 	return -1;
 }
 
 std::wstring WinPin::selectedText() const
 {
-	if (!hasSelection() || ocrWords.empty()) return {};
+	if (!hasSelection() || selUnits.empty()) return {};
 	const int lo = std::min(selAnchor, selCur);
-	const int hi = std::min(std::max(selAnchor, selCur), (int)ocrWords.size());
+	const int hi = std::min(std::max(selAnchor, selCur), (int)selUnits.size());
 	std::wstring text;
-	int lastLine{ -1 };
-	for (int i = lo; i < hi; ++i) {
-		// 这个下标落在第几行。ocrLines 是按阅读顺序排的，找出 i 落在哪一段里
+	int lastWord{ -1 }, lastLine{ -1 };
+	for (int u = lo; u < hi; ++u) {
+		const auto& unit = selUnits[u];
+		const auto& word = ocrWords[unit.word];
+		// 这个单元落在第几行。ocrLines 是按阅读顺序排的，找出词落在哪一段里
 		int lineNo{ -1 };
 		for (int n = 0; n < (int)ocrLines.size(); ++n) {
 			auto& line = ocrLines[n];
-			if (i >= line.first && i < line.first + line.count) { lineNo = n; break; }
+			if (unit.word >= line.first && unit.word < line.first + line.count) { lineNo = n; break; }
 		}
-		if (!text.empty() && !ocrWords[i].text.empty()) {
+		if (lastWord >= 0) {
 			if (lineNo != lastLine) text += L'\n';
-			else {
-				// 空格判据统一走 ocrNeedSpace（汉字之间不补、其余看图上有没有空白），
-				// 与 Ocr::recognize 拼整行文字时用的是同一条规则
-				const auto& prev = ocrWords[i - 1];
-				const auto& cur = ocrWords[i];
-				const float rel = (cur.x - (prev.x + prev.w)) / std::max(prev.h, cur.h);
-				if (!prev.text.empty() && ocrNeedSpace(prev.text.back(), cur.text.front(), rel))
+			// 空格只在**跨词**处判：词内天然没有空格，逐字判反而会把宽字距排版拆出空格来。
+			// 判据仍是 ocrNeedSpace + 词间相对间隙（汉字之间不补、间隙够大才补），
+			// 与 Ocr::recognize 拼整行文字时用的是同一条规则
+			else if (unit.word != lastWord) {
+				const auto& prev = ocrWords[lastWord];
+				const float rel = (word.x - (prev.x + prev.w)) / std::max(prev.h, word.h);
+				if (!prev.text.empty() && ocrNeedSpace(prev.text.back(), word.text.front(), rel))
 					text += L' ';
 			}
 		}
-		text += ocrWords[i].text;
+		// 选区从词中间开始时，首个单元只拼它后面的那半截
+		text += word.text.substr(unit.from, unit.to - unit.from);
+		lastWord = unit.word;
 		lastLine = lineNo;
 	}
 	return text;
@@ -3648,17 +3822,40 @@ void WinPin::showToast(const std::wstring& text)
 	refresh();
 }
 
-// 选中的词铺一层半透明蓝底。调用方还在标注坐标系的变换里，所以它跟着缩放、剪裁一起走
+// 选中的单元铺一层半透明蓝底。调用方还在标注坐标系的变换里，所以它跟着缩放、剪裁一起走。
+// 没有选区时光标底下那格画个淡高亮：拖之前先看得见"会选中什么"；选区一旦存在就不画，
+// 免得两层高亮叠在一起反而看不清边界
 void WinPin::paintTextSelect(ID2D1DeviceContext* ctx)
 {
-	if (!hasSelection() || !selectBrush) return;
-	const int lo = std::min(selAnchor, selCur);
-	const int hi = std::min(std::max(selAnchor, selCur), (int)ocrWords.size());
-	for (int i = lo; i < hi; ++i) {
-		auto& word = ocrWords[i];
-		if (word.w <= 0 || word.h <= 0) continue;
-		ctx->FillRectangle(D2D1::RectF(word.x, word.y, word.x + word.w, word.y + word.h), selectBrush.Get());
+	if (!selectBrush) return;
+	if (!hasSelection()) {
+		if (selDragging || selHover < 0 || selHover >= (int)selUnits.size()) return;
+		auto& s = selUnits[selHover];
+		if (s.w > 0 && s.h > 0)
+			ctx->FillRectangle(D2D1::RectF(s.x, s.y, s.x + s.w, s.y + s.h), selectBrush.Get());
+		return;
 	}
+	const int lo = std::min(selAnchor, selCur);
+	const int hi = std::min(std::max(selAnchor, selCur), (int)selUnits.size());
+	for (int u = lo; u < hi; ++u) {
+		auto& s = selUnits[u];
+		if (s.w <= 0 || s.h <= 0) continue;
+		ctx->FillRectangle(D2D1::RectF(s.x, s.y, s.x + s.w, s.y + s.h), selectBrush.Get());
+	}
+}
+
+// 点开选文那一秒，一条主题色光带从左扫到右。窗口坐标画（客户区即图，不跟标注缩放），
+// 带宽取窗口宽的 28%，中段最亮两端透明 —— 进出场靠渐变自己柔掉，不用额外缓动。
+// 用主题色不用白光：白底截图上白色亮带一整条都是隐形的
+void WinPin::paintScanFx(ID2D1DeviceContext* ctx)
+{
+	if (!scanStartAt || !brushScan) return;
+	const float p = (float)(GetTickCount64() - scanStartAt) / 1000.f;
+	const float band = w * 0.28f;
+	const float left = -band + p * (w + band);
+	brushScan->SetStartPoint({ left, 0.f });
+	brushScan->SetEndPoint({ left + band, 0.f });
+	ctx->FillRectangle(D2D1::RectF(left, 0.f, left + band, (float)h), brushScan.Get());
 }
 
 // 顶部那条状态。"认完了而且认出了东西"就什么都不画；否则要说明是"还没认完"还是"确实没字" ——
@@ -3752,8 +3949,14 @@ void WinPin::onKey(UINT key)
 		}
 		else if (ctrl && key == 'A') {
 			selAnchor = 0;
-			selCur = (int)ocrWords.size();
+			selCur = (int)selUnits.size();
 			refresh();
+		}
+		else if (key == VK_SPACE) {
+			// 选文态下空格照旧收放工具条（作者：选文模式里按空格工具条收不掉）。
+			// 收起方向天然不退选文态（cancelSelect 不碰 textSelect），**请回来**那方向
+			// 要靠 setToolsVisible 里跳过预选几何工具 —— selectTool 开头会把选文关掉
+			setToolsVisible(!isToolsVisible());
 		}
 		else if (key == VK_ESCAPE) {
 			// 与 ESC 一贯的"退一步"一致：先撤掉这一步正在做的事（选区），再退整个模式
@@ -3884,6 +4087,15 @@ void WinPin::onKey(UINT key)
 	// 已经画在图上的一概不动；再按一次才关窗。
 	// 剪裁 / 滚动那几种中途态在 WinCap::onKey 里已经各有各的"退一步"，这里只管贴图窗口这一层
 	else if (key == VK_ESCAPE) {
+		// 「标号 / 图标」这类"单击追加"型工具：第一下 ESC 是收工，不是退窗 ——
+		// 停止追加、工具切回「几何图形」；再按一下才轮到下面的"退一步 / 关窗"。
+		// 连续编号 / 连续插图标本就是"一次拿笔、落一串"的手势，收工那一下不该把
+		// 整张截图一起带走（作者要求：追加途中按 ESC 停在编辑界面）
+		if (toolMain && (toolMain->curId == L"number" || toolMain->curId == L"icon")) {
+			hideNumberPreview();
+			toolMain->selectTool(L"geom");
+			return;
+		}
 		// 刚截下来的这一张：ESC 就是"这张不要了" —— 一按就退掉整次截图。
 		// 原先这里统一走"退一步"：截完预选了矩形工具，于是第一下 ESC 只是把工具放掉，
 		// 图还留在屏幕上，看着就是"按了 ESC 反而停在截图编辑界面"（作者要求任何阶段都退出）。
@@ -4099,15 +4311,20 @@ void WinPin::applyCropRect()
 	const auto newY = dragSrcPos.y + (int)std::lround((float)cropRect.top * vs);
 	const auto newW = std::max(1, (int)std::lround((float)nw * vs));
 	const auto newH = std::max(1, (int)std::lround((float)nh * vs));
-	x = newX;
-	y = newY;
-	w = (float)newW;
-	h = (float)newH;
 	// 位置和尺寸一次推过去：分两次调，中间那一帧的窗口矩形跟底图对不上，看着就是闪一下。
-	// SWP_NOREDRAW 配合末尾那次 refresh() —— 这一帧重画由我们自己负责
-	SetWindowPos(hwnd, nullptr, newX, newY, newW, newH, SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOREDRAW);
+	// SWP_NOREDRAW 配合末尾那次 refresh() —— 这一帧重画由我们自己负责。
+	// 攒成一批：底图与三条附属窗都由 EndDeferWindowPos 一次提交。分开各自 SetWindowPos 时
+	// 每次都要等合成器出一帧（本机实测 8~50ms/次），拖采样点一帧要挪四扇 ⇒ 100ms 以上，
+	// 鼠标消息全堵在后面，手感就是"拖不动、一格一格跳"。攒批后整组只提交一次（实测 ~20ms）。
+	// cropApplying 期间底图窗口自己收到的 WM_MOVE 由 onMoved 咽掉：本函数紧接着就自己排
+	// 一遍，让 onMoved 再排一遍等于把整组原样搬第二次（实测一帧 358ms 里有 170ms 是它）
+	beginMoveBatch();
+	cropApplying = true;
+	resizeWindowTo(this, newX, newY, newW, newH);
 	// 窗口矩形变了，工具条也得跟着重新定位（它摆在窗口外面，尺寸一变就错位）
 	layoutTools();
+	endMoveBatch();
+	cropApplying = false;
 	refresh();
 }
 

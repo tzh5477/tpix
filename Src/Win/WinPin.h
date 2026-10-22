@@ -62,6 +62,19 @@ public:
 	// 启动时把上次退出前的贴图摆回原位，属性一并恢复
 	static void restoreAll();
 	void layoutTools();
+	// ---- 一帧只提交一次"窗口搬运" ----
+	// 底图窗口与三条附属窗（ToolMain / ToolSub / 右边缘竖排）都是独立顶层窗，摆位各自一次
+	// SetWindowPos。本机实测单次 SetWindowPos 要 8~50ms（每次都要等合成器出一帧），
+	// 拖剪裁采样点时一帧要挪四扇 ⇒ 100ms 以上，鼠标消息根本跟不上，看着就是"拖不动"。
+	// BeginDeferWindowPos 把这些搬运攒成一批，由 EndDeferWindowPos 一次提交 ——
+	// 实测同样四扇窗从 ~200ms 掉到 ~20ms。只能裹住"位置/尺寸"这一类改动，
+	// 里面别夹 show() / hide()（ShowWindow 不受这一批管，夹进去只会把批提前冲散）
+	void beginMoveBatch();
+	void endMoveBatch();
+	// 把一扇窗摆到 (nx, ny)：位置没变就**不碰窗口**（每帧白搬一次就是白等一整帧合成）
+	void moveWindowTo(Ling::WinBase* target, int nx, int ny);
+	// 同上，顺带改尺寸（只有贴图窗口自己用得上）
+	void resizeWindowTo(Ling::WinBase* target, int nx, int ny, int nw, int nh);
 	// 工具栏整组显示 / 隐藏（ToolMain + ToolSub）。空格键走它。
 	// 它不只是"开关窗口"，两边各带一步：收起来时连画笔一起放掉（cancelSelect），
 	// 请回来时预选几何图形工具（selectTool(L"geom")）—— 于是空格就是"编辑"与"拖着图走"
@@ -310,12 +323,16 @@ private:
 	// 底图像素换算到标注坐标系，剪裁正好在这中间发生时得用当时那个值。
 	// chars 是同一批字的字符级框（只有内置模型给得出，别的时候是空的）
 	void applyOcrWords(std::vector<OcrWord> words, std::vector<OcrWord> chars, POINT origin);
+	// 词表 + 字符框 → 选区单元表（有字框逐字、没有整词），顺带切出每行的单元区间。
+	// 必须在行分组之后调
+	void buildSelUnits();
 	// 把底图像素读一份到内存（BGRA、top-down、行紧凑），喂给识别引擎
 	bool readBasePixels(std::vector<BYTE>& pixels, int& w, int& h);
-	// 标注坐标 → 选区的"插入点"下标（0..ocrWords.size()）。与文本编辑器同一套：
-	// 按阅读顺序数下来，落在词缝里、行尾空白上也能定出一个位置，不必非要命中某个词
+	// 标注坐标 → 选区的"插入点"下标（0..selUnits.size()）。与文本编辑器同一套：
+	// 按阅读顺序数下来，落在字缝里、行尾空白上也能定出一个位置，不必非要命中某一格
 	int caretIndexAt(const POINT& imgPos) const;
-	int wordIndexAt(const POINT& imgPos) const;
+	// 命中检验：光标底下是哪个单元（双击定词、hover 高亮都用它），没命中给 -1
+	int unitAt(const POINT& imgPos) const;
 	bool hasSelection() const { return selAnchor != selCur; }
 	std::wstring selectedText() const;
 	void copySelectedText();
@@ -521,6 +538,12 @@ private:
 	POINT cropBase{ 0, 0 };
 	// 正拉着第几个采样点，-1 表示没在拉（见 cropHandleAt）
 	int cropHandle{ -1 };
+	// 正在按裁剪矩形重摆窗口（applyCropRect 里，从攒批到提交结束）。这段里底图窗口收到的
+	// WM_MOVE 会被 onMoved 咽掉：applyCropRect 紧接着就自己排一遍，让 onMoved 再排一遍
+	// 等于把整组工具条的搬运原样做第二次 —— 实测拖采样点时一帧 358ms 里有 170ms 是这一次重排
+	bool cropApplying{ false };
+	// 攒着的窗口搬运批（见 beginMoveBatch）。null 表示没在攒，moveWindowTo 当场发 SetWindowPos
+	HDWP moveBatch{ nullptr };
 	// 开始拖那一刻源图左上角在屏幕上的位置。窗口可以被拖走 / 被缩放，所以这个值不能长期存着，
 	// 只在一次拖拽期间有效 —— 拖左边 / 上边时窗口自己就在挪，靠它算光标落在源图的哪个像素
 	POINT dragSrcPos{ 0, 0 };
@@ -666,6 +689,20 @@ private:
 	// 复制时靠它决定词与词之间是补空格还是换行
 	struct OcrLine { int first{ 0 }, count{ 0 }; };
 	std::vector<OcrLine> ocrLines;
+	// 一个"选区单元"：选区的最小粒度。有字符级框时一个字一格（from/to 是它在所属词里
+	// 的字符区间）；没有时整个词一格（from=0, to=词长）—— 后者与改造前的词级行为一致。
+	// 单元严格按 ocrWords 的顺序排：按行、行内从左到右，所以下标有序才有"选中从 A 到 B"
+	struct SelUnit
+	{
+		int word{ 0 };            // 属于 ocrWords 的第几个词
+		int from{ 0 }, to{ 0 };   // 词内字符区间 [from, to)
+		float x{ 0 }, y{ 0 }, w{ 0 }, h{ 0 };   // 标注坐标系里的矩形
+	};
+	// 选区单元表 + 每行的单元区间（与 ocrLines 一一对应）。识别结果回填时建，清识别时清
+	std::vector<SelUnit> selUnits;
+	std::vector<OcrLine> selLineUnits;
+	// 光标底下那一格（没有选区时画淡高亮）；-1 = 没有
+	int selHover{ -1 };
 	bool ocrRunning{ false };
 	// 用户点了「智能打码」但识别还没回来时记在这儿；applyOcrWords 收尾时补做。
 	// 不留这个标记的话，"刚截完图马上点智能打码"会因为词框还没到而静默什么都不做
@@ -679,6 +716,14 @@ private:
 	// 选区用两个"插入点"表示（同文本编辑器）：selAnchor 是按下那一下定的，selCur 跟着鼠标走
 	int selAnchor{ 0 }, selCur{ 0 };
 	bool selDragging{ false };
+	// ---- 选文的扫描光影 ----
+	// 点开选文那一刻起算的起点 tick（GetTickCount64），0 = 没在扫。
+	// 只扫一趟 1 秒：它回答的是"这一下点进选文了吗"，OCR 认得慢不慢与它无关
+	ULONGLONG scanStartAt{ 0 };
+	// 光带的渐变刷（建一次，内部自持 stop 集合），光带每帧只挪起止点（见 paintScanFx）
+	Microsoft::WRL::ComPtr<ID2D1LinearGradientBrush> brushScan;
+	// 画光带（选文开关打开后的 1 秒里）。调用方在窗口坐标层（变换已归位）
+	void paintScanFx(ID2D1DeviceContext* ctx);
 	// 选中那一层半透明蓝底
 	Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> selectBrush;
 	// 顶部的状态条与右上角的轻提示（"已复制"）。按需重建

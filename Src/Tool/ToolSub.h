@@ -32,6 +32,8 @@ public:
 	void showGeomTools();
 	void showArrowTools();
 	void showNumberTools();
+	// 插入图标：图标档位下拉（自绘 19 项）+ 阴影开关 + 大小 / 透明度两个滑块
+	void showIconTools();
 	void showLineTools();
 	// 画笔：类型（画笔 / 荧光笔）+ 线宽滑块 + 色板
 	void showBrushTools();
@@ -135,11 +137,24 @@ public:
 	// （无尾圆 / 无尾方 / 圆+箭头 / 方+箭头 / 无）。值与 ShapeNumber 的两个枚举一一对应，
 	// 转枚举行取 static_cast
 	int numberStyle{ 0 }, numberRing{ 0 };
+	// 插入图标的档位（下标进 ShapeIcon 的 painters 表，落盘 toolPin.icon.kind）、
+	// 不透明度（20~100 %，落盘 toolPin.icon.opacity）与阴影开关（toolPin.icon.shadow）。
+	// showIconTools 每次从配置里读回来，用户一改就写盘 —— ShapeIcon 构造与 applyStyle
+	// 都从这三个成员取
+	int iconKind{ 0 }, iconOpacity{ 100 };
+	bool iconShadow{ false };
+	// 图标面板上的第二枚滑块（透明度）。滚轮调透明度时要让它跟着走，
+	// 与 slider 同理：切工具时随 contentNode 一起销毁，beginTool 里必须置空
+	Ling::Slider* opacitySlider{ nullptr };
+	// 正在重建图标面板。makeTextToggle 建按钮时会拿初始值跑一遍 apply，
+	// 那一趟不是用户的改动，不该记撤销（见 showIconTools 里的说明）
+	bool iconPanelBuilding{ false };
 	// 箭头样式：0 普通（平口尾、平底实心头）/ 1 尖尾 / 2 细箭头（开口 V）/ 3 凹口实心。
 	// 顺序即落盘值，同 ShapeArrow 的枚举。四档的顶点都是尖的，没有末端带圆头的那一档
 	int arrowStyle{ 0 };
 	// 线条类型：0 = 直角折线（默认，拖拽时按鼠标轨迹吸附成横平竖直），1 = 普通线条（自由画），
-	// 2 = 折线（点选式：点一下落一个节点、双击或右键结束）。同 ShapeLine::Kind 的枚举
+	// 2 = 折线、3 = 曲线（都是点选式：点一下落一个节点、双击或右键结束，曲线节点之间
+	// 走平滑弧线）。同 ShapeLine::Kind 的枚举
 	int lineKind{ 0 };
 	// 画笔类型：0 = 画笔（不透明、圆头圆角），1 = 荧光笔（半透明、平口尖角）。
 	// 只有"画出来什么样"不同，几何与交互完全一样 —— 所以是同一个类里的一个标志，
@@ -229,12 +244,16 @@ private:
 	// itemTips：与 items 一一对应的说明文字，鼠标停在列表那一项上时弹出来（同上）。
 	// 按钮上只有图标、看不出名称的那几种（马赛克笔刷模式）靠它把名称补上；
 	// 其余下拉的项本身就写着名字，传空即可
+	// minW：弹出列表的宽度下限（逻辑像素）。不传走 SelectPopup 自己按"自绘 60 / 图标 48 /
+	// 文字 120"分档；19 项的图标列表每项还有悬停名称，按 60 开出来一列细条没法看，
+	// 调用方自己指定（如 showIconTools 的 132）
 	Ling::Button* makeSelectBtn(const std::wstring& tipKey, const std::wstring& cfgKey,
 		int* index, const std::vector<std::wstring>& items,
 		std::function<void()> onPicked = nullptr,
 		bool useIconFont = false, bool refreshNumbers = true,
 		SelectPopup::SamplePainter paintSample = {},
-		const std::vector<std::wstring>& itemTips = {});
+		const std::vector<std::wstring>& itemTips = {},
+		float minW = 0.f);
 	// pin 面板用的文字开关：跟 makeToggleBtn 一样的两态配色，但按钮上写的是字（圆角 / 锁定 / 穿透）
 	// 而不是图标 —— 图标字体里没有锁、穿透这类符号，硬猜码位只会显示成方块。
 	// apply 由调用方给，开关翻转后直接调 WinPin 上对应的 setter
