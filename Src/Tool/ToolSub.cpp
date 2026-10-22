@@ -439,18 +439,23 @@ void ToolSub::showGeomTools()
 void ToolSub::showArrowTools()
 {
 	beginTool(L"arrow");
-	initSize(2, true);
+	// 箭头样式那格画的是样例（不写字），宽度写死成与线条「端点 / 样式」同宽 ——
+	// flex 会按内容尺寸给它分，样例按钮的内容尺寸是 0，压出来比邻居窄一截
+	initSize(2, true, false, lineChoiceW - btnSize);
 	makeToggleBtn(L"\ue604", &isArrowFill, L"tool.arrowFill", L"fill");
 	// 四种箭头样式：普通（首尾等粗、平口尾）、尖尾、细箭头（开口 V）、凹口实心。
 	// 默认普通那一个。按钮与列表里画的是真实的箭头 —— 几何与图上画的那个共用一份
 	// （见 ShapeArrow::paintSample），所以不是图标字体。
 	// 切完让当前选中的箭头立刻换形状 —— 下一个新建的本来就会用新档位。
 	// 传 true：换的是"档位"，与颜色 / 填充 / 粗细那些"外观"分流（见 WinPin::onToolStyleChanged）
-	makeSelectBtn(L"tool.arrowStyle", L"style", &arrowStyle, arrowStyleItems(),
+	auto styleBtn = makeSelectBtn(L"tool.arrowStyle", L"style", &arrowStyle, arrowStyleItems(),
 		[this]() { win->onToolStyleChanged(true); }, false, false,
 		[this](ID2D1DeviceContext* ctx, const D2D1_RECT_F& rect, int index) {
 			ShapeArrow::paintSample(ctx, rect, index, sampleLineW * dpi, brushSample.Get());
 		});
+	styleBtn->setFlexGrow(0.f);
+	styleBtn->setFlexShrink(0.f);
+	styleBtn->setWidth(lineChoiceW);
 	initSlider();
 	initColorBtns();
 	makeApplyAllBtn();
