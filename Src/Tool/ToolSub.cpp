@@ -700,25 +700,41 @@ void ToolSub::initNumberBox()
 	box->setWidth(numberBoxW);
 	box->setVerticalCenter(true);
 	box->setFontSize(12.f);
+	// 定高单行框必须清零上下内边距：默认上下各 6 会把 28 高的内容区压到只剩 16，
+	// 装不下一行 12 号字 —— 滚动条常驻、基线以下还被裁掉（WinSettingAi 那六个框同理）
+	box->setPadding(6.f, 0.f, 6.f, 0.f);
+	// 底色 + 边框：这一格是唯一能改编号的地方。原来它没有框，跟右边那枚「填充」按钮
+	// 连成一片，看着就像"编号是写死的、改不了"（作者截图报的就是这个误会）
+	box->setBg(0xFFFFFFFF);
+	box->setBorder(1.f, 0xE0E0E0FF);
 	box->setMarginLeft(sliderMargin);
 	box->setMarginRight(sliderMargin);
 	box->setText(std::to_wstring(numberNext));
 	numberBox = box;
-	box->onTextChanged.add([this, box](Ling::TextBox*, const std::wstring& val) {
+	box->onTextChanged.add([this](Ling::TextBox*, const std::wstring& val) {
 		if (numberBoxSilent) return;
-		// 只认 1~9999 的整数：其余输入（空、字母、超长）一律回填上一个有效值
+		// ⚠️ 这个回调里**绝不能再回填输入框**：Ling 是在"编辑进行到一半"时发的 ——
+		// insertText 先删选区再插入，删选区那一步也会发一次。此刻 text / 光标 / 选区
+		// 都处于半改完的状态，setText 会把刚删掉的文本写回去、光标甩到末尾，于是
+		// "选中 1 再输入 10"出来的是 101（实测：删完那一步被回填成 1，插入又照原位置来）。
+		// 中间态（空 / 非数字 / 0）一律只记不动 —— 那本来就是用户正在往合法值走的路上，
+		// 每次都抢着回填，删到最后一个字符时会被立刻补回来，退格键就成了摆设
 		auto valid = !val.empty() && val.size() <= 4
 			&& std::all_of(val.begin(), val.end(), [](wchar_t c) { return c >= L'0' && c <= L'9'; });
-		auto parsed = valid ? std::stoi(val) : 0;
-		if (parsed < 1) {
-			numberBoxSilent = true;
-			box->setText(std::to_wstring(numberNext));
-			numberBoxSilent = false;
-			return;
-		}
+		if (!valid) return;
+		auto parsed = std::stoi(val);
+		if (parsed < 1) return;
 		// 这是用户手改的：从此锁住，不再跟着图上最大号回写（见 syncNumberVal）
 		numberManual = true;
-		setNumberVal(parsed);
+		numberNext = std::clamp(parsed, 1, 9999);
+	});
+	// 编辑结束（点了别处 / ESC / 窗口失焦）才把中间态兜回一个合法值：此刻输入已经收尾，
+	// 回填不会打断任何进行中的操作
+	box->onFocusChanged.add([this, box](Ling::TextBox*, bool focused) {
+		if (focused) return;
+		numberBoxSilent = true;
+		box->setText(std::to_wstring(numberNext));
+		numberBoxSilent = false;
 	});
 }
 
@@ -748,6 +764,8 @@ void ToolSub::setNumberVal(int val)
 	numberNext = std::clamp(val, 1, 9999);
 	// 输入框可能没建（当前不是序号工具），此时只更新成员
 	if (!numberBox) return;
+	// 正在编辑时也不写：与 initNumberBox 里那条同源 —— 编辑途中改 text 会打断输入
+	if (numberBox->isFocused()) return;
 	// setText 也会触发 onTextChanged，回填时要挡掉，否则会被当成用户改的再解析一遍
 	numberBoxSilent = true;
 	numberBox->setText(std::to_wstring(numberNext));
