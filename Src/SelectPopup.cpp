@@ -41,6 +41,17 @@ namespace
 		}
 	}
 
+	// 内容**实际**被往上挪了多少像素 —— 读 ScrollerBox 给 content 那个 visual 设的 Offset。
+	// 那才是"画在哪儿"的唯一真相，不能拿 ScrollerBox::getScrollY() 顶替：scrollY 与这个
+	// 偏移是两处状态，正常时同步（偏移 = -scrollY），但只要有一次布局把 content 的视觉偏移
+	// 重置回 0 而 scrollY 没归零，两者就差出好几行（见 syncHitCoords 里的说明）
+	float visualScrollOffset(const Ling::ScrollerBox* box)
+	{
+		// ScrollerBox 的第一个子节点就是它内部的 content 容器（见 ScrollerBox 的构造函数）
+		if (!box || box->children.empty()) return 0.f;
+		return -(box->children.front()->visual.Offset().y);
+	}
+
 	class Popup;
 	// 声明在类定义之前：Popup 自己的 onDestroy 里要按地址比对后把它放掉
 	std::unique_ptr<Popup> popup;
@@ -164,6 +175,16 @@ namespace
 		void layout() override
 		{
 			Ling::WinBase::layout();
+			// 布局期间 content 的视觉偏移会被重设（Node::layout 里 visual.Offset 是按 yoga
+			// 坐标重写的），这里按当前滚动量把它钉一次，保证"画出来的位置"与 scrollY 永远一致 ——
+			// 命中坐标读的正是画出来的那个偏移（见 syncHitCoords）。两者一旦脱节，整列会错开
+			// 几行：鼠标悬在第 1 位、高亮却落在第 5 位。
+			// scrollTo 遇到"同值"直接返回，所以先顶开一格再回位，两个方向都能真的写进去
+			if (list) {
+				const float sy = list->getScrollY();
+				list->scrollTo(sy > 0.f ? 0.f : 1.f);
+				list->scrollTo(sy);
+			}
 			if (!paintSample) return;
 			for (int i = 0; i < (int)samples.size(); ++i) {
 				auto ctx = samples[i]->startPaint();
@@ -181,8 +202,14 @@ namespace
 		void syncHitCoords(POINT pos)
 		{
 			if (!list) return;
-			const float sy = list->getScrollY();
-			if (sy > 0.f) shiftForScroll(list, list->y, sy);
+			// 命中坐标跟着"内容**实际**被挪到哪儿"走，而不是跟着 scrollY 走。
+			// ScrollerBox 的 scrollY 与它给 content 设的视觉偏移是两处状态：正常时同步
+			// （偏移 = -scrollY），但只要有一次布局把 content 的视觉偏移重置回 0 而 scrollY
+			// 没跟着归零，两者就错开 —— 那时按 scrollY 摆命中坐标，整列会错开几行：
+			// 鼠标悬在第 1 位、高亮却落在第 5 位，气泡也跟着不贴在鼠标那一行（2026-10-22 作者报的就是它）。
+			// 画在哪儿就命中在哪儿，才不会再被上面的时序问题拖累
+			const float scrolled = visualScrollOffset(list);
+			if (scrolled > 0.f) shiftForScroll(list, list->y, scrolled);
 			const float sbW = list->getScrollBarWidth();
 			swallowPick = sbW > 0.f
 				&& pos.x >= list->x + list->w - sbW && pos.x < list->x + list->w
