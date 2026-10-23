@@ -30,6 +30,41 @@
 
 using namespace Microsoft::WRL;
 using namespace winrt::Windows::Data::Json;
+
+class CropPreviewOverlay : public Ling::WinBase
+{
+public:
+        CropPreviewOverlay();
+        void updatePreview(ID2D1Bitmap1* src, const POINT& srcPos, const D2D1_RECT_U& target,
+                const RECT& currentRect, const float scale, const float frameDpi, const D2D1_COLOR_F& color);
+        void hidePreview();
+        bool showing() const { return active && hwnd && IsWindowVisible(hwnd); }
+private:
+        void onCreated() override;
+        void layout() override;
+        static bool hasArea(const D2D1_RECT_F& rect)
+        {
+                return rect.right > rect.left && rect.bottom > rect.top;
+        }
+        D2D1_RECT_F toClientRect(const D2D1_RECT_F& rect) const
+        {
+                return D2D1::RectF(rect.left - x, rect.top - y, rect.right - x, rect.bottom - y);
+        }
+        void drawSourceBand(ID2D1DeviceContext* ctx, const D2D1_RECT_F& screenRect);
+private:
+        Ling::Canvas* canvas{ nullptr };
+        ComPtr<ID2D1Bitmap1> srcImg;
+        ComPtr<ID2D1SolidColorBrush> brushBorder;
+        ComPtr<ID2D1SolidColorBrush> brushDim;
+        POINT srcScreenPos{ 0, 0 };
+        D2D1_RECT_F targetScreenRect{ 0.f, 0.f, 0.f, 0.f };
+        RECT currentScreenRect{ 0, 0, 0, 0 };
+        float srcScale{ 1.f };
+        float previewDpi{ 1.f };
+        D2D1_COLOR_F borderColor{ D2D1::ColorF(0.1f, 0.5f, 1.f) };
+        bool active{ false };
+};
+
 namespace {
 	std::vector<std::unique_ptr<WinPin>> winPins;
 	// 下一个可用的贴图组号。0 留给"不成组"，所以从 1 起
@@ -87,6 +122,109 @@ namespace {
 		pin->setLocked(obj.GetNamedBoolean(L"lock", false));
 		pin->setPinTitle(std::wstring{ obj.GetNamedString(L"title", L"") });
 	}
+}
+
+CropPreviewOverlay::CropPreviewOverlay()
+{
+        auto [sx, sy, sw, sh] = App::get()->getScreenArea();
+        this->x = sx;
+        this->y = sy;
+        this->w = (float)sw;
+        this->h = (float)sh;
+        createNativeWindow(WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_LAYERED | WS_EX_TRANSPARENT | WS_EX_NOACTIVATE,
+                WS_POPUP);
+}
+
+void CropPreviewOverlay::onCreated()
+{
+        auto d2d = Ling::D2D::get();
+        canvas = body->makeChild<Ling::Canvas>();
+        canvas->enableSwapChain();
+        canvas->setSizePercent(100.f, 100.f);
+        d2d->deviceContext->CreateSolidColorBrush(borderColor, brushBorder.GetAddressOf());
+        d2d->deviceContext->CreateSolidColorBrush(D2D1::ColorF(0x000000, 0.45f), brushDim.GetAddressOf());
+        App::excludeFromCapture(hwnd);
+        SetLayeredWindowAttributes(hwnd, 0, 255, LWA_ALPHA);
+}
+
+void CropPreviewOverlay::updatePreview(ID2D1Bitmap1* src, const POINT& srcPos, const D2D1_RECT_U& target,
+        const RECT& currentRect, const float scale, const float frameDpi, const D2D1_COLOR_F& color)
+{
+        srcImg = src;
+        srcScreenPos = srcPos;
+        currentScreenRect = currentRect;
+        srcScale = std::max(scale, 0.001f);
+        previewDpi = frameDpi;
+        borderColor = color;
+        targetScreenRect = D2D1::RectF(
+                srcPos.x + (float)target.left * srcScale,
+                srcPos.y + (float)target.top * srcScale,
+                srcPos.x + (float)target.right * srcScale,
+                srcPos.y + (float)target.bottom * srcScale);
+        active = srcImg && hasArea(targetScreenRect);
+        if (brushBorder) brushBorder->SetColor(borderColor);
+        if (!hwnd) return;
+        if (!active) {
+                hide();
+                return;
+        }
+        ShowWindow(hwnd, SW_SHOWNOACTIVATE);
+        SetWindowPos(hwnd, HWND_TOPMOST, (int)x, (int)y, (int)w, (int)h,
+                SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+        refresh();
+}
+
+void CropPreviewOverlay::hidePreview()
+{
+        active = false;
+        srcImg.Reset();
+        if (hwnd && IsWindowVisible(hwnd)) hide();
+}
+
+void CropPreviewOverlay::drawSourceBand(ID2D1DeviceContext* ctx, const D2D1_RECT_F& screenRect)
+{
+        if (!srcImg || !hasArea(screenRect)) return;
+        const auto dest = toClientRect(screenRect);
+        const auto src = D2D1::RectF(
+                (screenRect.left - (float)srcScreenPos.x) / srcScale,
+                (screenRect.top - (float)srcScreenPos.y) / srcScale,
+                (screenRect.right - (float)srcScreenPos.x) / srcScale,
+                (screenRect.bottom - (float)srcScreenPos.y) / srcScale);
+        ctx->DrawBitmap(srcImg.Get(), dest, 1.0f, D2D1_BITMAP_INTERPOLATION_MODE_NEAREST_NEIGHBOR, &src);
+}
+
+void CropPreviewOverlay::layout()
+{
+        Ling::WinBase::layout();
+        if (!canvas) return;
+        auto ctx = canvas->startPaint();
+        if (!ctx) return;
+        ctx->Clear(0);
+        if (active && srcImg && brushBorder && brushDim) {
+                const auto cur = D2D1::RectF(
+                        (float)currentScreenRect.left, (float)currentScreenRect.top,
+                        (float)currentScreenRect.right, (float)currentScreenRect.bottom);
+                const auto target = targetScreenRect;
+                D2D1_RECT_F bands[4] = {
+                        D2D1::RectF(target.left, target.top, target.right, std::min(target.bottom, cur.top)),
+                        D2D1::RectF(target.left, std::max(target.top, cur.bottom), target.right, target.bottom),
+                        D2D1::RectF(target.left, std::max(target.top, cur.top), std::min(target.right, cur.left), std::min(target.bottom, cur.bottom)),
+                        D2D1::RectF(std::max(target.left, cur.right), std::max(target.top, cur.top), target.right, std::min(target.bottom, cur.bottom)),
+                };
+                for (auto& band : bands) drawSourceBand(ctx, band);
+
+                D2D1_RECT_F dimParts[4] = {
+                        D2D1::RectF(cur.left, cur.top, cur.right, std::min(cur.bottom, target.top)),
+                        D2D1::RectF(cur.left, std::max(cur.top, target.bottom), cur.right, cur.bottom),
+                        D2D1::RectF(cur.left, std::max(cur.top, target.top), std::min(cur.right, target.left), std::min(cur.bottom, target.bottom)),
+                        D2D1::RectF(std::max(cur.left, target.right), std::max(cur.top, target.top), cur.right, std::min(cur.bottom, target.bottom)),
+                };
+                for (auto& part : dimParts) {
+                        if (hasArea(part)) ctx->FillRectangle(toClientRect(part), brushDim.Get());
+                }
+                ctx->DrawRectangle(toClientRect(target), brushBorder.Get(), 2.f * previewDpi);
+        }
+        canvas->finishPaint();
 }
 
 WinPin::WinPin(int x, int y, int w, int h, const std::vector<BYTE>* data, const std::wstring& initToolId)
@@ -227,6 +365,10 @@ void WinPin::onClosed()
 	// 防止 close() 被走两遍（比如按钮和快捷键先后触发）时排两次销毁
 	if (isClosed) return;
 	isClosed = true;
+        if (cropPreviewOverlay) {
+                cropPreviewOverlay->close();
+                cropPreviewOverlay.reset();
+        }
 	// 它可能正躺在"待编组"那一批里 —— 那张表存的是裸指针，先摘出去，
 	// 否则编组或画高亮时会解引用一个已经析构的对象
 	std::erase(groupPicked, this);
@@ -2223,6 +2365,10 @@ WinPin::~WinPin()
 	// 后台识别线程可能还在跑。它只认这个标志，不看对象在不在 —— 那个线程拿到的是裸 this，
 	// 所以必须由这里（对象真没了之前）把标志放掉
 	if (ocrAlive) *ocrAlive = false;
+        if (cropPreviewOverlay) {
+                cropPreviewOverlay->close();
+                cropPreviewOverlay.reset();
+        }
 }
 
 void WinPin::init(int x, int y, int w, int h, const std::wstring& toolId)
@@ -2417,6 +2563,9 @@ void WinPin::layout()
 	}
 	// 剪裁采样点压在边框上，任何时候都能拖（缩略图 / 细条 / 藏起来时除外，见 paintCropHandles）
 	paintCropHandles(ctx);
+        // 拖采样点期间的目标框：优先交给全屏透明预览层，它能把窗口外那一截也画出来；
+        // 只有预览层没起来时才退回窗口内这份老画法
+        if (cropPreviewOn && !(cropPreviewOverlay && cropPreviewOverlay->showing())) paintCropPreview(ctx);
 	// 选文的扫描光影：属于窗口装饰层（不跟标注缩放），压在边框之上、标题与提示之下
 	if (textSelect) paintScanFx(ctx);
 	// 多选那条批量条（复制 / 删除）与旋转手柄已经并进 paintSelection 了 ——
@@ -4178,6 +4327,64 @@ void WinPin::paintCropHandles(ID2D1DeviceContext* ctx)
 	}
 }
 
+// 拖采样点期间那条"松手后会变成的框"。窗口这会儿显示的还是拖动开始时的 cropRect
+//（整个拖动过程中窗口与底图都没动），所以拿 cropRect 当基准把目标区换算成窗口坐标。
+// 超出窗口的部分自然被合成器裁掉 —— 向内缩时整条框都看得见；向外扩时它会在窗口边缘
+// 消失，松手后窗口直接长到位
+void WinPin::paintCropPreview(ID2D1DeviceContext* ctx)
+{
+	if (!cropPreviewOn || !borderBrush) return;
+	const auto vs = viewScale();
+	const float l = (float)((int)cropTarget.left - (int)cropRect.left) * vs;
+	const float t = (float)((int)cropTarget.top - (int)cropRect.top) * vs;
+	const float r = (float)((int)cropTarget.right - (int)cropRect.left) * vs;
+	const float b = (float)((int)cropTarget.bottom - (int)cropRect.top) * vs;
+	// 框外压一层暗色（内缩时就是"这些会没了"）。只压窗口内、只压框外那四条：
+	// 框内原样保留，才能和最终结果对照
+	if (!brushCropDim) {
+		Ling::D2D::get()->deviceContext->CreateSolidColorBrush(
+			D2D1::ColorF(0x000000, 0.45f), brushCropDim.GetAddressOf());
+	}
+	if (brushCropDim) {
+		const float tTop = std::max(0.f, t), tBot = std::min(h, std::max(0.f, b));
+		D2D1_RECT_F parts[4] = {
+			D2D1::RectF(0.f, 0.f, w, tTop),                               // 上
+			D2D1::RectF(0.f, tBot, w, h),                                 // 下
+			D2D1::RectF(0.f, tTop, std::max(0.f, l), tBot),               // 左
+			D2D1::RectF(std::max(0.f, r), tTop, w, tBot),                 // 右
+		};
+		for (auto& part : parts) {
+			if (part.right > part.left && part.bottom > part.top) {
+				ctx->FillRectangle(part, brushCropDim.Get());
+			}
+		}
+	}
+	// 目标框本身：主题色、两倍边框粗细，压在暗色之上
+	ctx->DrawRectangle(D2D1::RectF(l, t, r, b), borderBrush.Get(), 2 * dpi);
+	// 向外扩的时候框整条跑到窗口外面去了，一点都看不见 —— 用户会觉得"按下去没反应"。
+	// 于是把"正在往哪条边扩"画在窗口内侧：贴着那条边一道粗线，越扩越粗
+	constexpr float kMaxTip = 6.f;
+	auto tip = [&](float over, float maxRef) {
+		return std::clamp(std::fabs(over) / std::max(1.f, maxRef) * 24.f, 2.f, kMaxTip) * dpi;
+	};
+	if (l < 0) {
+		const float wd = tip(l, w);
+		ctx->DrawLine(D2D1::Point2F(wd / 2, 0.f), D2D1::Point2F(wd / 2, h), borderBrush.Get(), wd);
+	}
+	if (r > w) {
+		const float wd = tip(r - w, w);
+		ctx->DrawLine(D2D1::Point2F(w - wd / 2, 0.f), D2D1::Point2F(w - wd / 2, h), borderBrush.Get(), wd);
+	}
+	if (t < 0) {
+		const float wd = tip(t, h);
+		ctx->DrawLine(D2D1::Point2F(0.f, wd / 2), D2D1::Point2F(w, wd / 2), borderBrush.Get(), wd);
+	}
+	if (b > h) {
+		const float wd = tip(b - h, h);
+		ctx->DrawLine(D2D1::Point2F(0.f, h - wd / 2), D2D1::Point2F(w, h - wd / 2), borderBrush.Get(), wd);
+	}
+}
+
 // 命中的是第几个采样点，没命中返回 -1。命中框比画出来的圆大一圈（那么小的点差几个像素
 // 就够不着），而且取最近的那一个 —— 图小的时候几个采样点会挨在一起，按顺序取第一个
 // 会让后一个永远点不着
@@ -4202,6 +4409,7 @@ void WinPin::startCropDrag(const int handle)
 {
 	ensureCropSource();
 	if (!srcImg) return;
+        if (!cropPreviewOverlay) cropPreviewOverlay = std::make_unique<CropPreviewOverlay>();
 	cropHandle = handle;
 	// 源图左上角此刻在屏幕的哪儿：由窗口位置和"显示的是哪一块"反算。窗口可以被拖走、
 	// 被 Ctrl+滚轮缩放过，这个值存不住，只在一次拖拽期间有效 —— 拖左边 / 上边时窗口
@@ -4209,6 +4417,25 @@ void WinPin::startCropDrag(const int handle)
 	const auto vs = viewScale();
 	dragSrcPos.x = x - (int)std::lround((float)cropRect.left * vs);
 	dragSrcPos.y = y - (int)std::lround((float)cropRect.top * vs);
+	// 拖动期间**窗口和底图都按住不动**，只画一条"松手后会变成的框"（paintCropPreview），
+	// 松手才由 endCropDrag 一次性应用。这是唯一能在"内容与矩形两路状态天然差一帧"里
+	// 彻底不抖的做法：屏上显示的始终是同一张图、同一个屏幕位置、同一个窗口矩形，
+	// 没有任何东西需要重画或重摆，也就不存在"新矩形配上一帧的图"。
+	// 根因：SetWindowPos 改的矩形就地生效，而 DXGI flip 的 Present 要等下一次合成才翻转。
+	// 2026-10-23 逐帧取证：每变一次尺寸必错一帧，偏移量精确等于那一步的位移。
+	// 走过但无效：把画内联进 WM_SIZE、DwmFlush 对齐帧首、Present 等垂直同步、
+	// 去掉 SWP_NOREDRAW、换单缓冲 surface（那个会采到 Clear 之后的空白帧）。
+	// 详见 .workbuddy/memory/TOPIC-ling-ui.md §22
+	cropTarget = cropRect;
+	cropPreviewOn = true;
+        RECT currentRect{
+                (int)std::lround(x),
+                (int)std::lround(y),
+                (int)std::lround(x + w),
+                (int)std::lround(y + h)
+        };
+        cropPreviewOverlay->updatePreview(srcImg.Get(), dragSrcPos, cropTarget, currentRect, vs, dpi,
+                D2D1::ColorF(Setting::getThemeColor()));
 	// 与拖窗口、画笔那两条路一样：占住 capture，鼠标划出窗口也收得到移动与抬手
 	isMouseDown = true;
 	SetCapture(hwnd);
@@ -4223,8 +4450,8 @@ void WinPin::dragCropTo(const POINT& screenPos)
 	// 拖左边 / 上边时窗口自己一挪，累加就把同一段位移记两遍，越拖越漂
 	const int px = (int)std::lround((screenPos.x - dragSrcPos.x) / vs);
 	const int py = (int)std::lround((screenPos.y - dragSrcPos.y) / vs);
-	int l{ (int)cropRect.left }, t{ (int)cropRect.top };
-	int r{ (int)cropRect.right }, b{ (int)cropRect.bottom };
+	int l{ (int)cropTarget.left }, t{ (int)cropTarget.top };
+	int r{ (int)cropTarget.right }, b{ (int)cropTarget.bottom };
 	// 每个采样点只管它那两条边：角上是横竖各一条，边中点只有一条，对面那条一概不动
 	switch (cropHandle) {
 	case 0: l = px; t = py; break;
@@ -4253,10 +4480,21 @@ void WinPin::dragCropTo(const POINT& screenPos)
 		else b = std::min((int)srcSize.height, t + minSide);
 	}
 	if (r - l < 1 || b - t < 1) return;
-	if (l == (int)cropRect.left && t == (int)cropRect.top
-		&& r == (int)cropRect.right && b == (int)cropRect.bottom) return;
-	cropRect = D2D1::RectU((UINT32)l, (UINT32)t, (UINT32)r, (UINT32)b);
-	applyCropRect();
+	if (l == (int)cropTarget.left && t == (int)cropTarget.top
+		&& r == (int)cropTarget.right && b == (int)cropTarget.bottom) return;
+	cropTarget = D2D1::RectU((UINT32)l, (UINT32)t, (UINT32)r, (UINT32)b);
+        RECT currentRect{
+                (int)std::lround(x),
+                (int)std::lround(y),
+                (int)std::lround(x + w),
+                (int)std::lround(y + h)
+        };
+        if (cropPreviewOverlay) {
+                cropPreviewOverlay->updatePreview(srcImg.Get(), dragSrcPos, cropTarget, currentRect, vs, dpi,
+                        D2D1::ColorF(Setting::getThemeColor()));
+        }
+        // 主窗口只重画窗口内还看得见的那部分；窗口外那一截由透明预览层补出来
+	refresh();
 }
 
 void WinPin::endCropDrag()
@@ -4266,6 +4504,12 @@ void WinPin::endCropDrag()
 	isMouseDown = false;
 	// 与 onUp 里那两条路一致：capture 还挂在手上，得放掉
 	ReleaseCapture();
+	// 一刀落定：目标框在这里一次性交给窗口与底图。整个拖动过程中两者都没动过，
+	// 所以全程只有这一次矩形变更（顶多错一帧，且发生在松手瞬间，不是拖动中的持续抖动）
+	cropPreviewOn = false;
+        if (cropPreviewOverlay) cropPreviewOverlay->hidePreview();
+	cropRect = cropTarget;
+	applyCropRect();
 	// 一刀落定，这里才重认一遍文字：拖动中每帧重认一遍等于每帧一次整图回读 + 一个识别线程，
 	// 拖起来必然是卡的（见 applyCropRect 里的说明）。认的时机放在这儿，偏移已经由最后那次
 	// applyCropRect 对好了，词框照样落在字上
