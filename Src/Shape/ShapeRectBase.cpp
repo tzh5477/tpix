@@ -25,6 +25,17 @@ namespace {
 	{
 		return i % 2 == 1 ? (i + 3) % 8 : (i + 4) % 8;
 	}
+
+	// 点到线段的最短距离。三角形 / 菱形只有描边算命中，靠它判"离哪条边多近"
+	float distToSeg(const D2D1_POINT_2F& p, const D2D1_POINT_2F& a, const D2D1_POINT_2F& b)
+	{
+		auto dx{ b.x - a.x }, dy{ b.y - a.y };
+		auto len2{ dx * dx + dy * dy };
+		auto t{ len2 > 0.f ? ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2 : 0.f };
+		t = std::clamp(t, 0.f, 1.f);
+		auto cx{ a.x + dx * t }, cy{ a.y + dy * t };
+		return sqrtf((p.x - cx) * (p.x - cx) + (p.y - cy) * (p.y - cy));
+	}
 }
 
 ShapeRectBase::ShapeRectBase(Canvas* win) : ShapeBase(win), draggers(17, D2D1::RectF(0, 0, 0, 0))
@@ -141,6 +152,56 @@ ComPtr<ID2D1PathGeometry> ShapeRectBase::makePieGeometry() const
 	return geo;
 }
 
+int ShapeRectBase::polyPoints(D2D1_POINT_2F* out) const
+{
+	// 两个多边形的顶点一律"从正上方开始、顺时针"：三角形是顶点朝上的等腰三角形，
+	// 菱形是四个顶点落在外接框四边的中点上 —— 都只由 rect 决定，跟着 rect 缩放 / 旋转
+	switch (kind)
+	{
+	case Kind::Triangle:
+		out[0] = { cx, rect.top };
+		out[1] = { rect.right, rect.bottom };
+		out[2] = { rect.left, rect.bottom };
+		return 3;
+	case Kind::Diamond:
+		out[0] = { cx, rect.top };
+		out[1] = { rect.right, cy };
+		out[2] = { cx, rect.bottom };
+		out[3] = { rect.left, cy };
+		return 4;
+	default:
+		return 0;
+	}
+}
+
+ComPtr<ID2D1PathGeometry> ShapeRectBase::makePolyGeometry() const
+{
+	ComPtr<ID2D1PathGeometry> geo;
+	D2D1_POINT_2F pts[4];
+	auto n{ polyPoints(pts) };
+	if (n < 3) return geo;
+	ComPtr<ID2D1GeometrySink> sink;
+	if (FAILED(Ling::D2D::get()->d2dFactory->CreatePathGeometry(geo.GetAddressOf()))) return geo;
+	if (FAILED(geo->Open(sink.GetAddressOf()))) return geo;
+	// BeginFigure / EndFigure 必须成对，中途每条失败路径都要自己收尾（见 TOPIC-shapes §4）
+	sink->BeginFigure(pts[0], D2D1_FIGURE_BEGIN_FILLED);
+	for (int i = 1; i < n; i++) sink->AddLine(pts[i]);
+	sink->EndFigure(D2D1_FIGURE_END_CLOSED);
+	sink->Close();
+	return geo;
+}
+
+ShapeRectBase::Kind ShapeRectBase::kindFromGeom(const int g)
+{
+	switch (g)
+	{
+	case 1: return Kind::Ellipse;
+	case 2: return Kind::Triangle;
+	case 3: return Kind::Diamond;
+	default: return Kind::Rect;
+	}
+}
+
 void ShapeRectBase::paint(ID2D1DeviceContext* ctx)
 {
 	// 外层变换（屏幕上是缩放、导出时是单位阵）要保住，旋转排在内层 ——
@@ -154,6 +215,13 @@ void ShapeRectBase::paint(ID2D1DeviceContext* ctx)
 			else ctx->DrawEllipse(e, brush.Get(), strokeWidth);
 		}
 		else if (auto geo = makePieGeometry()) {
+			if (isFill) ctx->FillGeometry(geo.Get(), brush.Get());
+			else ctx->DrawGeometry(geo.Get(), brush.Get(), strokeWidth);
+		}
+	}
+	else if (kind == Kind::Triangle || kind == Kind::Diamond) {
+		// 多边形只有一条闭合轮廓，填充与描边各走一次就行。圆角 / 扇区跟它们无关
+		if (auto geo = makePolyGeometry()) {
 			if (isFill) ctx->FillGeometry(geo.Get(), brush.Get());
 			else ctx->DrawGeometry(geo.Get(), brush.Get(), strokeWidth);
 		}
@@ -210,7 +278,7 @@ void ShapeRectBase::paintDragger(ID2D1DeviceContext* ctx)
 		if (kind == Kind::Rect) {
 			for (int i = HitRadiusTL; i <= HitRadiusBL; i++) paintDot(ctx, draggers[i], false);
 		}
-		else {
+		else if (kind == Kind::Ellipse) {
 			// 完整圆只有一枚（拖它才切出扇形）；切出缺角之后内径那一枚才出现
 			if (isPie()) {
 				paintDot(ctx, draggers[HitInner], false);
@@ -218,6 +286,7 @@ void ShapeRectBase::paintDragger(ID2D1DeviceContext* ctx)
 			}
 			paintDot(ctx, draggers[HitNotchEnd], false);
 		}
+		// 三角形 / 菱形没有内部手柄：两类图上该调的都由八向手柄与旋转管
 	}
 	ctx->SetTransform(prev);
 	// 那枚看得见的旋转图标。画在 SetTransform(prev) **之后** —— 它锚的是外接框（轴对齐的那块），
@@ -510,14 +579,17 @@ void ShapeRectBase::applyStyle()
 	isFill = toolSub->getCurrentFill();
 }
 
-// 工具条上「几何图形」换类别（矩形 / 圆形）：把这一笔翻成那一类。
-// 元素左下角原来那枚互转图标撤掉之后，这是唯一的入口 —— 选中一个矩形、点工具条上那枚圆，
-// 它就变成圆。翻的是 kind 而不是换掉对象：几何、颜色、线宽、圆角、扇区全部留着，
-// 换的只是"怎么画、怎么命中"，正在编辑的那一笔也不会因此丢掉
-void ShapeRectBase::applyToolStyle()
+// 工具条上「几何图形」换类别（矩形 / 圆形 / 三角形 / 菱形）：把这一笔翻成那一类。
+// 元素左下角原来那枚互转图标撤掉之后，这是唯一的入口 —— 选中一个矩形、点工具条上那枚菱形，
+// 它就变成菱形。翻的是 kind 而不是换掉对象：几何、颜色、线宽全部留着，
+// 换的只是"怎么画、怎么命中"，正在编辑的那一笔也不会因此丢掉。
+//
+// 它是 applyToolCategory 而不是 applyToolStyle：「全」那条批量路径要调 applyToolStyle
+//（把箭头样式 / 线型这类档位也统一过去），但**不该**顺带把满图的图形都翻成同一类
+void ShapeRectBase::applyToolCategory()
 {
 	if (!useToolStyle) return;
-	auto next = win->getToolSub()->getGeomKind() == 1 ? Kind::Ellipse : Kind::Rect;
+	auto next = kindFromGeom(win->getToolSub()->getGeomKind());
 	if (next == kind) return;
 	kind = next;
 	syncFromRect();
@@ -613,6 +685,19 @@ void ShapeRectBase::hitBody(const float x, const float y)
 		// 缺角那一块也不在图里
 		if (inNotch(atan2f(y - cy, x - cx) * 180.f / kPi)) return;
 		hoverDraggerIndex = HitBody;
+		return;
+	}
+	if (kind == Kind::Triangle || kind == Kind::Diamond) {
+		// 多边形与矩形同一条规矩：只有描边那一圈算命中（填充图形的内部同样不抓，
+		// 否则一个铺满大半张图的多边形会让里面的空白处再也点不到别的标注）
+		D2D1_POINT_2F pts[4];
+		auto n{ polyPoints(pts) };
+		for (int i = 0; i < n; i++) {
+			if (distToSeg({ x, y }, pts[i], pts[(i + 1) % n]) <= half) {
+				hoverDraggerIndex = HitBody;
+				return;
+			}
+		}
 		return;
 	}
 	if (x >= rect.left - half && x <= rect.right + half && y >= rect.top - half && y <= rect.bottom + half)

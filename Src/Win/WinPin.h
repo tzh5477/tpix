@@ -13,6 +13,7 @@ class ShapeText;
 class ShapeNumber;
 class History;
 class Canvas;
+class CropPreviewOverlay;
 class WinPin : public Ling::WinBase, public CanvasHost
 {
 public:
@@ -161,8 +162,12 @@ public:
 	void refreshNumberShapes();
 	// ToolSub 上的颜色 / 字号 / 粗体 / 斜体变了，转给正在编辑的文本立即生效。
 	// styleEnumChanged = 触发这次改动的是"档位"按钮（箭头样式 / 线条类型 / 端点 / 线型）——
-	// 只有这种时候才该把档位也套到选中那一笔上，颜色 / 粗细 / 填充这些不该顺手换掉形状
-	void onToolStyleChanged(bool styleEnumChanged = false);
+	// 只有这种时候才该把档位也套到选中那一笔上，颜色 / 粗细 / 填充这些不该顺手换掉形状。
+	// categoryChanged = 触发的是"几何图形的类别"（矩形 / 圆 / 三角 / 菱形）。
+	// 与档位分开是因为几何那四枚类别图标和其它工具的档位下拉**共用一个 styleEnum 口子**，
+	// 但类别只在点那四枚图标时该套；串在一起的话，选中一个矩形再去点箭头下拉，
+	// 矩形的类别就会跟着工具条上那一档被翻掉
+	void onToolStyleChanged(bool styleEnumChanged = false, bool categoryChanged = false);
 	// 工具条上拖滑块调样式（粗细 / 字号 / 半径 / 不透明度）走这一条。
 	// 与 onToolStyleChanged 的区别只在于撤销点怎么记：滑块拖一趟会连着来几十次值变化，
 	// 而它没有"松手"事件，所以交给 History 按"同一趟"合并成一步
@@ -430,6 +435,9 @@ private:
 	void endCropDrag();
 	// 按 cropRect 重切底图、挪标注原点、重排窗口的位置与尺寸
 	void applyCropRect();
+	// 拖采样点期间的"松手后会变成的框"。底图与窗口都按住不动，只画这条线 ——
+	// 见 startCropDrag 里关于"内容与矩形两路状态差一帧"的说明
+	void paintCropPreview(ID2D1DeviceContext* ctx);
 	// 没有源图时现补一份：拿当前这张底图顶替自己。剪贴板 / 文件 / 长图 / 历史进来的贴图走这条，
 	// 于是"向外拖"最多拖回它的边界 —— 那些图本来就是从外面拿来的，边界外没有东西可补
 	void ensureCropSource();
@@ -538,6 +546,16 @@ private:
 	POINT cropBase{ 0, 0 };
 	// 正拉着第几个采样点，-1 表示没在拉（见 cropHandleAt）
 	int cropHandle{ -1 };
+	// 拖采样点期间：底图与窗口都按住不动，只画一条"松手后会变成的框"。
+	// 存的是目标裁剪区（源图像素），松手时 endCropDrag 一次性交给 applyCropRect。
+	// 为什么不实时应用：窗口矩形是就地生效、DXGI 的 Present 要等下一次合成翻转，
+	// 两路状态天然差一帧；窗口每步都变尺寸时，屏幕上就固定出现一帧"新矩形配上一帧的图"，
+	// 偏移量精确等于那一步的位移 ⇒ 抖动 + 重影（2026-10-23 逐帧取证）
+	bool cropPreviewOn{ false };
+	D2D1_RECT_U cropTarget{};
+        // 拖裁剪点时那层全屏透明预览：窗口与底图继续冻结，超出本窗口的新增区域改由它补画，
+        // 这样向外扩也能看见完整目标框，而不会把"实时改主窗口"那条抖动问题再带回来
+        std::unique_ptr<CropPreviewOverlay> cropPreviewOverlay;
 	// 正在按裁剪矩形重摆窗口（applyCropRect 里，从攒批到提交结束）。这段里底图窗口收到的
 	// WM_MOVE 会被 onMoved 咽掉：applyCropRect 紧接着就自己排一遍，让 onMoved 再排一遍
 	// 等于把整组工具条的搬运原样做第二次 —— 实测拖采样点时一帧 358ms 里有 170ms 是这一次重排
@@ -663,6 +681,8 @@ private:
 	// 那是再开一张贴图，这里是把内容编进正在编辑的这一张
 	void pasteFromSystemClipboard();
 	Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> borderBrush;
+	// 拖采样点时压在裁剪框外的那层暗色（懒建，见 paintCropPreview）
+	Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brushCropDim;
 	// 「待编组」高亮边框。用暖色与常规蓝边框区分：一眼看出"这几种正在被挑出来编组"
 	Microsoft::WRL::ComPtr<ID2D1SolidColorBrush> brushPick;
 	// 「选择画布」的采样点填充与图标白描边用的白色。单独一支：别的白刷各有各的用途，
