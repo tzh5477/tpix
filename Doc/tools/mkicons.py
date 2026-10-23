@@ -424,6 +424,58 @@ def icon_smile(pen):
     arc_band(pen, CX, CY - 30, 200, 48, 200.0, 340.0)
 
 
+def poly(pen, pts):
+    """按给定点序画一个闭合多边形。方向（正负）由调用方负责 ——
+    非零环绕只要求外轮廓与孔洞相反，不要求哪个朝哪边。"""
+    pen.moveTo(pts[0])
+    for p in pts[1:]:
+        pen.lineTo(p)
+    pen.closePath()
+
+
+def poly_ring(pen, pts, w):
+    """凸多边形的等宽描边：外轮廓 + 往里缩 w 的反向孔洞。
+    只在凸多边形成立（三角形 / 菱形都是）：把每条边沿内侧法向推 w，相邻两条求交就是内角点，
+    因此尖角也是干净的斜接，不像「每段各画一条矩形」那样在顶点留豁口。"""
+    n = len(pts)
+    area = 0.0
+    for i in range(n):
+        x0, y0 = pts[i]
+        x1, y1 = pts[(i + 1) % n]
+        area += x0 * y1 - x1 * y0
+    if area > 0:                      # 统一成顺时针，下面才敢直接按"内侧法向"推
+        pts = list(reversed(pts))
+    lines = []
+    for i in range(n):
+        x0, y0 = pts[i]
+        x1, y1 = pts[(i + 1) % n]
+        dx, dy = x1 - x0, y1 - y0
+        d = math.hypot(dx, dy)
+        nx, ny = dy / d, -dx / d      # 顺时针轮廓的内侧法向
+        lines.append(((x0 + nx * w, y0 + ny * w), (dx, dy)))
+    inner = []
+    for i in range(n):
+        (px, py), (ax, ay) = lines[i - 1]
+        (qx, qy), (bx, by) = lines[i]
+        den = ax * by - ay * bx
+        t = ((qx - px) * by - (qy - py) * bx) / den
+        inner.append((px + ax * t, py + ay * t))
+    poly(pen, pts)
+    poly(pen, list(reversed(inner)))
+
+
+def icon_triangle(pen):
+    """正三角形（顶点朝上）= 几何图形里的「三角形」那一档。
+    幅面与矩形 / 圆形那两枚旧字形对齐：主体 x[96,928]、y[150,860]，笔宽 64。"""
+    poly_ring(pen, [(512, 860), (96, 150), (928, 150)], 64)
+
+
+def icon_diamond(pen):
+    """菱形 = 几何图形里的「菱形」那一档。上下顶点 / 左右顶点落在同一个幅面里，
+    长宽与三角形那枚一致，四枚类别小图标摆在一排时大小看着一样。"""
+    poly_ring(pen, [(512, 860), (928, 478), (512, 96), (96, 478)], 64)
+
+
 ICONS = [
     (0xE909, 'arrowPlain', icon_arrow_plain),
     (0xE90A, 'arrowTaper', icon_arrow_taper),
@@ -456,6 +508,10 @@ ICONS = [
     (0xE916, 'smart', icon_smart),
     # 工具条上的「插入图标」（ToolMain 的 icon 那一格）
     (0xE917, 'smile', icon_smile),
+    # 「几何图形」子面板里的类别小图标（ToolSub::makeGeomKindBtns）：矩形 / 圆形沿用旧字形
+    # E8E8 / E6BC，三角形与菱形这两枚是后加的
+    (0xE918, 'triangle', icon_triangle),
+    (0xE919, 'diamond', icon_diamond),
 ]
 
 

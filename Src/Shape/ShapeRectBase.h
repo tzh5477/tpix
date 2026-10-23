@@ -16,8 +16,9 @@
 class ShapeRectBase : public ShapeBase
 {
 public:
-	// 这一笔画出来是矩形还是椭圆。顺序即"互转"按钮的顺序，不落盘，随便调
-	enum class Kind { Rect = 0, Ellipse };
+	// 这一笔画出来是哪个几何图形。顺序即"换类别"的下标，也是 toolPin.geom.kind 的落盘值
+	// （ToolSub::geomKind），**只能往后加** —— 0/1 是矩形/圆那一版就有的值
+	enum class Kind { Rect = 0, Ellipse, Triangle, Diamond };
 	ShapeRectBase(Canvas* win);
 	~ShapeRectBase();
 	void paint(ID2D1DeviceContext* ctx) override;
@@ -34,11 +35,14 @@ public:
 	void applyStyle() override;
 	// 批量旋转（见 ShapeBase::rotateBy）：位置绕 center 转 + 自身角度加 deg
 	void rotateBy(const float deg, const D2D1_POINT_2F& center) override;
-	// 工具条上「几何图形」选了哪一类（矩形 / 圆形），把这一笔翻成那一类。
+	// 工具条上「几何图形」选了哪一类（矩形 / 圆形 / 三角形 / 菱形），把这一笔翻成那一类。
 	// 元素左下角原来有一枚互转图标干这件事，撤掉之后换类别只在工具条上做得到
 	// （见 ToolSub::makeGeomKindBtns），所以选中态跟着工具条走 —— 与箭头样式同一条路。
 	// 马赛克与擦除没有"换个形状"这回事，由 useToolStyle 分开
 	void applyToolStyle() override;
+	// 落盘值（toolPin.geom.kind）→ Kind。0 矩形 / 1 圆形 / 2 三角形 / 3 菱形；
+	// 越界一律当矩形。工具条、新建元素（History::createShape）都用这一份映射，改一处两处一起变
+	static Kind kindFromGeom(const int g);
 protected:
 	// 复制（见 ShapeBase::clone）。这一族只多两件事：rect 挪开、自己那支画刷重建一份，
 	// 具体是"哪个类"由派生类各写一行 cloneSelf
@@ -83,6 +87,14 @@ protected:
 	D2D1_POINT_2F handleLocalPoint(const int i) const;
 	// 扇形 / 环形那条闭合路径（局部坐标）。没有缺角时调用方直接画椭圆，不必走它
 	Microsoft::WRL::ComPtr<ID2D1PathGeometry> makePieGeometry() const;
+	// 三角形 / 菱形的顶点（局部坐标，按画多边形的顺序）。写进 out（至少 4 个的位置），
+	// 返回顶点数；矩形 / 圆形返回 0 —— 画法与命中都只认这两个多边形
+	int polyPoints(D2D1_POINT_2F* out) const;
+	// 三角形 / 菱形那条闭合路径（局部坐标）。矩形 / 圆形不走它
+	Microsoft::WRL::ComPtr<ID2D1PathGeometry> makePolyGeometry() const;
+	// 这一类的轮廓是否贴在外接框的边上（矩形整圈都贴、三角形底边与两角贴）。
+	// 只有这种形状才需要给多选框线让开描边宽度，圆 / 菱形只在个别点上碰到框
+	bool outlineOnBBox() const { return kind == Kind::Rect || kind == Kind::Triangle; }
 	// 画一枚"内部手柄"（圆角 / 扇区那几枚）。它们是空心的圆点，
 	// withCenter 为真时中间再点一个实心点 —— 那是"转方向"那一枚
 	void paintDot(ID2D1DeviceContext* ctx, const D2D1_RECT_F& box, const bool withCenter) const;

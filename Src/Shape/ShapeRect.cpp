@@ -8,10 +8,10 @@
 #include "ShapeRect.h"
 #include "ShapeText.h"
 
-ShapeRect::ShapeRect(Canvas* win) :ShapeRectBase(win)
+ShapeRect::ShapeRect(Canvas* win, Kind k) :ShapeRectBase(win)
 {
-	kind = Kind::Rect;
-	// 照工具条上"当前那一套"来画，也跟着工具条换类别翻成圆
+	kind = k;
+	// 照工具条上"当前那一套"来画，也跟着工具条换类别翻成别的类
 	//（马赛克、擦除也在这个基类下，它们没有这回事）
 	useToolStyle = true;
 	auto toolSub = win->getToolSub();

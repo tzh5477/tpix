@@ -186,11 +186,13 @@ ShapeBase* History::createShape(const std::wstring& state, const int& x, const i
 	// 先按当前工具把 shape 建出来，最后一次性入栈 —— 这样"存底"能干净地压在入栈之前
 	std::unique_ptr<ShapeBase> shape;
 	auto curId = canvas->getCurToolId();
-	// 「几何图形」：矩形与圆形是同一支工具下的两个类别，画哪一类看工具条上当前选的那一档
-	// （ToolSub::geomKind）。两类的几何、手柄、命中全是同一套，翻的只是 kind
+	// 「几何图形」：矩形 / 圆形 / 三角形 / 菱形是同一支工具下的四个类别，画哪一类看工具条上
+	// 当前选的那一档（ToolSub::geomKind）。几何、手柄、命中全是同一套，翻的只是 kind ——
+	// 四条里只有圆形要那个类（它多一套扇区手柄），其余三类都用 ShapeRect 带 kind 建
 	if (curId == L"geom") {
-		if (canvas->getToolSub()->getGeomKind() == 1) shape = std::make_unique<ShapeEllipse>(canvas);
-		else shape = std::make_unique<ShapeRect>(canvas);
+		auto gk = canvas->getToolSub()->getGeomKind();
+		if (gk == 1) shape = std::make_unique<ShapeEllipse>(canvas);
+		else shape = std::make_unique<ShapeRect>(canvas, ShapeRectBase::kindFromGeom(gk));
 	}
 	else if (curId == L"arrow") {
 		shape = std::make_unique<ShapeArrow>(canvas);

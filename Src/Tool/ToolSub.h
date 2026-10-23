@@ -209,10 +209,10 @@ private:
 	void refreshColors();
 	// 按当前 selectColorIndex 刷新色板行：预设格子上该打勾的打勾，末尾那块当前色块换底色
 	void syncColorBtns();
-	// 「几何图形」那两枚类别小图标（矩形 / 圆形）。互斥的单选：选中的那一枚上底色，
+	// 「几何图形」那四枚类别小图标（矩形 / 圆形 / 三角形 / 菱形）。互斥的单选：选中的那一枚上底色，
 	// 单击换类别并落盘，已选中的图形跟着翻（走 WinPin::onToolStyleChanged 的"档位"那条路）
 	void makeGeomKindBtns();
-	// 按 geomKind 重刷那两枚类别图标的选中底色
+	// 按 geomKind 重刷那四枚类别图标的选中底色
 	void syncGeomKindBtns();
 	void initSlider();
 	// 建一个横向滑块。值域 / 当前值都由调用方给（水印的不透明度、间距、大小都要用，
@@ -399,7 +399,7 @@ private:
 	// 单独一份的理由见上面 getWatermarkSize 的注释：它与其它工具共用的 sliderVal 不是一回事
 	float watermarkFontSize{ 24.f };
 	UINT selectColorIndex{ 0 };
-	// 「几何图形」当前类别：0 矩形 / 1 圆形（与 ShapeRectBase::Kind 同序）。
+	// 「几何图形」当前类别：0 矩形 / 1 圆形 / 2 三角形 / 3 菱形（与 ShapeRectBase::Kind 同序）。
 	// 由构造时的 migrateGeomCfg 之后从 config.json 的 geom/kind 读回来
 	int geomKind{ 0 };
 	// 内置预设色（对齐 pixpin 那排常见颜色）。用户自定义色接在它们后面拼成 colors，

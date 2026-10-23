@@ -155,8 +155,15 @@ void ToolMain::syncGeomIcon()
 {
 	if (!geomBtn) return;
 	auto kind = (int)Setting::get()->getToolNum(L"geom", L"kind", 0.f);
-	// \ue8e8 方框（矩形那一档）、\ue6bc 圆（圆形那一档）—— 就是原来主工具条上那两枚的码位
-	geomBtn->setText(kind == 1 ? L"\ue6bc" : L"\ue8e8");
+	// \ue8e8 方框、\ue6bc 圆、\ue918 三角形、\ue919 菱形 —— 与子面板那四枚类别小图标同一批码位。
+	// 越界的值（手改坏的配置）当矩形
+	switch (kind)
+	{
+	case 1: geomBtn->setText(L"\ue6bc"); break;
+	case 2: geomBtn->setText(L"\ue918"); break;
+	case 3: geomBtn->setText(L"\ue919"); break;
+	default: geomBtn->setText(L"\ue8e8"); break;
+	}
 }
 
 void ToolMain::layout()

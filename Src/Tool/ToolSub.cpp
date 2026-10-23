@@ -292,7 +292,7 @@ ToolSub::ToolSub(WinPin* win) :Ling::WinBase(), win(win)
 	// 老配置迁移 + 当前类别。类别要赶在第一次建面板之前读回来：ToolMain 那枚按钮的图标
 	// 也按它画，而它读的是同一份落盘值
 	migrateGeomCfg();
-	geomKind = std::clamp((int)Setting::get()->getToolNum(L"geom", L"kind", 0.f), 0, 1);
+	geomKind = std::clamp((int)Setting::get()->getToolNum(L"geom", L"kind", 0.f), 0, 3);
 	// DPI 变了（工具条被挪到缩放比例不同的显示器上，或者用户改了系统缩放）：
 	// Ling 只会把窗口按系统给的建议矩形整体缩放一遍，我们自己定的那套摆放规则不会重跑，
 	// 工具条就歪在别处了。位置也不能在 onDpiChanged 里直接改 —— 那个事件在 Ling 应用建议矩形
@@ -427,8 +427,8 @@ void ToolSub::beginTool(const std::wstring& id)
 void ToolSub::showGeomTools()
 {
 	beginTool(L"geom");
-	// 类别两枚 + 填充一枚
-	initSize(3, true);
+	// 类别四枚 + 填充一枚
+	initSize(5, true);
 	makeGeomKindBtns();
 	makeToggleBtn(L"\ue602", &isGeomFill, L"tool.geomFill", L"fill");
 	initSlider();
@@ -1305,18 +1305,21 @@ Ling::Button* ToolSub::makeToggleBtn(const std::wstring& text, bool* flag, const
 	return btn;
 }
 
-// 「几何图形」的两个类别：矩形 / 圆形。互斥单选 —— 选中的那一枚上底色，单击换类别并落盘。
+// 「几何图形」的四个类别：矩形 / 圆形 / 三角形 / 菱形。互斥单选 —— 选中的那一枚上底色，
+// 单击换类别并落盘。
 // 元素左下角原来那枚"矩形↔圆"互转图标干的就是这件事，撤掉它之后这里是唯一的入口：
-// 想把一个已经画好的矩形改成圆，选中它、再点这里那枚圆就行
+// 想把一个已经画好的矩形改成菱形，选中它、再点这里那枚菱形就行
 //（走 WinPin::onToolStyleChanged 的"档位"那条路，见 ShapeRectBase::applyToolStyle）
+// ⚠️ 下标就是 toolPin.geom.kind 的落盘值，也是 ShapeRectBase::Kind 的取值，顺序不能乱
 void ToolSub::makeGeomKindBtns()
 {
-	// 码位与 ToolMain 那枚按钮上用的是同一对，形状一眼认得出，不必跟着语言包走
-	static const wchar_t* kindIcons[]{ L"\ue8e8", L"\ue6bc" };
-	// 提示沿用原来两枚工具按钮的文案（tool.rect / tool.ellipse）
-	static const wchar_t* kindTips[]{ L"tool.rect", L"tool.ellipse" };
+	// 码位与 ToolMain 那枚按钮上用的是同一批，形状一眼认得出，不必跟着语言包走。
+	// 三角形 / 菱形是后补的两枚字形（Doc/tools/mkicons.py），矩形 / 圆形沿用旧字形
+	static const wchar_t* kindIcons[]{ L"\ue8e8", L"\ue6bc", L"\ue918", L"\ue919" };
+	// 提示沿用原来两枚工具按钮的文案，后两类各加一条（tool.rect / tool.ellipse / tool.triangle / tool.diamond）
+	static const wchar_t* kindTips[]{ L"tool.rect", L"tool.ellipse", L"tool.triangle", L"tool.diamond" };
 	geomKindBtns.clear();
-	for (int i = 0; i < 2; ++i) {
+	for (int i = 0; i < 4; ++i) {
 		auto btn = contentNode->makeChild<Ling::Button>();
 		btn->setText(kindIcons[i]);
 		btn->setHeight(btnSize - 2.5);
