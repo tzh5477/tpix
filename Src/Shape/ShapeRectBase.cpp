@@ -582,8 +582,11 @@ void ShapeRectBase::applyStyle()
 // 工具条上「几何图形」换类别（矩形 / 圆形 / 三角形 / 菱形）：把这一笔翻成那一类。
 // 元素左下角原来那枚互转图标撤掉之后，这是唯一的入口 —— 选中一个矩形、点工具条上那枚菱形，
 // 它就变成菱形。翻的是 kind 而不是换掉对象：几何、颜色、线宽全部留着，
-// 换的只是"怎么画、怎么命中"，正在编辑的那一笔也不会因此丢掉
-void ShapeRectBase::applyToolStyle()
+// 换的只是"怎么画、怎么命中"，正在编辑的那一笔也不会因此丢掉。
+//
+// 它是 applyToolCategory 而不是 applyToolStyle：「全」那条批量路径要调 applyToolStyle
+//（把箭头样式 / 线型这类档位也统一过去），但**不该**顺带把满图的图形都翻成同一类
+void ShapeRectBase::applyToolCategory()
 {
 	if (!useToolStyle) return;
 	auto next = kindFromGeom(win->getToolSub()->getGeomKind());

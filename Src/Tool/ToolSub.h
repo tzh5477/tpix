@@ -96,7 +96,7 @@ public:
 	UINT32 getToolColorValue(const std::wstring& tool) const;
 	// 「几何图形」当前是哪一个类别：0 矩形 / 1 圆形。值落盘在 config.json 的 geom/kind，
 	// 与 ShapeRectBase::Kind 的枚举顺序一致。新建图形（History::createShape）与
-	// 已选中图形的互转（ShapeRectBase::applyToolStyle）都按它取
+	// 已选中图形的互转（ShapeRectBase::applyToolCategory）都按它取
 	int getGeomKind() const { return geomKind; }
 	// 内置预设色的个数。色板行只画这些格子，末尾另有一块「当前色」是取色器的入口
 	// （对齐 pixpin：预设色供快选，任意色点最大的那块进去调）
@@ -210,7 +210,7 @@ private:
 	// 按当前 selectColorIndex 刷新色板行：预设格子上该打勾的打勾，末尾那块当前色块换底色
 	void syncColorBtns();
 	// 「几何图形」那四枚类别小图标（矩形 / 圆形 / 三角形 / 菱形）。互斥的单选：选中的那一枚上底色，
-	// 单击换类别并落盘，已选中的图形跟着翻（走 WinPin::onToolStyleChanged 的"档位"那条路）
+	// 单击换类别并落盘，已选中的图形跟着翻（走 onToolStyleChanged 的 categoryChanged 那条路）
 	void makeGeomKindBtns();
 	// 按 geomKind 重刷那四枚类别图标的选中底色
 	void syncGeomKindBtns();

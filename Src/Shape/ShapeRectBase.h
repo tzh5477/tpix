@@ -37,9 +37,10 @@ public:
 	void rotateBy(const float deg, const D2D1_POINT_2F& center) override;
 	// 工具条上「几何图形」选了哪一类（矩形 / 圆形 / 三角形 / 菱形），把这一笔翻成那一类。
 	// 元素左下角原来有一枚互转图标干这件事，撤掉之后换类别只在工具条上做得到
-	// （见 ToolSub::makeGeomKindBtns），所以选中态跟着工具条走 —— 与箭头样式同一条路。
+	// （见 ToolSub::makeGeomKindBtns），所以选中态跟着工具条走。
+	// 走的是 applyToolCategory 而不是 applyToolStyle：「全」只套外观、不碰类别（见 ShapeBase）
 	// 马赛克与擦除没有"换个形状"这回事，由 useToolStyle 分开
-	void applyToolStyle() override;
+	void applyToolCategory() override;
 	// 落盘值（toolPin.geom.kind）→ Kind。0 矩形 / 1 圆形 / 2 三角形 / 3 菱形；
 	// 越界一律当矩形。工具条、新建元素（History::createShape）都用这一份映射，改一处两处一起变
 	static Kind kindFromGeom(const int g);

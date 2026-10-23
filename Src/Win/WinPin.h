@@ -162,8 +162,12 @@ public:
 	void refreshNumberShapes();
 	// ToolSub 上的颜色 / 字号 / 粗体 / 斜体变了，转给正在编辑的文本立即生效。
 	// styleEnumChanged = 触发这次改动的是"档位"按钮（箭头样式 / 线条类型 / 端点 / 线型）——
-	// 只有这种时候才该把档位也套到选中那一笔上，颜色 / 粗细 / 填充这些不该顺手换掉形状
-	void onToolStyleChanged(bool styleEnumChanged = false);
+	// 只有这种时候才该把档位也套到选中那一笔上，颜色 / 粗细 / 填充这些不该顺手换掉形状。
+	// categoryChanged = 触发的是"几何图形的类别"（矩形 / 圆 / 三角 / 菱形）。
+	// 与档位分开是因为几何那四枚类别图标和其它工具的档位下拉**共用一个 styleEnum 口子**，
+	// 但类别只在点那四枚图标时该套；串在一起的话，选中一个矩形再去点箭头下拉，
+	// 矩形的类别就会跟着工具条上那一档被翻掉
+	void onToolStyleChanged(bool styleEnumChanged = false, bool categoryChanged = false);
 	// 工具条上拖滑块调样式（粗细 / 字号 / 半径 / 不透明度）走这一条。
 	// 与 onToolStyleChanged 的区别只在于撤销点怎么记：滑块拖一趟会连着来几十次值变化，
 	// 而它没有"松手"事件，所以交给 History 按"同一趟"合并成一步

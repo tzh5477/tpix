@@ -3354,7 +3354,7 @@ History* WinPin::getHistory() const
 	return drawing->history.get();
 }
 
-void WinPin::onToolStyleChanged(bool styleEnumChanged)
+void WinPin::onToolStyleChanged(bool styleEnumChanged, bool categoryChanged)
 {
 	// 正在编辑文本 / 序号时，样式改动（改颜色 / 滚轮调字号）是那次编辑手势的一部分，
 	// 起点已经存过底了（见 ShapeText::startEdit / ShapeNumber::startEdit）。
@@ -3378,6 +3378,10 @@ void WinPin::onToolStyleChanged(bool styleEnumChanged)
 			if (s->toolId == L"mosaic" || s->toolId == L"eraser") continue;
 			s->applyStyle();
 			if (styleEnumChanged) s->applyToolStyle();
+			// 几何的类别（矩形 / 圆 / 三角 / 菱形）只在那四枚类别图标被点时整批翻。
+			// 不复用上面那个 styleEnum：箭头下拉、荧光笔类型也走同一条口子，
+			// 串在一起会把选中的矩形跟着翻掉（见 WinPin.h 的说明）
+			if (categoryChanged) s->applyToolCategory();
 		}
 		refresh();
 		return;
@@ -3393,6 +3397,8 @@ void WinPin::onToolStyleChanged(bool styleEnumChanged)
 	// 档位（箭头样式 / 线条类型 / 端点 / 线型）只有用户真去动那个下拉时才套过去。
 	// 颜色、填充开关、滚轮调粗细走的是同一个入口，带上档位的话它们会把形状一起换掉
 	if (styleEnumChanged) target->applyToolStyle();
+	// 几何的类别同理，而且**只认类别图标那一个来源**：点工具条上那枚菱形，选中的这一笔才翻
+	if (categoryChanged) target->applyToolCategory();
 	refresh();
 }
 
@@ -3432,11 +3438,16 @@ void WinPin::applyStyleToAllShapes()
 	drawing->history->mark();
 	for (auto& shape : drawing->history->shapes)
 	{
-		// 「全」的意思是"照我工具条这套来"，包括形状那一档 —— 比照选中态多走一步
-		// applyToolStyle（见 onToolStyleChanged 里那两条为什么分开）
+		// 「全」只套**外观**：颜色、线宽、填充、不透明度那一档。档位（箭头样式 / 线型 / 荧光笔
+		// 画法 / 插入图标是哪一枚）与几何的**类别**（矩形 / 圆 / 三角 / 菱形）一律不动。
+		//
+		// 这里原先比照"选中那一笔"多走了一步 applyToolStyle，把"这一笔长什么形状"也统一过去。
+		// 作者 2026-10-23 报的正是它的后果：画了长方形、三角、椭圆、菱形，点「全」之后
+		// 全变成菱形 —— 因为工具条的类别停在最后一次选的那一档，于是满图的图形都被翻成它。
+		// 形状是这一笔的身份，不是它的外观；「全」的语义是"颜色 / 粗细照这套来"，不是"都变成这套形状"。
+		// 想批量统一形状（或多选换类别）：多选之后点工具条上那几枚类别图标（走 applyToolCategory）
 		if (shape->toolId == toolMain->curId) {
 			shape->applyStyle();
-			shape->applyToolStyle();
 		}
 	}
 	refresh();

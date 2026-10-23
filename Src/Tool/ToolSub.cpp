@@ -1309,7 +1309,7 @@ Ling::Button* ToolSub::makeToggleBtn(const std::wstring& text, bool* flag, const
 // 单击换类别并落盘。
 // 元素左下角原来那枚"矩形↔圆"互转图标干的就是这件事，撤掉它之后这里是唯一的入口：
 // 想把一个已经画好的矩形改成菱形，选中它、再点这里那枚菱形就行
-//（走 WinPin::onToolStyleChanged 的"档位"那条路，见 ShapeRectBase::applyToolStyle）
+//（走 WinPin::onToolStyleChanged 的"档位"那条路，见 ShapeRectBase::applyToolCategory）
 // ⚠️ 下标就是 toolPin.geom.kind 的落盘值，也是 ShapeRectBase::Kind 的取值，顺序不能乱
 void ToolSub::makeGeomKindBtns()
 {
@@ -1338,8 +1338,10 @@ void ToolSub::makeGeomKindBtns()
 			// 主工具条那枚按钮的图标跟着类别走（它读的是同一份落盘值）
 			win->toolMain->syncGeomIcon();
 			// 传 true = 换的是"这一笔画成什么样"，与颜色 / 填充那些"外观"分流。
-			// 图上正选着的那一笔（或多选那一批）因此立刻跟着变
-			win->onToolStyleChanged(true);
+			// 图上正选着的那一笔（或多选那一批）因此立刻跟着变。
+			// 第二个 true 才是"换的是几何类别"：其它工具的档位下拉也传第一个 true，
+			// 但它们不该把选中矩形的类别一起翻掉
+			win->onToolStyleChanged(true, true);
 		});
 		geomKindBtns.push_back(btn);
 	}
